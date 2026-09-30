@@ -1,0 +1,212 @@
+package persistence
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"sort"
+	"sync"
+	"time"
+)
+
+const schemaVersion = 1
+
+type SessionRecord struct {
+	Username  string    `json:"username"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CSRFToken string    `json:"csrf_token"`
+}
+
+type Preferences struct {
+	ViewMode   string `json:"view_mode,omitempty"`
+	GridSize   string `json:"grid_size,omitempty"`
+	ShowHidden bool   `json:"show_hidden,omitempty"`
+	Theme      string `json:"theme,omitempty"`
+}
+
+type Favourite struct {
+	Path      string    `json:"path"`
+	Label     string    `json:"label,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type userState struct {
+	Preferences Preferences `json:"preferences"`
+	Favourites  []Favourite `json:"favourites,omitempty"`
+}
+
+type diskState struct {
+	Version  int                      `json:"version"`
+	Sessions map[string]SessionRecord `json:"sessions,omitempty"`
+	Users    map[string]userState     `json:"users,omitempty"`
+}
+
+type Store struct {
+	mu   sync.RWMutex
+	path string
+	data diskState
+}
+
+func Open(path string) (*Store, error) {
+	if path == "" {
+		return nil, errors.New("state path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return nil, err
+	}
+	s := &Store{path: path, data: diskState{Version: schemaVersion, Sessions: map[string]SessionRecord{}, Users: map[string]userState{}}}
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if err := json.Unmarshal(data, &s.data); err != nil {
+			return nil, err
+		}
+		if s.data.Version != schemaVersion {
+			return nil, errors.New("unsupported state file version")
+		}
+		if s.data.Sessions == nil {
+			s.data.Sessions = map[string]SessionRecord{}
+		}
+		if s.data.Users == nil {
+			s.data.Users = map[string]userState{}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *Store) PutSession(hash string, rec SessionRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data.Sessions[hash] = rec
+	return s.saveLocked()
+}
+
+func (s *Store) GetSession(hash string) (SessionRecord, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rec, ok := s.data.Sessions[hash]
+	return rec, ok
+}
+
+func (s *Store) DeleteSession(hash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.data.Sessions, hash)
+	return s.saveLocked()
+}
+
+func (s *Store) SweepSessions(now time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	for key, rec := range s.data.Sessions {
+		if !now.Before(rec.ExpiresAt) {
+			delete(s.data.Sessions, key)
+			removed++
+		}
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	return removed, s.saveLocked()
+}
+
+func (s *Store) Preferences(username string) Preferences {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.Users[username].Preferences
+}
+
+func (s *Store) SetPreferences(username string, prefs Preferences) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.data.Users[username]
+	u.Preferences = prefs
+	s.data.Users[username] = u
+	return s.saveLocked()
+}
+
+func (s *Store) Favourites(username string) []Favourite {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	stored := s.data.Users[username].Favourites
+	items := make([]Favourite, len(stored))
+	copy(items, stored)
+	sort.SliceStable(items, func(i, j int) bool { return items[i].CreatedAt.Before(items[j].CreatedAt) })
+	return items
+}
+
+func (s *Store) AddFavourite(username string, favourite Favourite) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.data.Users[username]
+	for i := range u.Favourites {
+		if u.Favourites[i].Path == favourite.Path {
+			if favourite.Label != "" {
+				u.Favourites[i].Label = favourite.Label
+			}
+			s.data.Users[username] = u
+			return s.saveLocked()
+		}
+	}
+	if favourite.CreatedAt.IsZero() {
+		favourite.CreatedAt = time.Now().UTC()
+	}
+	u.Favourites = append(u.Favourites, favourite)
+	s.data.Users[username] = u
+	return s.saveLocked()
+}
+
+func (s *Store) RemoveFavourite(username, path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.data.Users[username]
+	out := u.Favourites[:0]
+	for _, favourite := range u.Favourites {
+		if favourite.Path != path {
+			out = append(out, favourite)
+		}
+	}
+	u.Favourites = out
+	s.data.Users[username] = u
+	return s.saveLocked()
+}
+
+func (s *Store) saveLocked() error {
+	data, err := json.MarshalIndent(s.data, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(s.path)
+	tmp, err := os.CreateTemp(dir, ".webfile-state-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(name, s.path); err != nil {
+		return err
+	}
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
+}

@@ -1,0 +1,59 @@
+package httpserver
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync"
+)
+
+var errPasswordNotExpected = errors.New("this operation is not waiting for a password")
+
+type passwordBroker struct {
+	mu      sync.Mutex
+	waiters map[string]chan string
+}
+
+func newPasswordBroker() *passwordBroker {
+	return &passwordBroker{waiters: make(map[string]chan string)}
+}
+
+func (b *passwordBroker) Wait(ctx context.Context, operationID string, ready func()) (string, error) {
+	input := make(chan string, 1)
+	b.mu.Lock()
+	b.waiters[operationID] = input
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		if b.waiters[operationID] == input {
+			delete(b.waiters, operationID)
+		}
+		b.mu.Unlock()
+	}()
+	ready()
+	select {
+	case value := <-input:
+		return value, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func (b *passwordBroker) Submit(operationID, password string) error {
+	password = strings.TrimSpace(password)
+	if password == "" {
+		return errors.New("password is required")
+	}
+	b.mu.Lock()
+	waiter := b.waiters[operationID]
+	b.mu.Unlock()
+	if waiter == nil {
+		return errPasswordNotExpected
+	}
+	select {
+	case waiter <- password:
+		return nil
+	default:
+		return errPasswordNotExpected
+	}
+}

@@ -1,0 +1,54 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  linux-amd64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libpam0g-dev
+      - name: Frontend dependencies
+        working-directory: web
+        run: npm install --no-audit --no-fund
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+      - name: Test backend
+        working-directory: backend
+        run: go test ./... && go vet ./...
+      - name: Package
+        env:
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p dist/stage/webfile-${VERSION}-linux-amd64/deploy
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          CGO_ENABLED=1 go -C backend build -tags pam \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+            -o ../dist/stage/webfile-${VERSION}-linux-amd64/webfile ./cmd/webfile
+          cp README.md webfile.example.json dist/stage/webfile-${VERSION}-linux-amd64/
+          cp deploy/webfile.service deploy/webfile-launcher.service deploy/webfile.tmpfiles deploy/webfile.pam deploy/install.sh deploy/webfile-update dist/stage/webfile-${VERSION}-linux-amd64/deploy/
+          chmod +x dist/stage/webfile-${VERSION}-linux-amd64/deploy/install.sh dist/stage/webfile-${VERSION}-linux-amd64/deploy/webfile-update
+          tar -C dist/stage -czf dist/webfile-${VERSION}-linux-amd64.tar.gz webfile-${VERSION}-linux-amd64
+          cd dist && sha256sum webfile-${VERSION}-linux-amd64.tar.gz > webfile-${VERSION}-linux-amd64.tar.gz.sha256
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256

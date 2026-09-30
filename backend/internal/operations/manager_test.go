@@ -1,0 +1,293 @@
+package operations
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestOperationCompletesAndReportsProgress(t *testing.T) {
+	manager := New(10)
+	updates, cancel := manager.Subscribe()
+	defer cancel()
+
+	op := manager.Start("copy", []string{"/a"}, "/b", func(ctx context.Context, reporter Reporter) error {
+		reporter.Update(5, 10, 1, 2, "copying")
+		reporter.Update(10, 10, 2, 2, "done")
+		return nil
+	})
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case update := <-updates:
+			if update.ID == op.ID && update.State == StateCompleted {
+				if update.BytesDone != 10 || update.ItemsDone != 2 {
+					t.Fatalf("unexpected progress: %#v", update)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("operation did not complete")
+		}
+	}
+}
+
+func TestOperationCanBeCancelled(t *testing.T) {
+	manager := New(10)
+	started := make(chan struct{})
+	op := manager.Start("copy", nil, "", func(ctx context.Context, reporter Reporter) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	<-started
+	if !manager.Cancel(op.ID) {
+		t.Fatal("expected cancel to succeed")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, current := range manager.List() {
+			if current.ID == op.ID && current.State == StateCancelled {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("operation did not become cancelled")
+}
+
+func TestFailedOperationStoresError(t *testing.T) {
+	manager := New(10)
+	want := errors.New("boom")
+	op := manager.Start("copy", nil, "", func(context.Context, Reporter) error { return want })
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, current := range manager.List() {
+			if current.ID == op.ID && current.State == StateFailed {
+				if current.Error != want.Error() {
+					t.Fatalf("got error %q", current.Error)
+				}
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("operation did not fail")
+}
+
+func TestTasksQueueAtConfiguredConcurrency(t *testing.T) {
+	manager := newManager(nil, 10, 1)
+	firstStarted := make(chan struct{})
+	firstRelease := make(chan struct{})
+	secondStarted := make(chan struct{})
+	manager.Start("copy", nil, "", func(context.Context, Reporter) error {
+		close(firstStarted)
+		<-firstRelease
+		return nil
+	})
+	<-firstStarted
+	second := manager.Start("copy", nil, "", func(context.Context, Reporter) error {
+		close(secondStarted)
+		return nil
+	})
+
+	for _, operation := range manager.List() {
+		if operation.ID == second.ID && operation.State != StateQueued {
+			t.Fatalf("second task state is %q, want %q", operation.State, StateQueued)
+		}
+	}
+	select {
+	case <-secondStarted:
+		t.Fatal("second task started before the first completed")
+	default:
+	}
+
+	close(firstRelease)
+	select {
+	case <-secondStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second task did not start after capacity became available")
+	}
+}
+
+func TestQueuedTaskCanBeCancelledWithoutRunning(t *testing.T) {
+	manager := newManager(nil, 10, 1)
+	firstStarted := make(chan struct{})
+	firstRelease := make(chan struct{})
+	secondStarted := make(chan struct{})
+	manager.Start("copy", nil, "", func(context.Context, Reporter) error {
+		close(firstStarted)
+		<-firstRelease
+		return nil
+	})
+	<-firstStarted
+	second := manager.Start("copy", nil, "", func(context.Context, Reporter) error {
+		close(secondStarted)
+		return nil
+	})
+
+	if !manager.Cancel(second.ID) {
+		t.Fatal("expected queued cancellation to succeed")
+	}
+	close(firstRelease)
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-secondStarted:
+		t.Fatal("cancelled queued task was run")
+	default:
+	}
+	for _, operation := range manager.List() {
+		if operation.ID == second.ID && operation.State != StateCancelled {
+			t.Fatalf("cancelled task state is %q, want %q", operation.State, StateCancelled)
+		}
+	}
+}
+
+func TestTaskHistoryPersistsAndRunningTasksBecomeInterrupted(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "tasks.db")
+	store, err := OpenStore(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	operation := Operation{
+		ID:          "ID",
+		Kind:        "copy",
+		Sources:     []string{"/Source"},
+		Destination: "/Destination",
+		State:       StateRunning,
+		Phase:       "transferring",
+		Message:     "Copying",
+		Cancellable: true,
+		StartedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := store.Upsert(operation, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	manager, err := Open(databasePath, 10, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operations := manager.List()
+	if len(operations) != 1 {
+		t.Fatalf("got %d operations, want 1", len(operations))
+	}
+	if operations[0].State != StateInterrupted {
+		t.Fatalf("state is %q, want %q", operations[0].State, StateInterrupted)
+	}
+	if operations[0].FinishedAt == nil {
+		t.Fatal("interrupted task has no finished time")
+	}
+	closeContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := manager.Close(closeContext); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClearHistoryPreservesActiveTasks(t *testing.T) {
+	manager := newManager(nil, 10, 1)
+	manager.Start("copy", nil, "", func(context.Context, Reporter) error {
+		return nil
+	})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		operations := manager.List()
+		if len(operations) == 1 && operations[0].State == StateCompleted {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	active := manager.Start("move", nil, "", func(context.Context, Reporter) error {
+		close(started)
+		<-release
+		return nil
+	})
+	<-started
+
+	removed, err := manager.ClearHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed %d tasks, want 1", removed)
+	}
+	operations := manager.List()
+	if len(operations) != 1 {
+		t.Fatalf("got %d tasks after clearing history, want 1", len(operations))
+	}
+	if operations[0].ID != active.ID || operations[0].State != StateRunning {
+		t.Fatalf("active task was not preserved: %#v", operations[0])
+	}
+	removedActive, err := manager.RemoveHistory(active.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removedActive {
+		t.Fatal("active task was removed individually")
+	}
+	close(release)
+}
+
+func TestStoreClearHistoryDeletesTerminalTasksOnly(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "tasks.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	finished := now
+	completed := Operation{ID: "Completed", Kind: "copy", State: StateCompleted, StartedAt: now, UpdatedAt: now, FinishedAt: &finished}
+	cancelled := Operation{ID: "Cancelled", Kind: "extract", State: StateCancelled, StartedAt: now, UpdatedAt: now, FinishedAt: &finished}
+	running := Operation{ID: "Running", Kind: "move", State: StateRunning, Cancellable: true, StartedAt: now, UpdatedAt: now}
+	if err := store.Upsert(completed, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Upsert(running, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Upsert(cancelled, true); err != nil {
+		t.Fatal(err)
+	}
+	removedOne, err := store.RemoveHistory(completed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removedOne {
+		t.Fatal("completed task was not removed individually")
+	}
+	removedActive, err := store.RemoveHistory(running.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removedActive {
+		t.Fatal("active task was removed individually")
+	}
+
+	removed, err := store.ClearHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed %d tasks, want 1", removed)
+	}
+	operations, err := store.List(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations) != 1 || operations[0].ID != running.ID {
+		t.Fatalf("active task was not preserved: %#v", operations)
+	}
+}

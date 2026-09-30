@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: sudo webfile-update <release.tar.gz URL> <release.tar.gz.sha256 URL>" >&2
+  exit 2
+}
+
+[[ $# -eq 2 ]] || usage
+[[ $EUID -eq 0 ]] || { echo "Run as root (sudo)." >&2; exit 1; }
+
+TARBALL_URL="$1"
+SHA_URL="$2"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+curl --fail --location --proto '=https' --tlsv1.2 "$TARBALL_URL" -o "$WORK/release.tar.gz"
+curl --fail --location --proto '=https' --tlsv1.2 "$SHA_URL" -o "$WORK/release.tar.gz.sha256"
+(
+  cd "$WORK"
+  expected="$(awk 'NR==1 {print $1}' release.tar.gz.sha256)"
+  [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Invalid checksum file" >&2; exit 1; }
+  printf '%s  %s\n' "$expected" release.tar.gz | sha256sum --check -
+)
+mkdir "$WORK/release"
+tar -xzf "$WORK/release.tar.gz" -C "$WORK/release" --strip-components=1
+[[ -x "$WORK/release/webfile" ]] || { echo "Release does not contain webfile binary" >&2; exit 1; }
+
+NEW_VERSION="$($WORK/release/webfile version || true)"
+echo "Installing $NEW_VERSION"
+mkdir "$WORK/previous"
+
+backup_file() {
+  local source="$1"
+  local name="$2"
+  if [[ -e "$source" ]]; then
+    cp -a "$source" "$WORK/previous/$name"
+  else
+    touch "$WORK/previous/$name.absent"
+  fi
+}
+
+restore_file() {
+  local destination="$1"
+  local name="$2"
+  if [[ -e "$WORK/previous/$name.absent" ]]; then
+    rm -f -- "$destination"
+  else
+    cp -a "$WORK/previous/$name" "$destination"
+  fi
+}
+
+rollback() {
+  echo "Restoring previous WebFile installation." >&2
+  restore_file /usr/local/bin/webfile webfile
+  restore_file /etc/systemd/system/webfile.service webfile.service
+  restore_file /etc/systemd/system/webfile-launcher.service webfile-launcher.service
+  restore_file /usr/lib/tmpfiles.d/webfile.conf webfile.tmpfiles
+  restore_file /etc/pam.d/webfile webfile.pam
+  systemctl daemon-reload
+  systemctl restart webfile-launcher.service webfile.service || true
+}
+
+backup_file /usr/local/bin/webfile webfile
+backup_file /etc/systemd/system/webfile.service webfile.service
+backup_file /etc/systemd/system/webfile-launcher.service webfile-launcher.service
+backup_file /usr/lib/tmpfiles.d/webfile.conf webfile.tmpfiles
+backup_file /etc/pam.d/webfile webfile.pam
+
+install -m0755 "$WORK/release/webfile" /usr/local/bin/webfile.new
+mv -f /usr/local/bin/webfile.new /usr/local/bin/webfile
+
+# Unit/PAM changes ship with releases, but the local config is never replaced.
+install -m0644 "$WORK/release/deploy/webfile.service" /etc/systemd/system/webfile.service
+install -m0644 "$WORK/release/deploy/webfile-launcher.service" /etc/systemd/system/webfile-launcher.service
+install -m0644 "$WORK/release/deploy/webfile.tmpfiles" /usr/lib/tmpfiles.d/webfile.conf
+install -m0644 "$WORK/release/deploy/webfile.pam" /etc/pam.d/webfile
+systemctl daemon-reload
+
+if ! systemctl restart webfile-launcher.service webfile.service; then
+  echo "Update failed to start." >&2
+  rollback
+  exit 1
+fi
+
+sleep 1
+if ! systemctl is-active --quiet webfile.service; then
+  echo "WebFile did not stay active." >&2
+  rollback
+  exit 1
+fi
+
+echo "Update complete: $(/usr/local/bin/webfile version)"

@@ -1,0 +1,10 @@
+web/node_modules/
+.gocache/
+web/test-results/
+web/playwright-report/
+backend/internal/ui/dist/*
+!backend/internal/ui/dist/index.html
+/dist/
+/webfile.7z
+*.log
+.DS_Store

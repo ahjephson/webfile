@@ -1,0 +1,38 @@
+{
+  "listen": "0.0.0.0:8080",
+  "editor_max_bytes": 5242880,
+  "auth": {
+    "mode": "pam",
+    "pam_service": "webfile",
+    "session_ttl": "12h",
+    "cookie_secure": true,
+    "login_max_attempts": 5,
+    "login_window": "1m",
+    "login_block": "5m"
+  },
+  "tls": {
+    "certificate_file": "/etc/webfile/tls/webfile.crt",
+    "private_key_file": "/etc/webfile/tls/webfile.key"
+  },
+  "runtime": {
+    "worker_dir": "/run/webfile/users",
+    "data_dir": "/var/lib/webfile",
+    "launcher_socket": "/run/webfile/launcher.sock",
+    "launcher_group": "webfile",
+    "min_user_uid": 1000
+  },
+  "watch": {
+    "polling": "auto",
+    "poll_interval": "5s"
+  },
+  "roots": [
+    { "name": "Home", "path": "{home}" },
+    { "name": "Media", "path": "/srv/media" }
+  ],
+  "archive": {
+    "executable": "/usr/bin/7zz",
+    "extract_args": ["x", "-y", "-bsp1", "-bso0", "-bse2", "{archive}", "-o{destination}"],
+    "inspect_args": ["l", "-slt", "{archive}"],
+    "inspect_password_arg": "-p"
+  }
+}

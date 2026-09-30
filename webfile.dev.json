@@ -1,0 +1,29 @@
+{
+  "listen": "127.0.0.1:8080",
+  "editor_max_bytes": 5242880,
+  "auth": {
+    "mode": "none",
+    "pam_service": "webfile",
+    "session_ttl": "12h",
+    "cookie_secure": false,
+    "login_max_attempts": 5,
+    "login_window": "1m",
+    "login_block": "5m"
+  },
+  "runtime": {
+    "worker_dir": "/tmp/webfile-users",
+    "data_dir": "/tmp/webfile-data",
+    "launcher_socket": "/tmp/webfile-launcher.sock",
+    "launcher_group": "webfile",
+    "min_user_uid": 1000
+  },
+  "roots": [
+    { "name": "WSL Root", "path": "/" }
+  ],
+  "archive": {
+    "executable": "7zz",
+    "extract_args": ["x", "-y", "-bsp1", "-bso0", "-bse2", "{archive}", "-o{destination}"],
+    "inspect_args": ["l", "-slt", "{archive}"],
+    "inspect_password_arg": "-p"
+  }
+}

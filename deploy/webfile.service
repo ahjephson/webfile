@@ -1,0 +1,28 @@
+[Unit]
+Description=WebFile browser file manager
+After=network.target webfile-launcher.service
+Requires=webfile-launcher.service
+
+[Service]
+Type=simple
+User=webfile
+Group=webfile
+ExecStart=/usr/local/bin/webfile serve -config /etc/webfile/webfile.json
+Restart=on-failure
+RestartSec=2
+StateDirectory=webfile
+StateDirectoryMode=0750
+UMask=0027
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/webfile
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

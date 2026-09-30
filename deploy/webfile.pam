@@ -1,0 +1,3 @@
+# Install as /etc/pam.d/webfile on Ubuntu/Debian.
+@include common-auth
+@include common-account

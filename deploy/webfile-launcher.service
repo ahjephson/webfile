@@ -1,0 +1,28 @@
+[Unit]
+Description=WebFile privileged worker launcher
+After=local-fs.target
+Before=webfile.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/webfile launcher -config /etc/webfile/webfile.json
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=webfile
+RuntimeDirectoryMode=0755
+UMask=0027
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX
+
+# The launcher intentionally does not use ProtectSystem/ProtectHome. Its child
+# workers must see the real filesystem and then rely on the target Linux UID/GID
+# for access control.
+
+[Install]
+WantedBy=multi-user.target
