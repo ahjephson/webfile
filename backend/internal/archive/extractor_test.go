@@ -130,6 +130,65 @@ printf ok > "$out/file.txt"
 	assertNoStaging(t, root)
 }
 
+func TestExtractDoesNotMisreportFailureAfterPasswordPrompt(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "sample.7z"), "archive")
+	tool := writeTool(t, `#!/bin/sh
+set -eu
+if [ "${1:-}" = inspect ]; then printf 'Encrypted = +\n'; exit 0; fi
+printf 'Enter password (will not be echoed):' >&2
+IFS= read -r password
+if [ "$password" != Correct ]; then printf '\nWrong password\n' >&2; exit 2; fi
+printf '\nI/O failure after decryption\n' >&2
+exit 3
+`)
+	target := New(Config{Executable: tool, ExtractArgs: []string{"x", "{archive}"}, InspectArgs: []string{"inspect", "{archive}"}, InspectPasswordArg: "-p"}, testResolver(t, filesystem.Root{Name: "Files", Path: root}))
+	prompts := 0
+	_, err := target.ExtractInteractive(context.Background(), "/Files/sample.7z", "/Files/output", func(_ context.Context, incorrect bool) (string, error) {
+		prompts++
+		if incorrect {
+			t.Fatal("ordinary extraction error was classified as an incorrect password")
+		}
+		return "Correct", nil
+	}, nil)
+	if err == nil || errors.Is(err, ErrIncorrectPassword) || !strings.Contains(err.Error(), "archive tool failed") {
+		t.Fatalf("error=%v", err)
+	}
+	if prompts != 1 {
+		t.Fatalf("prompts=%d", prompts)
+	}
+	assertNoStaging(t, root)
+}
+
+func TestPublishDirectoryFallbackPublishesRecursively(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "stage")
+	destination := filepath.Join(root, "published")
+	if err := os.MkdirAll(filepath.Join(source, "folder"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(source, "folder", "file.txt"), "content")
+	info, err := os.Lstat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := make([]publishedMove, 0)
+	done := int64(0)
+	if err := publishDirectoryAbsent(context.Background(), source, destination, info, &published, &done, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if done != 1 {
+		t.Fatalf("done=%d", done)
+	}
+	if _, err := os.Stat(source); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("source still exists: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(destination, "folder", "file.txt"))
+	if err != nil || string(content) != "content" {
+		t.Fatalf("content=%q error=%v", content, err)
+	}
+}
+
 func TestExtractCancellationRemovesStaging(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "sample.zip"), "archive")

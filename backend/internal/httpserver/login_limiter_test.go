@@ -30,3 +30,17 @@ func TestLoginLimiterIgnoresForwardedAddress(t *testing.T) {
 		t.Fatalf("key=%q", key)
 	}
 }
+
+func TestLoginLimiterReportsRemainingBlockDuration(t *testing.T) {
+	target := newLoginLimiter(1, time.Minute, 5*time.Minute)
+	request := httptest.NewRequest("POST", "/api/login", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	target.Failure(request, "User")
+	retryAfter := target.RetryAfter(request, "User")
+	if retryAfter <= 4*time.Minute || retryAfter > 5*time.Minute {
+		t.Fatalf("retry after=%s", retryAfter)
+	}
+	if target.Allowed(request, "User") {
+		t.Fatal("blocked login was allowed")
+	}
+}

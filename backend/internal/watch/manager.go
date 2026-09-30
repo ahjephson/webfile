@@ -224,6 +224,9 @@ func directoryFingerprint(dir string) (string, error) {
 	}
 	parts := make([]string, 0, len(entries))
 	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".webfile-extract-") {
+			continue
+		}
 		info, err := entry.Info()
 		if err != nil {
 			continue
@@ -296,9 +299,6 @@ func (m *Manager) markDirty(dir, kind string) {
 
 func (m *Manager) flushDirty(dir string, force bool) {
 	fingerprint, err := directoryFingerprint(dir)
-	if err != nil {
-		return
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	state := m.dirs[dir]
@@ -308,6 +308,10 @@ func (m *Manager) flushDirty(dir string, force bool) {
 	kind := state.dirtyKind
 	state.dirtyKind = ""
 	state.quietTimer = nil
+	if err != nil {
+		broadcast(state, Event{Kind: kind, At: time.Now()})
+		return
+	}
 	if force || fingerprint != state.fingerprint {
 		state.fingerprint = fingerprint
 		broadcast(state, Event{Kind: kind, At: time.Now()})

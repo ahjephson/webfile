@@ -234,7 +234,13 @@ func (s *Service) WriteText(ctx context.Context, virtualPath string, content []b
 	if err := ctx.Err(); err != nil {
 		return FileContent{}, err
 	}
-	_, abs, err := s.resolver.ResolveForCreate(virtualPath)
+	var abs string
+	var err error
+	if createOnly {
+		_, abs, err = s.resolver.ResolveForCreate(virtualPath)
+	} else {
+		_, abs, err = s.resolver.ResolveExisting(virtualPath)
+	}
 	if err != nil {
 		return FileContent{}, err
 	}

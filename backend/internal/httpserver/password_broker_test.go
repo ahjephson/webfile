@@ -27,6 +27,24 @@ func TestPasswordBrokerDeliversPasswordOnlyToWaitingOperation(t *testing.T) {
 	}
 }
 
+func TestPasswordBrokerPreservesPasswordWhitespace(t *testing.T) {
+	target := newPasswordBroker()
+	ready := make(chan struct{})
+	result := make(chan string, 1)
+	go func() {
+		password, _ := target.Wait(context.Background(), "operation", func() { close(ready) })
+		result <- password
+	}()
+	<-ready
+	const password = "  password with spaces  "
+	if err := target.Submit("operation", password); err != nil {
+		t.Fatal(err)
+	}
+	if received := <-result; received != password {
+		t.Fatalf("password=%q", received)
+	}
+}
+
 func TestPasswordBrokerStopsWaitingWhenContextIsCancelled(t *testing.T) {
 	target := newPasswordBroker()
 	ctx, cancel := context.WithCancel(context.Background())

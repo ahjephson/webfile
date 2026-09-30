@@ -26,34 +26,48 @@ const (
 	StateInterrupted   State = "interrupted"
 )
 
+type ProgressUnit string
+
+const (
+	ProgressUnitBytes   ProgressUnit = "bytes"
+	ProgressUnitItems   ProgressUnit = "items"
+	ProgressUnitPercent ProgressUnit = "percent"
+)
+
 type Operation struct {
-	ID            string     `json:"id"`
-	Kind          string     `json:"kind"`
-	Sources       []string   `json:"sources,omitempty"`
-	Destination   string     `json:"destination,omitempty"`
-	State         State      `json:"state"`
-	Phase         string     `json:"phase,omitempty"`
-	Message       string     `json:"message,omitempty"`
-	Error         string     `json:"error,omitempty"`
-	BytesDone     int64      `json:"bytes_done"`
-	BytesTotal    int64      `json:"bytes_total"`
-	ItemsDone     int64      `json:"items_done"`
-	ItemsTotal    int64      `json:"items_total"`
-	Cancellable   bool       `json:"cancellable"`
-	CleanupPolicy string     `json:"cleanup_policy,omitempty"`
-	CleanupError  string     `json:"cleanup_error,omitempty"`
-	StartedAt     time.Time  `json:"started_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	ID            string       `json:"id"`
+	Kind          string       `json:"kind"`
+	Sources       []string     `json:"sources,omitempty"`
+	Destination   string       `json:"destination,omitempty"`
+	State         State        `json:"state"`
+	Phase         string       `json:"phase,omitempty"`
+	Message       string       `json:"message,omitempty"`
+	Error         string       `json:"error,omitempty"`
+	ProgressDone  int64        `json:"progress_done"`
+	ProgressTotal int64        `json:"progress_total"`
+	ProgressUnit  ProgressUnit `json:"progress_unit,omitempty"`
+	BytesDone     int64        `json:"bytes_done"`
+	BytesTotal    int64        `json:"bytes_total"`
+	ItemsDone     int64        `json:"items_done"`
+	ItemsTotal    int64        `json:"items_total"`
+	Cancellable   bool         `json:"cancellable"`
+	CleanupPolicy string       `json:"cleanup_policy,omitempty"`
+	CleanupError  string       `json:"cleanup_error,omitempty"`
+	StartedAt     time.Time    `json:"started_at"`
+	UpdatedAt     time.Time    `json:"updated_at"`
+	FinishedAt    *time.Time   `json:"finished_at,omitempty"`
 }
 
-type progress struct {
-	BytesDone  int64
-	BytesTotal int64
-	ItemsDone  int64
-	ItemsTotal int64
-	Phase      string
-	Message    string
+type ProgressUpdate struct {
+	Phase         string
+	Message       string
+	ProgressDone  int64
+	ProgressTotal int64
+	ProgressUnit  ProgressUnit
+	BytesDone     int64
+	BytesTotal    int64
+	ItemsDone     int64
+	ItemsTotal    int64
 }
 
 type Reporter struct {
@@ -74,14 +88,27 @@ func (r Reporter) Update(bytesDone, bytesTotal, itemsDone, itemsTotal int64, mes
 }
 
 func (r Reporter) UpdatePhase(phase string, bytesDone, bytesTotal, itemsDone, itemsTotal int64, message string) {
-	r.manager.updateProgress(r.id, progress{
-		BytesDone:  bytesDone,
-		BytesTotal: bytesTotal,
-		ItemsDone:  itemsDone,
-		ItemsTotal: itemsTotal,
-		Phase:      phase,
-		Message:    message,
+	done, total, unit := primaryProgress(bytesDone, bytesTotal, itemsDone, itemsTotal)
+	r.Report(ProgressUpdate{
+		Phase: phase, Message: message,
+		ProgressDone: done, ProgressTotal: total, ProgressUnit: unit,
+		BytesDone: bytesDone, BytesTotal: bytesTotal,
+		ItemsDone: itemsDone, ItemsTotal: itemsTotal,
 	})
+}
+
+func (r Reporter) Report(update ProgressUpdate) {
+	r.manager.updateProgress(r.id, update)
+}
+
+func primaryProgress(bytesDone, bytesTotal, itemsDone, itemsTotal int64) (int64, int64, ProgressUnit) {
+	if bytesTotal > 0 {
+		return bytesDone, bytesTotal, ProgressUnitBytes
+	}
+	if itemsTotal > 0 {
+		return itemsDone, itemsTotal, ProgressUnitItems
+	}
+	return 0, 0, ""
 }
 
 type RunFunc func(context.Context, Reporter) error
@@ -322,6 +349,7 @@ func (m *Manager) UpsertExternal(id, kind string, sources []string, destination 
 	rec.op.Phase = string(state)
 	rec.op.BytesDone = bytesDone
 	rec.op.BytesTotal = bytesTotal
+	rec.op.ProgressDone, rec.op.ProgressTotal, rec.op.ProgressUnit = primaryProgress(bytesDone, bytesTotal, itemsDone, itemsTotal)
 	rec.op.ItemsDone = itemsDone
 	rec.op.ItemsTotal = itemsTotal
 	rec.op.Message = message
@@ -518,13 +546,20 @@ func (m *Manager) Close(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) updateProgress(id string, p progress) {
+func (m *Manager) updateProgress(id string, p ProgressUpdate) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec := m.records[id]
-	if rec == nil || rec.op.State != StateRunning {
+	if rec == nil || terminalState(rec.op.State) || rec.op.State == StateCancelling || rec.op.State == StateCleaningUp {
 		return
 	}
+	stateChanged := rec.op.State != StateRunning
+	phaseChanged := p.Phase != "" && rec.op.Phase != p.Phase
+	unitChanged := rec.op.ProgressUnit != p.ProgressUnit
+	rec.op.State = StateRunning
+	rec.op.ProgressDone = maxInt64(0, p.ProgressDone)
+	rec.op.ProgressTotal = maxInt64(0, p.ProgressTotal)
+	rec.op.ProgressUnit = p.ProgressUnit
 	rec.op.BytesDone = maxInt64(0, p.BytesDone)
 	rec.op.BytesTotal = maxInt64(0, p.BytesTotal)
 	rec.op.ItemsDone = maxInt64(0, p.ItemsDone)
@@ -535,11 +570,12 @@ func (m *Manager) updateProgress(id string, p progress) {
 	rec.op.Message = p.Message
 	rec.op.UpdatedAt = time.Now().UTC()
 
-	terminalProgress := (p.BytesTotal > 0 && p.BytesDone >= p.BytesTotal) || (p.ItemsTotal > 0 && p.ItemsDone >= p.ItemsTotal)
-	if terminalProgress || time.Since(rec.lastPersistence) >= time.Second {
-		m.persistLocked(rec, false)
+	changed := stateChanged || phaseChanged || unitChanged
+	terminalProgress := p.ProgressTotal > 0 && p.ProgressDone >= p.ProgressTotal
+	if changed || terminalProgress || time.Since(rec.lastPersistence) >= time.Second {
+		m.persistLocked(rec, changed)
 	}
-	if terminalProgress || time.Since(rec.lastBroadcast) >= 100*time.Millisecond {
+	if changed || terminalProgress || time.Since(rec.lastBroadcast) >= 100*time.Millisecond {
 		rec.lastBroadcast = time.Now()
 		m.broadcastLocked(rec.op)
 	}
@@ -552,12 +588,22 @@ func (m *Manager) setStatus(id string, state State, phase, message string) {
 	if rec == nil || terminalState(rec.op.State) || rec.op.State == StateCancelling || rec.op.State == StateCleaningUp {
 		return
 	}
-	changed := rec.op.State != state || rec.op.Phase != phase
+	changed := rec.op.State != state || rec.op.Phase != phase || rec.op.Message != message
+	if !changed {
+		return
+	}
+	phaseChanged := rec.op.Phase != phase
 	rec.op.State = state
 	rec.op.Phase = phase
 	rec.op.Message = message
+	if phaseChanged {
+		rec.op.ProgressDone, rec.op.ProgressTotal, rec.op.ProgressUnit = 0, 0, ""
+		rec.op.BytesDone, rec.op.BytesTotal = 0, 0
+		rec.op.ItemsDone, rec.op.ItemsTotal = 0, 0
+	}
 	rec.op.UpdatedAt = time.Now().UTC()
-	m.persistLocked(rec, changed)
+	m.persistLocked(rec, true)
+	rec.lastBroadcast = time.Now()
 	m.broadcastLocked(rec.op)
 }
 

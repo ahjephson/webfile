@@ -118,6 +118,35 @@ func TestNewDocumentIsCreatedOnlyOnSave(t *testing.T) {
 	}
 }
 
+func TestWriteTextThroughSymlinkPreservesLinkAndUpdatesTarget(t *testing.T) {
+	svc, root := testService(t)
+	target := filepath.Join(root, "target.txt")
+	link := filepath.Join(root, "link.txt")
+	if err := os.WriteFile(target, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target.txt", link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.WriteText(context.Background(), "/Files/link.txt", []byte("after"), "", false); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("save replaced the symbolic link")
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "after" {
+		t.Fatalf("target content=%q", content)
+	}
+}
+
 func TestDetectContentTypeRecognisesExtensionlessText(t *testing.T) {
 	svc, root := testService(t)
 	if err := os.WriteFile(filepath.Join(root, "LICENSE"), []byte("Terms and conditions\n"), 0o644); err != nil {

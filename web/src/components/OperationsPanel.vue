@@ -23,9 +23,8 @@ const activeTasks = computed(() => ordered.value.filter(active))
 const history = computed(() => ordered.value.filter(operation => !active(operation)))
 
 function percent(operation: FileOperation): number | null {
-  if (operation.bytes_total > 0) return Math.max(0, Math.min(100, Math.round(operation.bytes_done / operation.bytes_total * 100)))
-  if (operation.items_total > 0) return Math.max(0, Math.min(100, Math.round(operation.items_done / operation.items_total * 100)))
-  return null
+  if (operation.progress_total <= 0) return null
+  return Math.max(0, Math.min(100, Math.round(operation.progress_done / operation.progress_total * 100)))
 }
 
 function active(operation: FileOperation) {
@@ -58,6 +57,13 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[index]}`
 }
 
+function formatProgress(operation: FileOperation): string {
+  if (operation.progress_unit === 'percent') return `${Math.round(operation.progress_done)}%`
+  if (operation.progress_unit === 'bytes') return `${formatBytes(operation.progress_done)} / ${formatBytes(operation.progress_total)}`
+  if (operation.progress_unit === 'items') return `${operation.progress_done} / ${operation.progress_total} items`
+  return phaseLabel(operation)
+}
+
 function formatDate(value?: string) {
   if (!value) return ''
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
@@ -87,9 +93,8 @@ function formatDate(value?: string) {
                 <div class="webfile-indeterminate h-full w-1/3 bg-sky-600" />
               </div>
               <div class="mt-2 flex items-center justify-between gap-3 text-xs text-zinc-500">
-                <span v-if="operation.bytes_total > 0">{{ formatBytes(operation.bytes_done) }} / {{ formatBytes(operation.bytes_total) }}</span>
-                <span v-else-if="operation.items_total > 0">{{ operation.items_done }} / {{ operation.items_total }} items</span>
-                <span v-else class="capitalize">{{ phaseLabel(operation) }}</span>
+                <span v-if="operation.progress_total > 0">{{ formatProgress(operation) }}</span>
+                <span v-else class="capitalize">{{ formatProgress(operation) }}</span>
                 <Button v-if="operation.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel', operation.id)" />
               </div>
             </div>

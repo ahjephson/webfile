@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 )
 
@@ -40,7 +39,6 @@ func (b *passwordBroker) Wait(ctx context.Context, operationID string, ready fun
 }
 
 func (b *passwordBroker) Submit(operationID, password string) error {
-	password = strings.TrimSpace(password)
 	if password == "" {
 		return errors.New("password is required")
 	}

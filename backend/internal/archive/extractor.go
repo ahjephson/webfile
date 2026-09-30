@@ -130,6 +130,19 @@ func (e *Extractor) ExtractInteractive(ctx context.Context, archivePath, destina
 			return 0, err
 		}
 		runErr := e.runTool(ctx, archiveAbs, stage, passwordValue, report)
+		if errors.Is(runErr, ErrPasswordRequired) {
+			if cleanupErr := os.RemoveAll(stage); cleanupErr != nil {
+				return 0, errors.Join(runErr, fmt.Errorf("clean password attempt: %w", cleanupErr))
+			}
+			if password == nil {
+				return 0, ErrPasswordRequired
+			}
+			passwordValue, err = password(ctx, false)
+			if err != nil {
+				return 0, err
+			}
+			continue
+		}
 		if errors.Is(runErr, ErrIncorrectPassword) {
 			if cleanupErr := os.RemoveAll(stage); cleanupErr != nil {
 				return 0, errors.Join(runErr, fmt.Errorf("clean password attempt: %w", cleanupErr))
@@ -236,7 +249,8 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 	go func() { wait <- cmd.Wait() }()
 
 	var output strings.Builder
-	wrongPassword := false
+	promptSeen := false
+	incorrectPassword := false
 	lastPercent := -1
 	var processErr error
 	var records recordParser
@@ -257,10 +271,10 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 			appendLimited(&output, chunk, 8192)
 			lower := strings.ToLower(output.String())
 			if incorrectPasswordOutput(lower) {
-				wrongPassword = true
+				incorrectPassword = true
 			}
 			if passwordPromptOutput(lower) {
-				wrongPassword = true
+				promptSeen = true
 			}
 			for _, record := range records.Feed(chunk) {
 				for _, percent := range progressPercents(record) {
@@ -290,8 +304,11 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		if wrongPassword || incorrectPasswordOutput(strings.ToLower(output.String())) {
+		if incorrectPassword || incorrectPasswordOutput(strings.ToLower(output.String())) {
 			return ErrIncorrectPassword
+		}
+		if promptSeen && password == "" {
+			return ErrPasswordRequired
 		}
 		return fmt.Errorf("archive tool failed: %w: %s", processErr, sanitizeToolError(output.String()))
 	}
@@ -499,8 +516,9 @@ func preflightNode(source, destination, root string, conflicts *[]string) error 
 }
 
 type publishedMove struct {
-	source      string
-	destination string
+	source        string
+	destination   string
+	directoryMode fs.FileMode
 }
 
 func publishNode(ctx context.Context, source, destination string, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
@@ -541,7 +559,18 @@ func publishAbsent(ctx context.Context, source, destination string, files int, p
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := filesystem.RenameNoReplace(source, destination); err != nil {
+	err := filesystem.RenameNoReplace(source, destination)
+	if errors.Is(err, filesystem.ErrRenameNoReplaceUnsupported) {
+		info, statErr := os.Lstat(source)
+		if statErr != nil {
+			return statErr
+		}
+		if !info.IsDir() {
+			return err
+		}
+		return publishDirectoryAbsent(ctx, source, destination, info, published, done, total, report)
+	}
+	if err != nil {
 		return err
 	}
 	*published = append(*published, publishedMove{source: source, destination: destination})
@@ -550,6 +579,41 @@ func publishAbsent(ctx context.Context, source, destination string, files int, p
 		report(Progress{Phase: "publishing", ItemsDone: *done, ItemsTotal: total, Message: "Publishing extracted files"})
 	}
 	return nil
+}
+
+func publishDirectoryAbsent(ctx context.Context, source, destination string, info fs.FileInfo, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
+	if err := os.Mkdir(destination, info.Mode().Perm()); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return filesystem.ErrConflict
+		}
+		return err
+	}
+	*published = append(*published, publishedMove{source: source, destination: destination, directoryMode: info.Mode()})
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		childSource := filepath.Join(source, entry.Name())
+		childDestination := filepath.Join(destination, entry.Name())
+		files, err := countRegularFiles(childSource)
+		if err != nil {
+			return err
+		}
+		if err := publishAbsent(ctx, childSource, childDestination, files, published, done, total, report); err != nil {
+			return err
+		}
+	}
+	if err := os.Chmod(destination, info.Mode().Perm()); err != nil {
+		return err
+	}
+	if err := os.Chtimes(destination, info.ModTime(), info.ModTime()); err != nil {
+		return err
+	}
+	return os.Remove(source)
 }
 
 func countRegularFiles(root string) (int, error) {
@@ -580,6 +644,15 @@ func rollbackPublished(published []publishedMove) error {
 	var result error
 	for index := len(published) - 1; index >= 0; index-- {
 		move := published[index]
+		if move.directoryMode != 0 {
+			if err := os.MkdirAll(move.source, move.directoryMode.Perm()); err != nil {
+				result = errors.Join(result, err)
+			}
+			if err := os.Remove(move.destination); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				result = errors.Join(result, err)
+			}
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(move.source), 0o700); err != nil {
 			result = errors.Join(result, err)
 			continue

@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     phase TEXT NOT NULL,
     message TEXT NOT NULL,
     error TEXT NOT NULL,
+    progress_done INTEGER NOT NULL DEFAULT 0,
+    progress_total INTEGER NOT NULL DEFAULT 0,
+    progress_unit TEXT NOT NULL DEFAULT '',
     bytes_done INTEGER NOT NULL,
     bytes_total INTEGER NOT NULL,
     items_done INTEGER NOT NULL,
@@ -89,11 +92,56 @@ func OpenStore(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize task database: %w", err)
 	}
+	if err := ensureProgressColumns(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate task progress: %w", err)
+	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+func ensureProgressColumns(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(tasks)`)
+	if err != nil {
+		return err
+	}
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		columns[name] = true
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	added := false
+	for name, definition := range map[string]string{
+		"progress_done":  "INTEGER NOT NULL DEFAULT 0",
+		"progress_total": "INTEGER NOT NULL DEFAULT 0",
+		"progress_unit":  "TEXT NOT NULL DEFAULT ''",
+	} {
+		if !columns[name] {
+			if _, err := db.Exec("ALTER TABLE tasks ADD COLUMN " + name + " " + definition); err != nil {
+				return err
+			}
+			added = true
+		}
+	}
+	if added {
+		_, err = db.Exec(`UPDATE tasks SET
+			progress_done = CASE WHEN bytes_total > 0 THEN bytes_done ELSE items_done END,
+			progress_total = CASE WHEN bytes_total > 0 THEN bytes_total ELSE items_total END,
+			progress_unit = CASE WHEN bytes_total > 0 THEN 'bytes' WHEN items_total > 0 THEN 'items' ELSE '' END`)
+	}
+	return err
 }
 
 func (s *Store) Close() error {
@@ -117,9 +165,9 @@ func (s *Store) Upsert(operation Operation, recordEvent bool) error {
 	_, err = tx.Exec(`
 INSERT INTO tasks (
     id, kind, sources_json, destination, state, phase, message, error,
-    bytes_done, bytes_total, items_done, items_total, cancellable,
+    progress_done, progress_total, progress_unit, bytes_done, bytes_total, items_done, items_total, cancellable,
     cleanup_policy, cleanup_error, started_at, updated_at, finished_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     kind = excluded.kind,
     sources_json = excluded.sources_json,
@@ -128,6 +176,9 @@ ON CONFLICT(id) DO UPDATE SET
     phase = excluded.phase,
     message = excluded.message,
     error = excluded.error,
+    progress_done = excluded.progress_done,
+    progress_total = excluded.progress_total,
+    progress_unit = excluded.progress_unit,
     bytes_done = excluded.bytes_done,
     bytes_total = excluded.bytes_total,
     items_done = excluded.items_done,
@@ -138,8 +189,9 @@ ON CONFLICT(id) DO UPDATE SET
     updated_at = excluded.updated_at,
     finished_at = excluded.finished_at`,
 		operation.ID, operation.Kind, string(sources), operation.Destination, operation.State, operation.Phase,
-		operation.Message, operation.Error, operation.BytesDone, operation.BytesTotal, operation.ItemsDone,
-		operation.ItemsTotal, operation.Cancellable, operation.CleanupPolicy, operation.CleanupError,
+		operation.Message, operation.Error, operation.ProgressDone, operation.ProgressTotal, operation.ProgressUnit,
+		operation.BytesDone, operation.BytesTotal, operation.ItemsDone, operation.ItemsTotal,
+		operation.Cancellable, operation.CleanupPolicy, operation.CleanupError,
 		formatTime(operation.StartedAt), formatTime(operation.UpdatedAt), finished)
 	if err != nil {
 		return err
@@ -159,7 +211,7 @@ func (s *Store) List(limit int) ([]Operation, error) {
 	}
 	rows, err := s.db.Query(`
 SELECT id, kind, sources_json, destination, state, phase, message, error,
-       bytes_done, bytes_total, items_done, items_total, cancellable,
+       progress_done, progress_total, progress_unit, bytes_done, bytes_total, items_done, items_total, cancellable,
        cleanup_policy, cleanup_error, started_at, updated_at, finished_at
 FROM tasks
 ORDER BY started_at DESC
@@ -178,7 +230,8 @@ LIMIT ?`, limit)
 		var finishedAt sql.NullString
 		if err := rows.Scan(
 			&operation.ID, &operation.Kind, &sources, &operation.Destination, &state, &operation.Phase,
-			&operation.Message, &operation.Error, &operation.BytesDone, &operation.BytesTotal,
+			&operation.Message, &operation.Error, &operation.ProgressDone, &operation.ProgressTotal,
+			&operation.ProgressUnit, &operation.BytesDone, &operation.BytesTotal,
 			&operation.ItemsDone, &operation.ItemsTotal, &operation.Cancellable, &operation.CleanupPolicy,
 			&operation.CleanupError, &startedAt, &updatedAt, &finishedAt,
 		); err != nil {

@@ -81,15 +81,27 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 			count, err := s.extractor.ExtractInteractive(ctx, source, req.Destination, passwordProvider, func(progress archive.Progress) {
-				reporter.SetState(operations.StateRunning, progress.Phase, progress.Message)
 				if progress.Phase == "extracting" {
-					reporter.UpdatePhase(progress.Phase, int64(progress.Percent), 100, 0, 0, progress.Message)
+					reporter.Report(operations.ProgressUpdate{
+						Phase: progress.Phase, Message: progress.Message,
+						ProgressDone: int64(progress.Percent), ProgressTotal: 100,
+						ProgressUnit: operations.ProgressUnitPercent,
+					})
 				} else {
-					reporter.UpdatePhase(progress.Phase, 0, 0, progress.ItemsDone, progress.ItemsTotal, progress.Message)
+					reporter.Report(operations.ProgressUpdate{
+						Phase: progress.Phase, Message: progress.Message,
+						ProgressDone: progress.ItemsDone, ProgressTotal: progress.ItemsTotal,
+						ProgressUnit: operations.ProgressUnitItems,
+						ItemsDone:    progress.ItemsDone, ItemsTotal: progress.ItemsTotal,
+					})
 				}
 			})
 			if err == nil {
-				reporter.UpdatePhase("publishing", 0, 0, int64(count), int64(count), "Extracted")
+				reporter.Report(operations.ProgressUpdate{
+					Phase: "publishing", Message: "Extracted", ProgressDone: int64(count),
+					ProgressTotal: int64(count), ProgressUnit: operations.ProgressUnitItems,
+					ItemsDone: int64(count), ItemsTotal: int64(count),
+				})
 				s.invalidateDestination(req.Destination)
 			}
 			return err

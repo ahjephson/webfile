@@ -48,9 +48,9 @@ func (l *loginLimiter) sweep(now time.Time) {
 	l.lastSweep = now
 }
 
-func (l *loginLimiter) Allowed(r *http.Request, username string) bool {
+func (l *loginLimiter) RetryAfter(r *http.Request, username string) time.Duration {
 	if l == nil {
-		return true
+		return 0
 	}
 	key := l.key(r, username)
 	now := time.Now()
@@ -59,15 +59,19 @@ func (l *loginLimiter) Allowed(r *http.Request, username string) bool {
 	l.sweep(now)
 	a, ok := l.attempts[key]
 	if !ok {
-		return true
+		return 0
 	}
 	if !a.blocked.IsZero() && now.Before(a.blocked) {
-		return false
+		return a.blocked.Sub(now)
 	}
 	if now.Sub(a.first) > l.window {
 		delete(l.attempts, key)
 	}
-	return true
+	return 0
+}
+
+func (l *loginLimiter) Allowed(r *http.Request, username string) bool {
+	return l.RetryAfter(r, username) <= 0
 }
 
 func (l *loginLimiter) Failure(r *http.Request, username string) {

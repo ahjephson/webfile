@@ -35,6 +35,51 @@ func TestOperationCompletesAndReportsProgress(t *testing.T) {
 	}
 }
 
+func TestProgressUnitAndPhaseChangesBroadcastAtomically(t *testing.T) {
+	manager := New(10)
+	updates, cancel := manager.Subscribe()
+	defer cancel()
+	manager.Start("extract", []string{"/archive"}, "/output", func(_ context.Context, reporter Reporter) error {
+		reporter.Report(ProgressUpdate{
+			Phase: "extracting", Message: "Extracting archive",
+			ProgressDone: 64, ProgressTotal: 100, ProgressUnit: ProgressUnitPercent,
+		})
+		reporter.Report(ProgressUpdate{Phase: "validating", Message: "Validating extracted files"})
+		return nil
+	})
+	foundPercent := false
+	foundValidation := false
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case update := <-updates:
+			if update.Phase == "extracting" {
+				foundPercent = true
+				if update.ProgressDone != 64 || update.ProgressTotal != 100 || update.ProgressUnit != ProgressUnitPercent {
+					t.Fatalf("unexpected extraction progress: %#v", update)
+				}
+				if update.BytesDone != 0 || update.BytesTotal != 0 {
+					t.Fatalf("percentage was reported as bytes: %#v", update)
+				}
+			}
+			if update.Phase == "validating" {
+				foundValidation = true
+				if update.ProgressTotal != 0 || update.ProgressUnit != "" {
+					t.Fatalf("validation retained stale progress: %#v", update)
+				}
+			}
+			if update.State == StateCompleted {
+				if !foundPercent || !foundValidation {
+					t.Fatalf("missing phase broadcasts: percent=%v validation=%v", foundPercent, foundValidation)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("operation did not complete")
+		}
+	}
+}
+
 func TestOperationCanBeCancelled(t *testing.T) {
 	manager := New(10)
 	started := make(chan struct{})

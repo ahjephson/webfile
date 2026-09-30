@@ -75,6 +75,9 @@ export interface FileOperation {
   phase?: string
   message?: string
   error?: string
+  progress_done: number
+  progress_total: number
+  progress_unit?: 'bytes' | 'items' | 'percent'
   bytes_done: number
   bytes_total: number
   items_done: number
