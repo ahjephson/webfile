@@ -781,10 +781,20 @@ test('the find and replace widget overlays the editor without moving file conten
   const initialTop = await firstLine.evaluate(element => element.getBoundingClientRect().top)
 
   await page.getByRole('button', { name: 'Replace' }).click()
-  await expect(page.locator('.monaco-editor .find-widget')).toBeVisible()
+  const findWidget = page.locator('.monaco-editor .find-widget')
+  await expect(findWidget).toBeVisible()
 
   const findTop = await firstLine.evaluate(element => element.getBoundingClientRect().top)
   expect(Math.abs(findTop - initialTop)).toBeLessThanOrEqual(1)
+
+  await findWidget.getByRole('textbox').first().focus()
+  await page.keyboard.press('Escape')
+  await expect(findWidget).toHaveAttribute('aria-hidden', 'true')
+  await expect(page.getByRole('button', { name: 'Close editor' })).toBeVisible()
+
+  await page.getByRole('textbox', { name: 'Editor content' }).focus()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button', { name: 'Close editor' })).toBeHidden()
 })
 
 test('Markdown preview renders a sanitized live split view with relative images', async ({ page }) => {

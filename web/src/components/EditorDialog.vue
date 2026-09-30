@@ -83,6 +83,7 @@ function handleKeydown(event: KeyboardEvent) {
     zenMode.value = false
     return
   }
+  if (editorRef.value?.ownsElement(event.target) && !editorRef.value.hasTextFocus()) return
   void close()
 }
 

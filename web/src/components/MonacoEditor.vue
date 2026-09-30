@@ -114,7 +114,15 @@ async function closeSearch() {
   await editor?.getAction('closeFindWidget')?.run()
 }
 
-defineExpose({ undo, redo, find, replace, formatDocument, closeSearch })
+function hasTextFocus() {
+  return editor?.hasTextFocus() ?? false
+}
+
+function ownsElement(target: EventTarget | null) {
+  return target instanceof Node && (editor?.getDomNode()?.contains(target) ?? false)
+}
+
+defineExpose({ undo, redo, find, replace, formatDocument, closeSearch, hasTextFocus, ownsElement })
 
 onBeforeUnmount(() => editor?.dispose())
 </script>
