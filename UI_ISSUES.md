@@ -1,50 +1,27 @@
 # UI issue log
 
-## Planned — per-user settings
+Per-user settings are tracked separately in `SETTINGS_DESIGN.md`.
 
-Settings are durable preferences controlled by the signed-in user and should
-follow that user across browsers and sessions. They do not include per-tab
-`sessionStorage` state or administrator-controlled system configuration.
+## Open — verified 2026-10-01
 
-### Appearance
+- [ ] Prevent a rapid touch/pen double-tap in grid view from navigating through
+  more than one folder level. The equivalent list-view workflow passes, but the
+  grid Playwright regression test currently reaches the nested folder.
+- [ ] Make unchecked file-selection boxes visibly unfilled in the light theme.
+  They currently use a light-grey fill in both list and grid views.
 
-- [ ] Theme: System, Light, or Dark.
-- [ ] Default view: List or Grid.
-- [ ] Grid tile size: Small, Medium, or Large.
-- [ ] Interface density: Compact or Comfortable.
-- [ ] Show dotfiles by default.
+## Audit 2026-10-01
 
-### Editor
-
-- [ ] Word wrap.
-- [ ] Font size.
-- [ ] Show line numbers.
-- [ ] Show whitespace.
-- [ ] Show minimap.
-- [ ] Compact or rich toolbar by default.
-- [ ] Markdown preview enabled by default.
-
-### Previews
-
-- [ ] Show the image thumbnail strip by default.
-- [ ] Default image sizing: Fit or Natural size.
-- [ ] Video autoplay, defaulting to off.
-
-### File interaction
-
-- [ ] Default sort field and direction.
-- [ ] Show folders first.
-- [ ] Confirm before sending items to the Recycle Bin.
-- [ ] Automatically open the Tasks panel when a background operation starts.
-- [ ] Optional persistent start location, distinct from restoring a tab's last folder.
-
-The initial delivery should expose the four preferences already supported by
-the backend (theme, view mode, grid size, and dotfile visibility), followed by
-the editor defaults. Current folder, filter text, selection, open panels, and
-scroll position remain tab/session state. Roots, authentication, TLS, archive
-commands, watcher behaviour, caches, file-size limits, worker paths, and task
-concurrency remain administrator configuration. Favourites and task history
-remain user data managed by their existing interfaces rather than settings.
+- The full Playwright suite passed 62 of 63 tests. The only failure was the grid
+  rapid-double-tap regression recorded above.
+- `go test ./...` and `go vet ./...` passed for the backend, including the folder
+  watcher coverage.
+- In-app visual checks confirmed the Recycle Bin toggle state, lack of a parent
+  row, return to the previous folder, compact toggle styling, and Copy/Move
+  destination navigation by focus, double-click, and parent entry.
+- The same visual review found the light-theme selection-control issue recorded
+  above. The remaining historical resolved sections are still consistent with
+  the automated coverage, rendered UI, and implementation review.
 
 ## Resolved 2026-09-28 — consistency and toggle behaviour
 
@@ -86,10 +63,6 @@ Visual references: `codex-clipboard-42f25200-ad50-4af3-b4b6-0d1291c397e3.png` an
 - [x] A touch/pen tap opens an item or parent folder directly; desktop single-click continues to focus and double-click continues to open.
 - [x] Toggling Recycle Bin off restores the folder that was visible before Recycle Bin was opened.
 
-## Resolved 2026-09-28 — light-theme selection controls
-
-- [x] Unchecked file-selection boxes use an unfilled surface in both list and grid views so they do not resemble disabled controls in the light theme.
-
 ## Resolved 2026-09-28 — per-tab folder restoration
 
 - [x] The last successfully loaded folder is stored per user in `sessionStorage` and restored after a browser refresh.
@@ -116,8 +89,6 @@ Visual references: `codex-clipboard-42f25200-ad50-4af3-b4b6-0d1291c397e3.png` an
 - [x] Encode the current folder in the URL fragment (`#`) whenever navigation succeeds, using a reversible and safely encoded path representation.
 - [x] Push folder changes into browser history so Back and Forward navigate through previously visited folders rather than leaving the current explorer state unchanged.
 - [x] Keep URL navigation, `sessionStorage` restoration, direct fragment loading, Recycle Bin state, and unavailable-path fallback behaviour consistent without creating duplicate history entries.
-- [x] Treat a touch/pen double-tap on a folder as one navigation action; prevent the second generated tap from activating an item that appears beneath the same screen position after the first navigation rerenders the folder list.
-- [x] Preserve normal single-tap touch navigation and desktop double-click behaviour while suppressing only the duplicate touch activation.
 
 ## Resolved 2026-09-29 — content-aware file previews
 
