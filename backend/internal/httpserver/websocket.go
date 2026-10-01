@@ -29,13 +29,14 @@ type websocketClientMessage struct {
 }
 
 type websocketServerMessage struct {
-	Type      string                `json:"type"`
-	Path      string                `json:"path,omitempty"`
-	Reason    string                `json:"reason,omitempty"`
-	At        time.Time             `json:"at,omitempty"`
-	Code      string                `json:"code,omitempty"`
-	Message   string                `json:"message,omitempty"`
-	Operation *operations.Operation `json:"operation,omitempty"`
+	Type         string                        `json:"type"`
+	Path         string                        `json:"path,omitempty"`
+	Reason       string                        `json:"reason,omitempty"`
+	At           time.Time                     `json:"at,omitempty"`
+	Code         string                        `json:"code,omitempty"`
+	Message      string                        `json:"message,omitempty"`
+	Operation    *operations.Operation         `json:"operation,omitempty"`
+	ThumbnailJob *filesystem.VideoThumbnailJob `json:"thumbnail_job,omitempty"`
 }
 
 // websocket is the worker's realtime channel. The browser uses ordinary HTTP
@@ -77,6 +78,8 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 
 	opEvents, cancelOps := s.ops.Subscribe()
 	defer cancelOps()
+	thumbnailEvents, cancelThumbnails := s.files.SubscribeVideoThumbnails()
+	defer cancelThumbnails()
 
 	if err := writeWebsocketMessage(ctx, conn, websocketServerMessage{Type: "ready"}); err != nil {
 		return
@@ -164,6 +167,15 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if err := writeWebsocketMessage(ctx, conn, websocketServerMessage{Type: "operation-updated", Operation: &operation}); err != nil {
+				return
+			}
+
+		case job, ok := <-thumbnailEvents:
+			if !ok {
+				thumbnailEvents = nil
+				continue
+			}
+			if err := writeWebsocketMessage(ctx, conn, websocketServerMessage{Type: "thumbnail-job-updated", ThumbnailJob: &job}); err != nil {
 				return
 			}
 

@@ -49,15 +49,27 @@ type Watch struct {
 	PollInterval string `json:"poll_interval"`
 }
 
+type Thumbnails struct {
+	CacheDir            string `json:"cache_dir"`
+	CacheSocket         string `json:"cache_socket"`
+	CacheMaxBytes       int64  `json:"cache_max_bytes"`
+	ImageWorkers        int    `json:"image_workers"`
+	VideoWorkers        int    `json:"video_workers"`
+	VideoFFmpegThreads  int    `json:"video_ffmpeg_threads"`
+	VideoTimeoutSeconds int    `json:"video_timeout_seconds"`
+	MaxQueued           int    `json:"max_queued"`
+}
+
 type Config struct {
-	Listen         string  `json:"listen"`
-	EditorMaxBytes int64   `json:"editor_max_bytes"`
-	Roots          []Root  `json:"roots"`
-	Archive        Archive `json:"archive"`
-	TLS            TLS     `json:"tls"`
-	Auth           Auth    `json:"auth"`
-	Runtime        Runtime `json:"runtime"`
-	Watch          Watch   `json:"watch"`
+	Listen         string     `json:"listen"`
+	EditorMaxBytes int64      `json:"editor_max_bytes"`
+	Roots          []Root     `json:"roots"`
+	Archive        Archive    `json:"archive"`
+	TLS            TLS        `json:"tls"`
+	Auth           Auth       `json:"auth"`
+	Runtime        Runtime    `json:"runtime"`
+	Watch          Watch      `json:"watch"`
+	Thumbnails     Thumbnails `json:"thumbnails"`
 }
 
 func Default() Config {
@@ -86,6 +98,16 @@ func Default() Config {
 			MinUserUID:     1000,
 		},
 		Watch: Watch{Polling: "auto", PollInterval: "5s"},
+		Thumbnails: Thumbnails{
+			CacheDir:            "/var/cache/webfile/thumbnails",
+			CacheSocket:         "/run/webfile/cache/thumbnails.sock",
+			CacheMaxBytes:       10 << 30,
+			ImageWorkers:        2,
+			VideoWorkers:        2,
+			VideoFFmpegThreads:  2,
+			VideoTimeoutSeconds: 300,
+			MaxQueued:           200,
+		},
 	}
 }
 
@@ -195,6 +217,26 @@ func (c *Config) Validate() error {
 	}
 	if c.Watch.PollInterval == "" {
 		c.Watch.PollInterval = "5s"
+	}
+	if strings.TrimSpace(c.Thumbnails.CacheDir) == "" || !filepath.IsAbs(c.Thumbnails.CacheDir) {
+		return errors.New("thumbnails.cache_dir must be an absolute path")
+	}
+	c.Thumbnails.CacheDir = filepath.Clean(c.Thumbnails.CacheDir)
+	if strings.TrimSpace(c.Thumbnails.CacheSocket) == "" || !filepath.IsAbs(c.Thumbnails.CacheSocket) {
+		return errors.New("thumbnails.cache_socket must be an absolute path")
+	}
+	c.Thumbnails.CacheSocket = filepath.Clean(c.Thumbnails.CacheSocket)
+	if c.Thumbnails.CacheMaxBytes <= 0 {
+		return errors.New("thumbnails.cache_max_bytes must be greater than zero")
+	}
+	if c.Thumbnails.ImageWorkers <= 0 || c.Thumbnails.VideoWorkers <= 0 || c.Thumbnails.VideoFFmpegThreads <= 0 {
+		return errors.New("thumbnail worker counts must be greater than zero")
+	}
+	if c.Thumbnails.VideoTimeoutSeconds <= 0 {
+		return errors.New("thumbnails.video_timeout_seconds must be greater than zero")
+	}
+	if c.Thumbnails.MaxQueued <= 0 {
+		return errors.New("thumbnails.max_queued must be greater than zero")
 	}
 	return nil
 }

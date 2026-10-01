@@ -1,2 +1,4 @@
 d /run/webfile 0755 root root -
 d /run/webfile/users 0751 root root -
+d /run/webfile/cache 0755 webfile webfile -
+d /var/cache/webfile/thumbnails 0750 webfile webfile -

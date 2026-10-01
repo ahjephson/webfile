@@ -2,11 +2,12 @@
 import { computed } from 'vue'
 import Button from 'primevue/button'
 import Drawer from 'primevue/drawer'
-import type { FileOperation } from '@/types/files'
+import type { FileOperation, VideoThumbnailJob } from '@/types/files'
 
 const props = defineProps<{
   visible: boolean
   operations: FileOperation[]
+  thumbnailJobs: VideoThumbnailJob[]
 }>()
 
 const emit = defineEmits<{
@@ -14,6 +15,7 @@ const emit = defineEmits<{
   cancel: [id: string]
   'clear-history': []
   'remove-history': [operation: FileOperation]
+  'cancel-thumbnail': [id: string]
 }>()
 
 const ordered = computed(() => props.operations
@@ -21,6 +23,12 @@ const ordered = computed(() => props.operations
   .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at)))
 const activeTasks = computed(() => ordered.value.filter(active))
 const history = computed(() => ordered.value.filter(operation => !active(operation)))
+const visibleThumbnailJobs = computed(() => props.thumbnailJobs.filter(job => job.state !== 'ready' && job.state !== 'cancelled'))
+const thumbnailSummary = computed(() => {
+  const generating = visibleThumbnailJobs.value.filter(job => ['probing', 'generating', 'publishing'].includes(job.state)).length
+  const queued = visibleThumbnailJobs.value.filter(job => job.state === 'queued').length
+  return [generating ? `${generating} generating` : '', queued ? `${queued} queued` : ''].filter(Boolean).join(', ')
+})
 
 function percent(operation: FileOperation): number | null {
   if (operation.progress_total <= 0) return null
@@ -80,8 +88,32 @@ function formatDate(value?: string) {
 
 <template>
   <Drawer :visible="visible" position="right" header="Tasks" :style="{ width: 'min(32rem, 94vw)' }" @update:visible="emit('update:visible', $event)">
-    <div v-if="ordered.length === 0" class="py-12 text-center text-sm text-zinc-500">No tasks yet.</div>
+    <div v-if="ordered.length === 0 && visibleThumbnailJobs.length === 0" class="py-12 text-center text-sm text-zinc-500">No tasks yet.</div>
     <div v-else class="space-y-5">
+      <section v-if="visibleThumbnailJobs.length" aria-labelledby="thumbnail-tasks-heading">
+        <div class="mb-2 flex items-center justify-between gap-3">
+          <h3 id="thumbnail-tasks-heading" class="text-xs font-semibold uppercase tracking-wide text-violet-400">Video thumbnails</h3>
+          <span class="text-xs text-zinc-500">{{ thumbnailSummary }}</span>
+        </div>
+        <div class="space-y-2">
+          <article v-for="job in visibleThumbnailJobs" :key="job.id" class="rounded-lg border border-violet-900/70 bg-violet-950/20 p-3">
+            <div class="flex items-start gap-3">
+              <div class="min-w-0 flex-1">
+                <div class="truncate text-sm font-medium">{{ job.name }}</div>
+                <div class="mt-1 truncate text-xs text-zinc-500">
+                  <span class="capitalize">{{ job.state }}</span><span v-if="job.queue_position"> · Queue position {{ job.queue_position }}</span>
+                </div>
+              </div>
+              <Button v-if="job.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel-thumbnail', job.id)" />
+            </div>
+            <div v-if="job.state !== 'queued' && job.state !== 'failed'" class="mt-3 h-1.5 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${job.name} thumbnail progress`">
+              <div class="webfile-indeterminate h-full w-1/3 bg-violet-500" />
+            </div>
+            <p v-if="job.error" class="mt-2 text-xs text-red-300">{{ job.error }}</p>
+          </article>
+        </div>
+      </section>
+
       <section v-if="activeTasks.length" aria-labelledby="active-tasks-heading">
         <h3 id="active-tasks-heading" class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Active</h3>
         <div class="space-y-3">

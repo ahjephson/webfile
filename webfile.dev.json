@@ -17,6 +17,16 @@
     "launcher_group": "webfile",
     "min_user_uid": 1000
   },
+  "thumbnails": {
+    "cache_dir": "/tmp/webfile-thumbnail-cache",
+    "cache_socket": "/tmp/webfile-thumbnail-cache.sock",
+    "cache_max_bytes": 10737418240,
+    "image_workers": 2,
+    "video_workers": 2,
+    "video_ffmpeg_threads": 2,
+    "video_timeout_seconds": 300,
+    "max_queued": 200
+  },
   "roots": [
     { "name": "WSL Root", "path": "/" }
   ],

@@ -20,6 +20,7 @@ import (
 
 	"webfile/internal/identity"
 	"webfile/internal/launcher"
+	"webfile/internal/thumbnailcache"
 )
 
 type Process struct {
@@ -37,16 +38,20 @@ type Manager struct {
 	configPath     string
 	workerDir      string
 	launcherSocket string
+	cacheSocket    string
+	cacheAuth      *thumbnailcache.Authorizer
 	closed         bool
 }
 
-func NewManager(executable, configPath, workerDir, launcherSocket string) *Manager {
+func NewManager(executable, configPath, workerDir, launcherSocket, cacheSocket string, cacheAuth *thumbnailcache.Authorizer) *Manager {
 	return &Manager{
 		workers:        map[uint32]*Process{},
 		executable:     executable,
 		configPath:     configPath,
 		workerDir:      workerDir,
 		launcherSocket: launcherSocket,
+		cacheSocket:    cacheSocket,
+		cacheAuth:      cacheAuth,
 	}
 }
 
@@ -60,15 +65,18 @@ func (m *Manager) Ensure(ctx context.Context, id identity.Identity) (*Process, e
 		return p, nil
 	}
 	delete(m.workers, id.UID)
+	cacheToken, err := m.cacheAuth.Issue(id.UID)
+	if err != nil {
+		return nil, fmt.Errorf("issue thumbnail cache capability: %w", err)
+	}
 
 	var (
-		p   *Process
-		err error
+		p *Process
 	)
 	if uint32(os.Geteuid()) != id.UID && os.Geteuid() != 0 {
-		p, err = m.startViaLauncherLocked(ctx, id)
+		p, err = m.startViaLauncherLocked(ctx, id, cacheToken)
 	} else {
-		p, err = m.startLocalLocked(ctx, id)
+		p, err = m.startLocalLocked(ctx, id, cacheToken)
 	}
 	if err != nil {
 		return nil, err
@@ -108,18 +116,18 @@ func (m *Manager) Close() error {
 	return first
 }
 
-func (m *Manager) startViaLauncherLocked(ctx context.Context, id identity.Identity) (*Process, error) {
+func (m *Manager) startViaLauncherLocked(ctx context.Context, id identity.Identity, cacheToken string) (*Process, error) {
 	if m.launcherSocket == "" {
 		return nil, errors.New("broker is unprivileged and no launcher socket is configured")
 	}
-	socket, err := launcher.ClientEnsure(ctx, m.launcherSocket, id.Username)
+	socket, err := launcher.ClientEnsure(ctx, m.launcherSocket, id.Username, cacheToken)
 	if err != nil {
 		return nil, fmt.Errorf("start worker via launcher: %w", err)
 	}
 	return &Process{Identity: id, Socket: socket, Proxy: proxyForSocket(socket), remote: true}, nil
 }
 
-func (m *Manager) startLocalLocked(ctx context.Context, id identity.Identity) (*Process, error) {
+func (m *Manager) startLocalLocked(ctx context.Context, id identity.Identity, cacheToken string) (*Process, error) {
 	if m.executable == "" {
 		return nil, errors.New("worker executable is empty")
 	}
@@ -150,6 +158,8 @@ func (m *Manager) startLocalLocked(ctx context.Context, id identity.Identity) (*
 		"-socket", socket,
 		"-username", id.Username,
 		"-home", id.Home,
+		"-thumbnail-cache-socket", m.cacheSocket,
+		"-thumbnail-cache-token", cacheToken,
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

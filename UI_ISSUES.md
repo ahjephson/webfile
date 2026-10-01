@@ -5,15 +5,16 @@ Per-user settings are tracked separately in `SETTINGS_DESIGN.md`.
 ## Open — verified 2026-10-01
 
 - [ ] Prevent a rapid touch/pen double-tap in grid view from navigating through
-  more than one folder level. The equivalent list-view workflow passes, but the
-  grid Playwright regression test currently reaches the nested folder.
+  more than one folder level. The equivalent list-view workflow passes in the
+  full suite, but the grid regression currently reaches the nested folder.
 - [ ] Make unchecked file-selection boxes visibly unfilled in the light theme.
   They currently use a light-grey fill in both list and grid views.
 
 ## Audit 2026-10-01
 
-- The full Playwright suite passed 62 of 63 tests. The only failure was the grid
-  rapid-double-tap regression recorded above.
+- The latest full Playwright suite passed 63 of 64 tests after the thumbnail
+  endpoint mocks were updated for the new queue API. The only failure was the
+  grid rapid-double-tap regression recorded above.
 - `go test ./...` and `go vet ./...` passed for the backend, including the folder
   watcher coverage.
 - In-app visual checks confirmed the Recycle Bin toggle state, lack of a parent

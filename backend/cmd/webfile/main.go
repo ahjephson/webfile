@@ -25,6 +25,7 @@ import (
 	"webfile/internal/operations"
 	"webfile/internal/persistence"
 	"webfile/internal/session"
+	"webfile/internal/thumbnailcache"
 	"webfile/internal/watch"
 	"webfile/internal/worker"
 )
@@ -88,7 +89,23 @@ func serve(args []string) {
 
 	executable, err := os.Executable()
 	fatalIf(err, "resolve executable")
-	workerManager := worker.NewManager(executable, absConfig, cfg.Runtime.WorkerDir, cfg.Runtime.LauncherSocket)
+	cacheStore, err := thumbnailcache.Open(cfg.Thumbnails.CacheDir, cfg.Thumbnails.CacheMaxBytes)
+	fatalIf(err, "open thumbnail cache")
+	cacheAuthorizer := thumbnailcache.NewAuthorizer()
+	cacheListener, err := thumbnailcache.Listen(cfg.Thumbnails.CacheSocket)
+	fatalIf(err, "listen for thumbnail cache workers")
+	cacheServer := &http.Server{Handler: cacheAuthorizer.Handler(cacheStore.Handler()), ConnContext: thumbnailcache.ConnContext, ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		if err := cacheServer.Serve(cacheListener); err != nil && err != http.ErrServerClosed {
+			slog.Error("thumbnail cache server stopped", slog.String("err", err.Error()))
+		}
+	}()
+	defer func() {
+		_ = cacheServer.Close()
+		_ = os.Remove(cfg.Thumbnails.CacheSocket)
+	}()
+
+	workerManager := worker.NewManager(executable, absConfig, cfg.Runtime.WorkerDir, cfg.Runtime.LauncherSocket, cfg.Thumbnails.CacheSocket, cacheAuthorizer)
 	defer workerManager.Close()
 
 	currentIdentity, err := identity.Current()
@@ -167,6 +184,7 @@ func launcherMain(args []string) {
 		BrokerGroup: cfg.Runtime.LauncherGroup,
 		MinUserUID:  cfg.Runtime.MinUserUID,
 		PAMService:  cfg.Auth.PAMService,
+		CacheSocket: cfg.Thumbnails.CacheSocket,
 	}
 	slog.Info("worker launcher ready", slog.String("socket", cfg.Runtime.LauncherSocket))
 	fatalIf(srv.Serve(ctx), "launcher stopped")
@@ -178,10 +196,12 @@ func workerMain(args []string) {
 	socketPath := flags.String("socket", "", "unix socket path")
 	username := flags.String("username", "", "linux username")
 	home := flags.String("home", "", "linux home directory")
+	cacheSocket := flags.String("thumbnail-cache-socket", "", "broker thumbnail cache socket")
+	cacheToken := flags.String("thumbnail-cache-token", "", "broker thumbnail cache capability")
 	_ = flags.Parse(args)
 
-	if *socketPath == "" || *username == "" || *home == "" {
-		fatalIf(errors.New("worker requires -socket, -username and -home"), "worker configuration failed")
+	if *socketPath == "" || *username == "" || *home == "" || *cacheSocket == "" || *cacheToken == "" {
+		fatalIf(errors.New("worker requires socket, identity and thumbnail cache capability arguments"), "worker configuration failed")
 	}
 	cfg, err := config.Load(*configPath)
 	fatalIf(err, "worker configuration failed")
@@ -194,7 +214,15 @@ func workerMain(args []string) {
 	}
 	resolver, err := filesystem.NewResolver(roots)
 	fatalIf(err, "filesystem resolver failed")
-	files := filesystem.NewService(resolver, cfg.EditorMaxBytes)
+	files := filesystem.NewServiceWithThumbnailOptions(resolver, cfg.EditorMaxBytes, "", filesystem.ThumbnailOptions{
+		Cache:              thumbnailcache.NewClient(*cacheSocket, *cacheToken),
+		ImageWorkers:       cfg.Thumbnails.ImageWorkers,
+		VideoWorkers:       cfg.Thumbnails.VideoWorkers,
+		VideoFFmpegThreads: cfg.Thumbnails.VideoFFmpegThreads,
+		VideoTimeout:       time.Duration(cfg.Thumbnails.VideoTimeoutSeconds) * time.Second,
+		MaxQueued:          cfg.Thumbnails.MaxQueued,
+	})
+	defer files.Close()
 	uploads := filesystem.NewUploadManager(resolver, filepath.Join(*home, ".local", "share", "webfile", "uploads"))
 	pollInterval, err := time.ParseDuration(cfg.Watch.PollInterval)
 	fatalIf(err, "invalid watch.poll_interval")

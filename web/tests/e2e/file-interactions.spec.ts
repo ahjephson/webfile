@@ -974,7 +974,7 @@ test('the main pane uses generated thumbnails while full previews use the origin
     const path = new URL(route.request().url()).searchParams.get('path') ?? ''
     route.fulfill({ json: { path, content_type: path === '/photo.jpg' ? 'image/jpeg' : 'text/plain; charset=utf-8' } })
   })
-  await page.route('**/api/fs/thumbnail**', route => {
+  await page.route('**/api/fs/thumbnail?**', route => {
     thumbnailRequests++
     route.fulfill({
       contentType: 'image/svg+xml',
@@ -1026,7 +1026,7 @@ test('video tiles animate a cached sprite on hover without requesting the video'
       entries: [{ name: 'clip.mp4', path: '/clip.mp4', is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }],
     },
   }))
-  await page.route('**/api/fs/thumbnail**', route => {
+  await page.route('**/api/fs/thumbnail?**', route => {
     thumbnailRequests++
     route.fulfill({
       contentType: 'image/svg+xml',
@@ -1264,7 +1264,7 @@ test('image gallery tracks a swipe and progressively loads an ordered thumbnail 
     const path = new URL(route.request().url()).searchParams.get('path') ?? ''
     return route.fulfill({ json: { path, content_type: 'image/png' } })
   })
-  await page.route('**/api/fs/thumbnail**', async route => {
+  await page.route('**/api/fs/thumbnail?**', async route => {
     const path = new URL(route.request().url()).searchParams.get('path') ?? ''
     thumbnailRequests.push(path)
     activeThumbnails++
@@ -1360,7 +1360,7 @@ test('fit mode responds to gallery viewport growth', async ({ page }) => {
     },
   }))
   await page.route('**/api/fs/content-type**', route => route.fulfill({ json: { path: '/wide.svg', content_type: 'image/png' } }))
-  await page.route('**/api/fs/thumbnail**', route => route.fulfill({
+  await page.route('**/api/fs/thumbnail?**', route => route.fulfill({
     contentType: 'image/svg+xml',
     body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"/>',
   }))
@@ -1389,7 +1389,7 @@ test('gallery navigation keeps the decoded target constrained throughout the tra
     const path = new URL(route.request().url()).searchParams.get('path') ?? ''
     return route.fulfill({ json: { path, content_type: 'image/png' } })
   })
-  await page.route('**/api/fs/thumbnail**', route => route.fulfill({
+  await page.route('**/api/fs/thumbnail?**', route => route.fulfill({
     contentType: 'image/svg+xml',
     headers: { 'Cache-Control': 'public, max-age=3600' },
     body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120"/>',
@@ -1652,6 +1652,40 @@ test('task drawer separates active work from persistent history', async ({ page 
   await expect.poll(() => clearHistoryCalled).toBe(true)
   await expect(reloadedDrawer.getByText('History', { exact: true })).toHaveCount(0)
   await expect(reloadedDrawer.getByText('Copying photos')).toBeVisible()
+})
+
+test('task drawer surfaces the transient video thumbnail queue separately', async ({ page }) => {
+  let cancelled = ''
+  const jobs = [{
+    id: 'thumbnail-1',
+    path: '/media/clip.mp4',
+    name: 'clip.mp4',
+    state: 'queued',
+    queue_position: 3,
+    cancellable: true,
+    updated_at: '2000-01-01T00:00:00Z',
+  }]
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries: [] } }))
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [] } }))
+  await page.route('**/api/fs/thumbnails/jobs**', route => {
+    if (route.request().method() === 'DELETE') {
+      cancelled = route.request().url().split('/').pop() ?? ''
+      return route.fulfill({ json: { ok: true } })
+    }
+    return route.fulfill({ json: { jobs } })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Open tasks' })).toHaveText('1')
+  await page.getByRole('button', { name: 'Open tasks' }).click()
+
+  const drawer = page.getByRole('complementary')
+  await expect(drawer.getByText('Video thumbnails', { exact: true })).toBeVisible()
+  await expect(drawer.getByText('1 queued', { exact: true })).toBeVisible()
+  await expect(drawer.getByText('clip.mp4')).toBeVisible()
+  await expect(drawer.getByText('Queue position 3', { exact: false })).toBeVisible()
+  await drawer.getByRole('button', { name: 'Cancel' }).click()
+  await expect.poll(() => cancelled).toBe('thumbnail-1')
 })
 
 test('Extract here starts a single-pass task in the archive directory', async ({ page }) => {

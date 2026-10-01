@@ -15,7 +15,10 @@ const thumbnailFailed = ref(false)
 const videoSprite = ref<HTMLElement | null>(null)
 const videoFrame = ref(0)
 const videoFrameWidth = ref(0)
+const videoThumbnailUrl = ref('')
 let videoTimer: ReturnType<typeof setInterval> | null = null
+let videoRetryTimer: number | null = null
+let videoRequest = 0
 const videoFrameCount = 10
 const pathVisual = computed(() => fileVisualForPath(props.entry.path))
 const visual = computed(() => detectedContentType.value
@@ -26,7 +29,7 @@ const showVideoThumbnail = computed(() => props.tile && !props.entry.is_dir && v
 const tileHeight = computed(() => ({ small: '4rem', medium: '7rem', large: '10rem' })[props.tileSize ?? 'medium'])
 const tileIconSize = computed(() => ({ small: '2.5rem', medium: '4rem', large: '5.5rem' })[props.tileSize ?? 'medium'])
 const videoSpriteStyle = computed(() => ({
-  backgroundImage: `url("${api.thumbnailUrl(props.entry.path)}")`,
+  backgroundImage: videoThumbnailUrl.value ? `url("${videoThumbnailUrl.value}")` : 'none',
   backgroundPositionX: `${-(videoFrame.value * videoFrameWidth.value)}px`,
   backgroundPositionY: '0',
   backgroundRepeat: 'no-repeat',
@@ -47,7 +50,45 @@ watch(() => props.entry.path, async path => {
   }
 }, { immediate: true })
 
-onBeforeUnmount(stopVideoAnimation)
+watch([() => props.entry.path, showVideoThumbnail], ([path, visible]) => {
+  clearVideoThumbnail()
+  if (visible) void loadVideoThumbnail(path)
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+  stopVideoAnimation()
+  clearVideoThumbnail()
+})
+
+async function loadVideoThumbnail(path: string) {
+  const request = ++videoRequest
+  try {
+    const result = await api.requestThumbnail(path)
+    if (request !== videoRequest || props.entry.path !== path) {
+      if (result.url) URL.revokeObjectURL(result.url)
+      return
+    }
+    if (result.url) {
+      videoThumbnailUrl.value = result.url
+      return
+    }
+    if (result.job?.state === 'failed' || result.job?.state === 'cancelled') {
+      thumbnailFailed.value = true
+      return
+    }
+    videoRetryTimer = window.setTimeout(() => void loadVideoThumbnail(path), 750)
+  } catch {
+    if (request === videoRequest) thumbnailFailed.value = true
+  }
+}
+
+function clearVideoThumbnail() {
+  videoRequest++
+  if (videoRetryTimer !== null) window.clearTimeout(videoRetryTimer)
+  videoRetryTimer = null
+  if (videoThumbnailUrl.value) URL.revokeObjectURL(videoThumbnailUrl.value)
+  videoThumbnailUrl.value = ''
+}
 
 function startVideoAnimation() {
   if (!showVideoThumbnail.value || videoTimer !== null) return

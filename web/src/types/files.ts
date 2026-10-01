@@ -91,6 +91,21 @@ export interface FileOperation {
   finished_at?: string
 }
 
+export type VideoThumbnailState = 'queued' | 'probing' | 'generating' | 'publishing' | 'ready' | 'failed' | 'cancelled'
+
+export interface VideoThumbnailJob {
+  id: string
+  path: string
+  name: string
+  state: VideoThumbnailState
+  queue_position?: number
+  error?: string
+  cancellable: boolean
+  started_at?: string
+  updated_at: string
+  finished_at?: string
+}
+
 export interface TrashItem {
   id: string
   name: string

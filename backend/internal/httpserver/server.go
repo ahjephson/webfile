@@ -55,6 +55,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/fs/upload", s.upload)
 	s.mux.HandleFunc("GET /api/fs/download", s.download)
 	s.mux.HandleFunc("GET /api/fs/thumbnail", s.thumbnail)
+	s.mux.HandleFunc("GET /api/fs/thumbnails/jobs", s.listThumbnailJobs)
+	s.mux.HandleFunc("DELETE /api/fs/thumbnails/jobs/{id}", s.cancelThumbnailJob)
 	s.mux.HandleFunc("GET /api/fs/details", s.details)
 	s.mux.HandleFunc("POST /api/fs/chmod", s.chmod)
 	s.mux.HandleFunc("POST /api/fs/chown", s.chown)
@@ -245,11 +247,21 @@ func inlineContentTypeAllowed(contentType string) bool {
 func (s *Server) thumbnail(w http.ResponseWriter, r *http.Request) {
 	width := thumbnailDimension(r.URL.Query().Get("width"), 320)
 	height := thumbnailDimension(r.URL.Query().Get("height"), 320)
-	thumbnail, err := s.files.Thumbnail(r.Context(), queryPath(r), width, height)
+	result, err := s.files.RequestThumbnail(r.Context(), queryPath(r), width, height)
 	if err != nil {
+		if errors.Is(err, filesystem.ErrThumbnailQueueFull) {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+			return
+		}
 		writeError(w, err)
 		return
 	}
+	if result.Job != nil {
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusAccepted, map[string]any{"job": result.Job})
+		return
+	}
+	thumbnail := *result.Thumbnail
 	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("ETag", thumbnail.ETag)
 	if r.Header.Get("If-None-Match") == thumbnail.ETag {
@@ -259,6 +271,18 @@ func (s *Server) thumbnail(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", thumbnail.ContentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(thumbnail.Data)))
 	_, _ = w.Write(thumbnail.Data)
+}
+
+func (s *Server) listThumbnailJobs(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": s.files.VideoThumbnailJobs()})
+}
+
+func (s *Server) cancelThumbnailJob(w http.ResponseWriter, r *http.Request) {
+	if !s.files.CancelVideoThumbnailJob(r.PathValue("id")) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "video thumbnail job is not active"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func thumbnailDimension(value string, fallback int) int {

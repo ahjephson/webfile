@@ -191,9 +191,14 @@ Ubuntu/Debian install both from the FFmpeg package:
 sudo apt install ffmpeg
 ```
 
-WebFile samples representative frames once, stores the resulting WebP sprite in
-the existing in-memory thumbnail cache, and never sends the source video merely
-to animate a file tile.
+WebFile samples representative frames once and stores the resulting WebP sprite
+in the persistent, broker-owned thumbnail cache. Cache hits still require the
+requesting worker to open and stat the source as the logged-in user. Video
+generation uses a separate request-driven queue (two FFmpeg workers and two
+threads per process by default); the Tasks drawer shows queued and running
+video work without adding it to durable file-operation history. Ordinary image
+thumbnails use a separate fast path and stay out of the Tasks UI. The browser
+never downloads a source video merely to animate a file tile.
 
 ## Development
 
@@ -278,8 +283,11 @@ webfile.service           User=webfile   HTTPS broker
 webfile-launcher.service  User=root      worker launcher only
 ```
 
-The broker stores application state in `/var/lib/webfile`. User file access is
-performed only by UID-dropped workers.
+The broker stores application state in `/var/lib/webfile` and persistent
+thumbnails in `/var/cache/webfile/thumbnails` by default. The cache directory
+and its Unix socket are configurable under `thumbnails`; generated cache data
+is size-bounded and published atomically. User file access and thumbnail
+generation are performed only by UID-dropped workers.
 
 `/etc/webfile/webfile.json` contains no credentials and is readable by local
 users because UID-dropped workers load it after launch. TLS private-key material

@@ -23,9 +23,10 @@ import (
 )
 
 type Request struct {
-	Action   string `json:"action"`
-	Username string `json:"username"`
-	Password string `json:"password,omitempty"`
+	Action     string `json:"action"`
+	Username   string `json:"username"`
+	Password   string `json:"password,omitempty"`
+	CacheToken string `json:"cache_token,omitempty"`
 }
 
 type Response struct {
@@ -42,16 +43,23 @@ type Server struct {
 	BrokerGroup string
 	MinUserUID  uint32
 	PAMService  string
+	CacheSocket string
 
 	mu      sync.Mutex
-	workers map[uint32]*exec.Cmd
+	workers map[uint32]workerProcess
+}
+
+type workerProcess struct {
+	cmd        *exec.Cmd
+	cacheToken string
+	done       <-chan struct{}
 }
 
 func (s *Server) Serve(ctx context.Context) error {
 	if os.Geteuid() != 0 {
 		return errors.New("launcher must run as root")
 	}
-	if s.SocketPath == "" || s.Executable == "" || s.ConfigPath == "" || s.WorkerDir == "" {
+	if s.SocketPath == "" || s.Executable == "" || s.ConfigPath == "" || s.WorkerDir == "" || s.CacheSocket == "" {
 		return errors.New("launcher configuration is incomplete")
 	}
 	gid, err := groupID(s.BrokerGroup)
@@ -61,7 +69,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.MinUserUID == 0 {
 		s.MinUserUID = 1000
 	}
-	s.workers = map[uint32]*exec.Cmd{}
+	s.workers = map[uint32]workerProcess{}
 	if err := os.MkdirAll(filepath.Dir(s.SocketPath), 0o755); err != nil {
 		return err
 	}
@@ -121,7 +129,7 @@ func (s *Server) handle(conn net.Conn, brokerGID int) {
 		_ = json.NewEncoder(conn).Encode(Response{OK: true})
 		return
 	}
-	if req.Action != "ensure" || req.Username == "" {
+	if req.Action != "ensure" || req.Username == "" || len(req.CacheToken) != 64 {
 		_ = json.NewEncoder(conn).Encode(Response{Error: "unsupported request"})
 		return
 	}
@@ -134,7 +142,7 @@ func (s *Server) handle(conn net.Conn, brokerGID int) {
 		_ = json.NewEncoder(conn).Encode(Response{Error: "user is not allowed to receive a filesystem worker"})
 		return
 	}
-	socket, err := s.ensureWorker(id, brokerGID)
+	socket, err := s.ensureWorker(id, brokerGID, s.CacheSocket, req.CacheToken)
 	if err != nil {
 		_ = json.NewEncoder(conn).Encode(Response{Error: err.Error()})
 		return
@@ -142,13 +150,22 @@ func (s *Server) handle(conn net.Conn, brokerGID int) {
 	_ = json.NewEncoder(conn).Encode(Response{OK: true, Socket: socket})
 }
 
-func (s *Server) ensureWorker(id identity.Identity, brokerGID int) (string, error) {
+func (s *Server) ensureWorker(id identity.Identity, brokerGID int, cacheSocket, cacheToken string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	userDir := filepath.Join(s.WorkerDir, strconv.FormatUint(uint64(id.UID), 10))
 	socket := filepath.Join(userDir, "worker.sock")
-	if cmd := s.workers[id.UID]; cmd != nil && cmd.ProcessState == nil && socketReady(socket) {
+	if worker := s.workers[id.UID]; worker.cmd != nil && worker.cmd.ProcessState == nil && worker.cacheToken == cacheToken && socketReady(socket) {
 		return socket, nil
+	}
+	if worker := s.workers[id.UID]; worker.cmd != nil && worker.cmd.ProcessState == nil {
+		_ = worker.cmd.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-worker.done:
+		case <-time.After(5 * time.Second):
+			_ = worker.cmd.Process.Kill()
+			<-worker.done
+		}
 	}
 	if err := os.MkdirAll(userDir, 0o710); err != nil {
 		return "", err
@@ -160,7 +177,7 @@ func (s *Server) ensureWorker(id identity.Identity, brokerGID int) (string, erro
 		return "", err
 	}
 	_ = os.Remove(socket)
-	cmd := exec.Command(s.Executable, "worker", "-config", s.ConfigPath, "-socket", socket, "-username", id.Username, "-home", id.Home)
+	cmd := exec.Command(s.Executable, "worker", "-config", s.ConfigPath, "-socket", socket, "-username", id.Username, "-home", id.Home, "-thumbnail-cache-socket", cacheSocket, "-thumbnail-cache-token", cacheToken)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Dir = id.Home
@@ -185,30 +202,32 @@ func (s *Server) ensureWorker(id identity.Identity, brokerGID int) (string, erro
 		_ = cmd.Process.Kill()
 		return "", err
 	}
-	s.workers[id.UID] = cmd
-	go func(uid uint32, c *exec.Cmd) {
+	done := make(chan struct{})
+	s.workers[id.UID] = workerProcess{cmd: cmd, cacheToken: cacheToken, done: done}
+	go func(uid uint32, c *exec.Cmd, finished chan<- struct{}) {
 		_ = c.Wait()
+		close(finished)
 		s.mu.Lock()
-		if s.workers[uid] == c {
+		if s.workers[uid].cmd == c {
 			delete(s.workers, uid)
 		}
 		s.mu.Unlock()
-	}(id.UID, cmd)
+	}(id.UID, cmd, done)
 	return socket, nil
 }
 
 func (s *Server) stopAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for uid, cmd := range s.workers {
-		if cmd.Process != nil && cmd.ProcessState == nil {
-			_ = cmd.Process.Signal(syscall.SIGTERM)
+	for uid, worker := range s.workers {
+		if worker.cmd.Process != nil && worker.cmd.ProcessState == nil {
+			_ = worker.cmd.Process.Signal(syscall.SIGTERM)
 		}
 		delete(s.workers, uid)
 	}
 }
 
-func ClientEnsure(ctx context.Context, socketPath, username string) (string, error) {
+func ClientEnsure(ctx context.Context, socketPath, username, cacheToken string) (string, error) {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", socketPath)
 	if err != nil {
@@ -216,7 +235,7 @@ func ClientEnsure(ctx context.Context, socketPath, username string) (string, err
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-	if err := json.NewEncoder(conn).Encode(Request{Action: "ensure", Username: username}); err != nil {
+	if err := json.NewEncoder(conn).Encode(Request{Action: "ensure", Username: username, CacheToken: cacheToken}); err != nil {
 		return "", err
 	}
 	var res Response

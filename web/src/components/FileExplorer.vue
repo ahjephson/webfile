@@ -9,7 +9,7 @@ import SplitButton from 'primevue/splitbutton'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '@/api/client'
-import type { Favourite, FileEntry, FileOperation, TrashItem } from '@/types/files'
+import type { Favourite, FileEntry, FileOperation, TrashItem, VideoThumbnailJob } from '@/types/files'
 import { resolvedTheme, setTheme, themeMode, type ThemeMode } from '@/theme'
 import { useRealtime } from '@/composables/useRealtime'
 import { useFilePreview } from '@/composables/useFilePreview'
@@ -110,6 +110,7 @@ const extractBusy = ref(false)
 const destinationVisible = ref(false)
 const transferMode = ref<TransferMode>('copy')
 const operationsVisible = ref(false)
+const thumbnailJobs = ref<VideoThumbnailJob[]>([])
 const detailsVisible = ref(restoredExplorerState.detailsVisible)
 const detailsPath = ref(restoredStateMatchesPath ? restoredExplorerState.detailsPath : currentPath.value)
 const favouritesVisible = ref(false)
@@ -148,8 +149,41 @@ const {
     invalidateTimer = window.setTimeout(() => void refresh(false), 120)
   },
   onOperation: handleOperationUpdate,
-  onConnected: () => { void loadOperations().then(restorePasswordPrompt) },
+  onThumbnailJob: updateThumbnailJob,
+  onConnected: () => {
+    void Promise.all([loadOperations(), loadThumbnailJobs()]).then(() => restorePasswordPrompt())
+  },
 })
+
+const activeThumbnailJobs = computed(() => thumbnailJobs.value.filter(job => ['queued', 'probing', 'generating', 'publishing'].includes(job.state)))
+const taskBadgeCount = computed(() => activeOperations.value.length + activeThumbnailJobs.value.length)
+
+watch(operationsVisible, visible => {
+  if (visible) void loadThumbnailJobs()
+})
+
+async function loadThumbnailJobs() {
+  try {
+    thumbnailJobs.value = (await api.thumbnailJobs()).jobs
+  } catch {
+    // Realtime updates or the next drawer open will retry.
+  }
+}
+
+function updateThumbnailJob(job: VideoThumbnailJob) {
+  const index = thumbnailJobs.value.findIndex(current => current.id === job.id)
+  if (index === -1) thumbnailJobs.value = [job, ...thumbnailJobs.value]
+  else thumbnailJobs.value.splice(index, 1, job)
+  if (job.state === 'ready' || job.state === 'cancelled') {
+    window.setTimeout(() => {
+      thumbnailJobs.value = thumbnailJobs.value.filter(current => current.id !== job.id || !['ready', 'cancelled'].includes(current.state))
+    }, 3200)
+  }
+}
+
+function cancelThumbnailJob(id: string) {
+  void api.cancelThumbnailJob(id).catch(err => showError(err, 'Could not cancel thumbnail'))
+}
 
 const trashEntries = computed<FileEntry[]>(() => trashItems.value.map(item => ({
   name: item.name,
@@ -1118,7 +1152,7 @@ function operationLabel(value: string) {
 
         <span class="min-w-2 flex-1" />
         <div class="flex items-center gap-1">
-          <Button v-tooltip.bottom="operationsVisible ? 'Close tasks' : 'Open tasks'" icon="pi pi-list-check" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': operationsVisible }" :badge="activeOperations.length ? String(activeOperations.length) : undefined" :aria-label="operationsVisible ? 'Close tasks' : 'Open tasks'" :aria-pressed="operationsVisible" @click="operationsVisible = !operationsVisible" />
+          <Button v-tooltip.bottom="operationsVisible ? 'Close tasks' : 'Open tasks'" icon="pi pi-list-check" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': operationsVisible }" :badge="taskBadgeCount ? String(taskBadgeCount) : undefined" :aria-label="operationsVisible ? 'Close tasks' : 'Open tasks'" :aria-pressed="operationsVisible" @click="operationsVisible = !operationsVisible" />
           <Button v-tooltip.bottom="'Settings'" icon="pi pi-cog" size="small" severity="secondary" text aria-label="Settings" @click="showSettingsPlaceholder" />
         </div>
         <span class="mx-1 h-6 w-px bg-zinc-700" />
@@ -1300,6 +1334,6 @@ function operationLabel(value: string) {
     <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTarget?.name ?? ''" :destination="extractDestination" :busy="extractBusy" @extract="prepareExtraction" />
     <ArchivePasswordDialog v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="extractBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @cancel="cancelPasswordPrompt" />
     <DestinationDialog v-model:visible="destinationVisible" :mode="transferMode" :count="transferEntries.length" :initial-path="currentPath" @submit="submitTransfer" />
-    <OperationsPanel v-model:visible="operationsVisible" :operations="operations" @cancel="cancelOperation" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" />
+    <OperationsPanel v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @cancel="cancelOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" />
   </section>
 </template>

@@ -8,6 +8,7 @@ import type {
   Preferences,
   TrashItem,
   UploadSession,
+  VideoThumbnailJob,
 } from '@/types/files'
 
 export class ApiError extends Error {
@@ -314,5 +315,23 @@ export const api = {
   thumbnailUrl(path: string, width = 320, height = 320) {
     const query = new URLSearchParams({ path, width: String(width), height: String(height) })
     return `/api/fs/thumbnail?${query}`
+  },
+
+  async requestThumbnail(path: string, width = 320, height = 320): Promise<{ url?: string; job?: VideoThumbnailJob }> {
+    const response = await fetch(this.thumbnailUrl(path, width, height))
+    if (response.status === 202) {
+      return response.json() as Promise<{ job: VideoThumbnailJob }>
+    }
+    if (!response.ok) throw new ApiError(`${response.status} ${response.statusText}`, response.status)
+    return { url: URL.createObjectURL(await response.blob()) }
+  },
+
+  async thumbnailJobs(): Promise<{ jobs: VideoThumbnailJob[] }> {
+    const response = await request<{ jobs?: VideoThumbnailJob[] | null }>('/api/fs/thumbnails/jobs')
+    return { jobs: arrayOrEmpty(response.jobs) }
+  },
+
+  cancelThumbnailJob(id: string) {
+    return request<{ ok: boolean }>(`/api/fs/thumbnails/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' })
   },
 }

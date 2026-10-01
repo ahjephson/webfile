@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"webfile/internal/thumbnailcache"
 )
 
 var (
@@ -53,9 +55,12 @@ type Service struct {
 	resolver          *Resolver
 	editorMaxBytes    int64
 	trashDir          string
-	thumbnails        *thumbnailCache
+	thumbnailCache    thumbnailcache.Cache
 	thumbnailSlots    chan struct{}
+	thumbnailFlightMu sync.Mutex
+	thumbnailFlights  map[string]*thumbnailFlight
 	videoThumbnails   videoThumbnailGenerator
+	videoQueue        *videoThumbnailQueue
 	folderSizeMu      sync.Mutex
 	folderSizeCache   map[string]folderSizeCacheEntry
 	folderSizePending map[string]bool
@@ -67,18 +72,28 @@ func NewService(resolver *Resolver, editorMaxBytes int64) *Service {
 }
 
 func NewServiceWithTrash(resolver *Resolver, editorMaxBytes int64, trashDir string) *Service {
-	return &Service{
+	return NewServiceWithThumbnailOptions(resolver, editorMaxBytes, trashDir, ThumbnailOptions{})
+}
+
+func NewServiceWithThumbnailOptions(resolver *Resolver, editorMaxBytes int64, trashDir string, options ThumbnailOptions) *Service {
+	options.applyDefaults()
+	service := &Service{
 		resolver:          resolver,
 		editorMaxBytes:    editorMaxBytes,
 		trashDir:          trashDir,
-		thumbnails:        newThumbnailCache(128 << 20),
-		thumbnailSlots:    make(chan struct{}, 2),
-		videoThumbnails:   videoThumbnailGenerator{ffmpeg: "ffmpeg", ffprobe: "ffprobe"},
+		thumbnailCache:    options.Cache,
+		thumbnailSlots:    make(chan struct{}, options.ImageWorkers),
+		thumbnailFlights:  make(map[string]*thumbnailFlight),
+		videoThumbnails:   videoThumbnailGenerator{ffmpeg: "ffmpeg", ffprobe: "ffprobe", threads: options.VideoFFmpegThreads},
 		folderSizeCache:   make(map[string]folderSizeCacheEntry),
 		folderSizePending: make(map[string]bool),
 		folderSizeSlots:   make(chan struct{}, 2),
 	}
+	service.videoQueue = newVideoThumbnailQueue(service, options)
+	return service
 }
+
+func (s *Service) Close() { s.videoQueue.close() }
 
 func (s *Service) Resolver() *Resolver { return s.resolver }
 

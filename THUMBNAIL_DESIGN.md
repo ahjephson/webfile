@@ -1,6 +1,6 @@
 # Thumbnail cache and video queue design
 
-Status: agreed design; not yet implemented.
+Status: implemented.
 
 ## Goals
 
@@ -19,12 +19,14 @@ The cache directory is a system setting. WebFile must not force it into a
 user's home directory or place sidecar directories such as `@eaDir` beside
 source files. A location outside all configured browsing roots is preferred.
 
-An initial configuration shape could be:
+The implemented configuration shape is:
 
 ```json
 "thumbnails": {
   "cache_dir": "/var/cache/webfile/thumbnails",
+  "cache_socket": "/run/webfile/cache/thumbnails.sock",
   "cache_max_bytes": 10737418240,
+  "image_workers": 2,
   "video_workers": 2,
   "video_ffmpeg_threads": 2,
   "video_timeout_seconds": 300,
@@ -32,8 +34,8 @@ An initial configuration shape could be:
 }
 ```
 
-These are host configuration values, not user settings. Exact defaults remain
-an implementation decision.
+These are host configuration values, not user settings. The values above are
+the defaults and are included in the example configuration.
 
 The cache is shared at the server level so that a thumbnail already generated
 for one authorized user can be reused by another authorized user. Cache files
@@ -71,10 +73,12 @@ file in the cache directory followed by an atomic rename. A bounded cache is
 pruned by size and optionally age; superseded source versions naturally become
 unreachable because their metadata produces a different key.
 
-The cache directory should be owned by the broker or a narrowly scoped cache
-component. User workers perform source authorization and generation, while the
-cache component accepts only validated keys and derived thumbnail bytes. It
-must not become a privileged proxy for source filesystem content.
+The broker owns the cache directory and exposes a narrow local Unix-socket
+cache interface. Each worker connection is authorized using both the
+kernel-reported peer UID and a per-worker capability issued by the broker.
+User workers perform source authorization and generation; the cache accepts
+only validated hashed keys and supported derived image formats. It never reads
+source paths or source bytes.
 
 ## Atomic generation and deduplication
 
@@ -144,17 +148,14 @@ while a heavy foreground task is active.
 
 ## Frontend protocol
 
-Cached requests return the thumbnail normally. A cache miss or existing job can
-return a pending response instead of holding an HTTP image request open for an
-unbounded period. The frontend then shows a placeholder and waits for a
-WebSocket notification; polling the same endpoint is a fallback after a
-WebSocket reconnect. Once notified, the normal thumbnail URL is requested
-again and returns the cached image.
+Cached requests return the thumbnail normally. A video cache miss or existing
+job returns HTTP 202 with the current job state instead of holding an image
+request open. The frontend keeps its placeholder and retries the endpoint;
+queue state is also sent over the existing WebSocket for the Tasks UI. Once
+ready, the endpoint returns the cached image.
 
-The exact HTTP response shape and whether a short fast-path wait is allowed are
-implementation details. The protocol must distinguish at least queued,
-generating, ready, failed, and cancelled states without exposing internal cache
-paths or keys.
+The protocol distinguishes queued, probing, generating, publishing, ready,
+failed, and cancelled states without exposing internal cache paths or keys.
 
 ## Queue visibility
 

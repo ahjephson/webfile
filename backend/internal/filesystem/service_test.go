@@ -20,7 +20,9 @@ func testService(t *testing.T) (*Service, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewService(resolver, 1024*1024), root
+	service := NewService(resolver, 1024*1024)
+	t.Cleanup(service.Close)
+	return service, root
 }
 
 func TestListReadsFilesystemDirectly(t *testing.T) {

@@ -1,5 +1,5 @@
 import { onBeforeUnmount, ref } from 'vue'
-import type { FileOperation } from '@/types/files'
+import type { FileOperation, VideoThumbnailJob } from '@/types/files'
 
 type ServerMessage =
   | { type: 'ready' }
@@ -7,11 +7,13 @@ type ServerMessage =
   | { type: 'unsubscribed' }
   | { type: 'directory-invalidated'; path: string; reason?: string; at?: string }
   | { type: 'operation-updated'; operation: FileOperation }
+  | { type: 'thumbnail-job-updated'; thumbnail_job: VideoThumbnailJob }
   | { type: 'error'; path?: string; code?: string; message?: string }
 
 export function useRealtime(options: {
   onInvalidate: (path: string) => void
   onOperation: (operation: FileOperation) => void
+  onThumbnailJob?: (job: VideoThumbnailJob) => void
   onConnected?: () => void
 }) {
   let socket: WebSocket | null = null
@@ -74,6 +76,8 @@ export function useRealtime(options: {
         options.onInvalidate(message.path)
       } else if (message.type === 'operation-updated') {
         options.onOperation(message.operation)
+      } else if (message.type === 'thumbnail-job-updated') {
+        options.onThumbnailJob?.(message.thumbnail_job)
       }
     }
     socket.onerror = () => socket?.close()

@@ -36,8 +36,9 @@ func TestThumbnailCreatesBoundedImageAndInvalidatesChangedSource(t *testing.T) {
 	if first.ContentType != "image/jpeg" || first.ETag == "" {
 		t.Fatalf("unexpected thumbnail metadata: %#v", first)
 	}
-	if len(target.thumbnails.items) != 1 {
-		t.Fatalf("cache contains %d entries", len(target.thumbnails.items))
+	memory := target.thumbnailCache.(*memoryThumbnailCache)
+	if len(memory.items) != 1 {
+		t.Fatalf("cache contains %d entries", len(memory.items))
 	}
 
 	writeThumbnailTestImage(t, path, color.RGBA{B: 255, A: 255})
@@ -101,6 +102,46 @@ func TestThumbnailCreatesAndCachesRepresentativeVideoSprite(t *testing.T) {
 	}
 	if !strings.Contains(argumentText, "scale=w=320:h=180:force_original_aspect_ratio=decrease") {
 		t.Fatalf("requested thumbnail bounds were not used: %q", argumentText)
+	}
+}
+
+func TestVideoThumbnailRequestsAreQueuedAndDeduplicated(t *testing.T) {
+	target, root := testService(t)
+	videoPath := filepath.Join(root, "queued.mp4")
+	if err := os.WriteFile(videoPath, []byte{0, 1, 2, 3}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tools := t.TempDir()
+	probePath := filepath.Join(tools, "ffprobe")
+	ffmpegPath := filepath.Join(tools, "ffmpeg")
+	if err := os.WriteFile(probePath, []byte("#!/bin/sh\nprintf '30\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ffmpegPath, []byte("#!/bin/sh\nsleep 0.2\nprintf 'queued-sprite'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target.videoThumbnails = videoThumbnailGenerator{ffmpeg: ffmpegPath, ffprobe: probePath, threads: 1}
+
+	first, err := target.RequestThumbnail(context.Background(), "/Files/queued.mp4", 320, 180)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := target.RequestThumbnail(context.Background(), "/Files/queued.mp4", 320, 180)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Job == nil || second.Job == nil || first.Job.ID != second.Job.ID {
+		t.Fatalf("requests were not deduplicated: first=%#v second=%#v", first.Job, second.Job)
+	}
+	if err := target.videoQueue.wait(context.Background(), first.key); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := target.RequestThumbnail(context.Background(), "/Files/queued.mp4", 320, 180)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready.Thumbnail == nil || string(ready.Thumbnail.Data) != "queued-sprite" {
+		t.Fatalf("unexpected ready thumbnail: %#v", ready.Thumbnail)
 	}
 }
 

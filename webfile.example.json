@@ -21,6 +21,16 @@
     "launcher_group": "webfile",
     "min_user_uid": 1000
   },
+  "thumbnails": {
+    "cache_dir": "/var/cache/webfile/thumbnails",
+    "cache_socket": "/run/webfile/cache/thumbnails.sock",
+    "cache_max_bytes": 10737418240,
+    "image_workers": 2,
+    "video_workers": 2,
+    "video_ffmpeg_threads": 2,
+    "video_timeout_seconds": 300,
+    "max_queued": 200
+  },
   "watch": {
     "polling": "auto",
     "poll_interval": "5s"
