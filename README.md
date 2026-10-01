@@ -50,6 +50,8 @@ trash, extraction, durable background tasks and persistent application state.
 - Shared right-click / touch press-and-hold context menu.
 - Keyboard navigation and F2/Delete/Enter/Space/Escape shortcuts.
 - Multi-item copy/move, including cross-root transfers.
+- Linux copies use chunked in-kernel `copy_file_range` transfers when supported,
+  with transparent buffered fallback.
 - Drag/drop local files to upload.
 - Conflict-safe operations: existing destinations are not silently overwritten.
 - Regular file downloads and streamed ZIP downloads for folders.

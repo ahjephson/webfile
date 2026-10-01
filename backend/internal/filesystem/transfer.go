@@ -315,29 +315,9 @@ func copyFileAtomic(ctx context.Context, source, destination string, mode fs.Fil
 		return err
 	}
 
-	buf := make([]byte, 1024*1024)
-	for {
-		if err := ctx.Err(); err != nil {
-			_ = tmp.Close()
-			return err
-		}
-		n, readErr := in.Read(buf)
-		if n > 0 {
-			if _, err := tmp.Write(buf[:n]); err != nil {
-				_ = tmp.Close()
-				return err
-			}
-			if progress != nil {
-				progress(transferPhaseCopying, int64(n))
-			}
-		}
-		if errors.Is(readErr, io.EOF) {
-			break
-		}
-		if readErr != nil {
-			_ = tmp.Close()
-			return readErr
-		}
+	if err := copyFileData(ctx, in, tmp, progress, copyFileRangePlatform); err != nil {
+		_ = tmp.Close()
+		return err
 	}
 	if progress != nil {
 		progress(transferPhaseFlushing, 0)
@@ -361,6 +341,50 @@ func copyFileAtomic(ctx context.Context, source, destination string, mode fs.Fil
 		return err
 	}
 	_ = os.Chtimes(destination, modified, modified)
+	return nil
+}
+
+type rangeCopyFunc func(context.Context, *os.File, *os.File, func(int64)) (bool, error)
+
+func copyFileData(ctx context.Context, source, destination *os.File, progress func(string, int64), fastCopy rangeCopyFunc) error {
+	reportBytes := func(n int64) {
+		if progress != nil {
+			progress(transferPhaseCopying, n)
+		}
+	}
+	complete, err := fastCopy(ctx, source, destination, reportBytes)
+	if err != nil {
+		return err
+	}
+	if complete {
+		return nil
+	}
+
+	buf := make([]byte, 1024*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, readErr := source.Read(buf)
+		if n > 0 {
+			written, writeErr := destination.Write(buf[:n])
+			if written > 0 {
+				reportBytes(int64(written))
+			}
+			if writeErr != nil {
+				return writeErr
+			}
+			if written != n {
+				return io.ErrShortWrite
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
 	return nil
 }
 

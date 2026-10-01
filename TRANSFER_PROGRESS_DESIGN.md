@@ -1,7 +1,6 @@
 # Copy and move progress design
 
-Status: implemented 2026-10-01. A possible `copy_file_range` optimization
-remains an optional follow-up.
+Status: implemented 2026-10-01.
 
 ## Goals
 
@@ -103,16 +102,19 @@ Use the existing IEC byte formatting convention: `B/s`, `KiB/s`, `MiB/s`,
 from logical bytes. When there is no meaningful speed, show the current phase
 instead of a misleading zero rate.
 
-## Copy-engine follow-up
+## Copy engine
 
-The hard-link publication fallback should be reviewed as part of this work. It
-must retain exclusive no-overwrite behaviour, but a second unreported full-file
-copy should not look like a completed or frozen task. At minimum, expose it as
-the publishing phase. Where supported, investigate chunked Linux
-`copy_file_range` calls while retaining the current buffered implementation as
-a fallback. Any optimized path must preserve cancellation, progress reporting,
-cross-filesystem compatibility, and correctness on mounted or network
-filesystems.
+Linux copies first use chunked `copy_file_range` calls so compatible local
+filesystems can keep data movement inside the kernel. Each completed chunk
+updates cancellation and progress normally. If the kernel or either filesystem
+does not support the operation, copying resumes from the current file offsets
+through the portable buffered implementation without restarting or
+double-counting the transfer.
+
+Temporary files are published through atomic no-replace rename where supported.
+The fallback retains exclusive no-overwrite behaviour, and any slower
+publication work is exposed through the publishing phase rather than appearing
+to be a completed or frozen task.
 
 ## Validation
 
