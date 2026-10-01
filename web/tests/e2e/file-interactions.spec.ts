@@ -1298,6 +1298,15 @@ test('image gallery tracks a swipe and progressively loads an ordered thumbnail 
     return Math.abs(item.left + item.width / 2 - (strip.left + strip.width / 2))
   })).toBeLessThanOrEqual(1)
 
+  const thumbnailStrip = preview.getByRole('listbox', { name: 'Image thumbnails' })
+  await expect.poll(() => thumbnailStrip.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
+  await thumbnailStrip.evaluate(element => { element.scrollLeft = 0 })
+  const thumbnailStripBox = await thumbnailStrip.boundingBox()
+  if (!thumbnailStripBox) throw new Error('Thumbnail strip is not visible')
+  await page.mouse.move(thumbnailStripBox.x + thumbnailStripBox.width / 2, thumbnailStripBox.y + thumbnailStripBox.height / 2)
+  await page.mouse.wheel(0, 480)
+  await expect.poll(() => thumbnailStrip.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+
   const box = await viewport.boundingBox()
   if (!box) throw new Error('Image viewport is not visible')
   const initialTransform = await track.evaluate(element => getComputedStyle(element).transform)

@@ -515,6 +515,18 @@ function scrollActiveThumbnailIntoView() {
   })
 }
 
+function scrollThumbnails(event: WheelEvent) {
+  const strip = thumbnailStrip.value
+  if (!strip || strip.scrollWidth <= strip.clientWidth) return
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+  if (delta === 0) return
+  const maximum = strip.scrollWidth - strip.clientWidth
+  const target = Math.min(maximum, Math.max(0, strip.scrollLeft + delta))
+  if (target === strip.scrollLeft) return
+  event.preventDefault()
+  strip.scrollLeft = target
+}
+
 async function toggleFullscreen() {
   if (!root.value) return
   if (immersive.value) {
@@ -635,7 +647,7 @@ function onKeyDown(event: KeyboardEvent) {
         <span>Gallery</span>
         <span>{{ thumbnailsLoaded }} / {{ images.length }} thumbnails</span>
       </div>
-      <div ref="thumbnailStrip" class="gallery-thumbnail-strip flex h-16 gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain" style="padding-inline: calc(50% - 2.5rem)" role="listbox" aria-label="Image thumbnails">
+      <div ref="thumbnailStrip" class="gallery-thumbnail-strip flex h-16 gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain" style="padding-inline: calc(50% - 2.5rem)" role="listbox" aria-label="Image thumbnails" @wheel="scrollThumbnails">
         <button
           v-for="entry in images"
           :key="entry.path"
@@ -658,14 +670,28 @@ function onKeyDown(event: KeyboardEvent) {
 </template>
 
 <style scoped>
-.gallery-thumbnail-strip,
 .gallery-fullscreen-controls {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 
-.gallery-thumbnail-strip::-webkit-scrollbar,
 .gallery-fullscreen-controls::-webkit-scrollbar {
   display: none;
+}
+
+.gallery-thumbnail-strip {
+  scrollbar-color: rgb(82 82 91) transparent;
+  scrollbar-width: thin;
+}
+
+.gallery-thumbnail-strip::-webkit-scrollbar {
+  height: 0.5rem;
+}
+
+.gallery-thumbnail-strip::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background: rgb(82 82 91);
+  background-clip: padding-box;
 }
 </style>
