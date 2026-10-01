@@ -152,7 +152,17 @@ instead of silently creating or merging the wrong branch.
 ### Validation in WSL
 
 Use the narrowest relevant checks while iterating, then run the applicable full
-checks before delivery.
+checks before delivery. Before completing any task, perform an appropriate
+visual final check of the result. For browser-facing work, run the application
+in the applicable operating mode and inspect the affected workflow in the
+in-app browser using the computer-use skill (or the Playwright MCP server when
+that is the available browser-control integration). Exercise the changed UI,
+check the rendered result at a representative viewport, and look for visible
+errors or regressions; automated unit, build, and headless end-to-end results do
+not replace this final visual check. For work with no browser-visible effect,
+visually inspect the relevant output instead (for example a rendered artefact,
+generated package contents, command output, or final diff). Report what was
+checked and any limitation in the task handoff.
 
 Backend:
 
