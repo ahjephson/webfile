@@ -1298,6 +1298,24 @@ test('image gallery preloads neighbours and supports swipe, pinch, and explicit 
   await expect(page.getByRole('button', { name: 'Exit fullscreen' })).toBeVisible()
   const fullscreenControls = page.getByRole('navigation', { name: 'Fullscreen image controls' })
   await expect(fullscreenControls).toBeVisible()
+  const controlsBox = await fullscreenControls.boundingBox()
+  if (!controlsBox) throw new Error('Fullscreen image controls are not visible')
+  const controlsX = controlsBox.x + controlsBox.width / 2
+  const controlsStartY = controlsBox.y + controlsBox.height - 4
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: controlsX, y: controlsStartY, radiusX: 2, radiusY: 2, force: 1 }],
+  })
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: controlsX, y: controlsStartY - 44, radiusX: 2, radiusY: 2, force: 1 }],
+  })
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await expect(fullscreenControls).toBeHidden()
+  const showFullscreenControls = page.getByRole('button', { name: 'Show fullscreen image controls' })
+  await expect(showFullscreenControls).toBeVisible()
+  await showFullscreenControls.click()
+  await expect(fullscreenControls).toBeVisible()
   await fullscreenControls.getByRole('button', { name: 'Fit to window' }).click()
   await expect.poll(() => viewport.evaluate(element => element.scrollHeight === element.clientHeight)).toBe(true)
   const fullscreenViewport = await viewport.boundingBox()
@@ -1322,7 +1340,7 @@ test('image gallery preloads neighbours and supports swipe, pinch, and explicit 
   await fullscreenControls.getByRole('button', { name: 'Fit to window' }).click()
   await expect.poll(() => viewport.evaluate(element => element.scrollLeft)).toBe(0)
   await tap(fullscreenX, fullscreenY)
-  await expect(preview.locator('[data-thumbnail-strip]')).toHaveCount(0)
+  await expect(preview.locator('[data-thumbnail-strip]')).toBeHidden()
   await tap(fullscreenX, fullscreenY)
   await expect(preview.locator('[data-thumbnail-strip]')).toBeVisible()
   await page.getByRole('button', { name: 'Exit fullscreen' }).click()
@@ -1431,10 +1449,13 @@ test('image gallery tracks a swipe and progressively loads an ordered thumbnail 
     const strip = element.parentElement!.getBoundingClientRect()
     return Math.abs(item.left + item.width / 2 - (strip.left + strip.width / 2))
   })).toBeLessThanOrEqual(1)
+  const preservedScrollLeft = await thumbnailStrip.evaluate(element => element.scrollLeft)
   await preview.getByRole('button', { name: 'Hide thumbnails' }).click()
-  await expect(preview.locator('[data-thumbnail-strip]')).toHaveCount(0)
+  await expect(preview.locator('[data-thumbnail-strip]')).toBeHidden()
+  await expect(preview.locator('[aria-label="Image thumbnails"]')).toHaveCount(1)
   await preview.getByRole('button', { name: 'Show thumbnails' }).click()
   await expect(preview.locator('[data-thumbnail-strip]')).toBeVisible()
+  await expect.poll(() => thumbnailStrip.evaluate(element => element.scrollLeft)).toBe(preservedScrollLeft)
 })
 
 test('fit mode responds to gallery viewport growth', async ({ page }) => {

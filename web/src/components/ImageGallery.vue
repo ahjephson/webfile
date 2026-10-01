@@ -14,6 +14,7 @@ const props = defineProps<{
 const emit = defineEmits<{ back: []; close: []; navigate: [path: string] }>()
 
 type Point = { startX: number; startY: number; x: number; y: number; previousX: number; previousY: number; startedAt: number }
+type ControlsGesture = { pointerId: number; startX: number; startY: number; x: number; y: number }
 type ThumbnailState = 'queued' | 'loading' | 'loaded' | 'failed'
 
 const root = ref<HTMLElement | null>(null)
@@ -29,6 +30,8 @@ const fitMode = ref(true)
 const loaded = ref(false)
 const mediaError = ref(false)
 const immersive = ref(false)
+const fullscreenControlsVisible = ref(true)
+const touchEnabled = ref(false)
 const thumbnailsVisible = ref(true)
 const swipeOffset = ref(0)
 const trackAnimating = ref(false)
@@ -50,6 +53,8 @@ let pinchStartDistance = 0
 let pinchStartScale = 1
 let pinchUsed = false
 let navigationPending = false
+let thumbnailNeedsCenter = false
+let fullscreenControlsGesture: ControlsGesture | null = null
 
 const images = computed(() => props.entries.filter(entry => detectedImagePaths.value.includes(entry.path)))
 const imageIndex = computed(() => images.value.findIndex(entry => entry.path === props.path))
@@ -85,7 +90,7 @@ watch(() => props.path, async () => {
   swipeOffset.value = 0
   trackAnimating.value = false
   await nextTick()
-  scrollActiveThumbnailIntoView()
+  syncActiveThumbnail()
   preloadNearbyOriginals()
 })
 watch(() => props.folderPath, () => {
@@ -97,9 +102,10 @@ watch(images, () => {
   preloadNearbyOriginals()
   void loadThumbnailCatalogue()
 }, { immediate: true })
-watch(imageIndex, () => scrollActiveThumbnailIntoView())
+watch(imageIndex, () => syncActiveThumbnail())
 
 onMounted(() => {
+  touchEnabled.value = navigator.maxTouchPoints > 0 || window.matchMedia('(any-pointer: coarse)').matches
   window.addEventListener('keydown', onKeyDown)
   document.addEventListener('fullscreenchange', onFullscreenChange)
   resizeObserver = new ResizeObserver(() => {
@@ -389,8 +395,46 @@ function handleTap(clientX: number, clientY: number) {
 
 function toggleThumbnails() {
   thumbnailsVisible.value = !thumbnailsVisible.value
-  if (thumbnailsVisible.value) void nextTick(scrollActiveThumbnailIntoView)
+  if (thumbnailsVisible.value && thumbnailNeedsCenter) {
+    thumbnailNeedsCenter = false
+    scrollActiveThumbnailIntoView(false)
+  }
   refitAfterLayout()
+}
+
+function onFullscreenControlsPointerDown(event: PointerEvent) {
+  if (!touchEnabled.value || (event.pointerType !== 'touch' && event.pointerType !== 'pen')) return
+  fullscreenControlsGesture = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    x: event.clientX,
+    y: event.clientY,
+  }
+  const target = event.currentTarget as HTMLElement
+  target.setPointerCapture(event.pointerId)
+}
+
+function onFullscreenControlsPointerMove(event: PointerEvent) {
+  if (fullscreenControlsGesture?.pointerId !== event.pointerId) return
+  fullscreenControlsGesture.x = event.clientX
+  fullscreenControlsGesture.y = event.clientY
+}
+
+function onFullscreenControlsPointerUp(event: PointerEvent) {
+  const gesture = fullscreenControlsGesture
+  fullscreenControlsGesture = null
+  if (!gesture || gesture.pointerId !== event.pointerId) return
+  const deltaX = gesture.x - gesture.startX
+  const deltaY = gesture.y - gesture.startY
+  if (deltaY < -36 && Math.abs(deltaY) > Math.abs(deltaX) * 1.2) {
+    event.preventDefault()
+    fullscreenControlsVisible.value = false
+  }
+}
+
+function onFullscreenControlsPointerCancel(event: PointerEvent) {
+  if (fullscreenControlsGesture?.pointerId === event.pointerId) fullscreenControlsGesture = null
 }
 
 function onPointerDown(event: PointerEvent) {
@@ -485,7 +529,7 @@ async function animateNavigate(direction: -1 | 1) {
   if (!ready || (direction < 0 && previousEntry.value?.path !== entry.path) || (direction > 0 && nextEntry.value?.path !== entry.path)) return
   const width = viewport.value?.clientWidth ?? 1
   transitionTargetPath.value = entry.path
-  scrollActiveThumbnailIntoView()
+  syncActiveThumbnail()
   trackAnimating.value = true
   swipeOffset.value = direction > 0 ? -width : width
   if (navigationTimer !== null) clearTimeout(navigationTimer)
@@ -503,7 +547,16 @@ function navigateTo(path: string) {
   else emit('navigate', path)
 }
 
-function scrollActiveThumbnailIntoView() {
+function syncActiveThumbnail() {
+  if (!thumbnailsVisible.value) {
+    thumbnailNeedsCenter = true
+    return
+  }
+  thumbnailNeedsCenter = false
+  scrollActiveThumbnailIntoView()
+}
+
+function scrollActiveThumbnailIntoView(animate = true) {
   void nextTick(() => {
     const strip = thumbnailStrip.value
     const item = strip?.querySelector<HTMLElement>('[data-active-thumbnail="true"]')
@@ -511,7 +564,7 @@ function scrollActiveThumbnailIntoView() {
     const itemBounds = item.getBoundingClientRect()
     const stripBounds = strip.getBoundingClientRect()
     const left = strip.scrollLeft + itemBounds.left + itemBounds.width / 2 - (stripBounds.left + stripBounds.width / 2)
-    strip.scrollTo({ left, behavior: reducedMotion.value ? 'auto' : 'smooth' })
+    strip.scrollTo({ left, behavior: animate && !reducedMotion.value ? 'smooth' : 'auto' })
   })
 }
 
@@ -529,6 +582,8 @@ function scrollThumbnails(event: WheelEvent) {
 
 async function toggleFullscreen() {
   if (!root.value) return
+  fullscreenControlsVisible.value = true
+  fullscreenControlsGesture = null
   if (immersive.value) {
     immersive.value = false
     if (document.fullscreenElement === root.value) await document.exitFullscreen().catch(() => undefined)
@@ -540,7 +595,11 @@ async function toggleFullscreen() {
 }
 
 function onFullscreenChange() {
-  if (document.fullscreenElement !== root.value) immersive.value = false
+  if (document.fullscreenElement !== root.value) {
+    immersive.value = false
+    fullscreenControlsVisible.value = true
+    fullscreenControlsGesture = null
+  }
   refitAfterLayout()
 }
 
@@ -588,7 +647,15 @@ function onKeyDown(event: KeyboardEvent) {
       </div>
     </header>
 
-    <nav v-if="immersive" class="gallery-fullscreen-controls absolute left-1/2 top-3 z-50 flex max-w-[calc(100%-7rem)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-lg border border-zinc-700 bg-zinc-900/90 px-2 py-1 shadow-lg backdrop-blur" aria-label="Fullscreen image controls">
+    <nav
+      v-if="immersive && (!touchEnabled || fullscreenControlsVisible)"
+      class="gallery-fullscreen-controls absolute left-1/2 top-3 z-50 flex max-w-[calc(100%-7rem)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-lg border border-zinc-700 bg-zinc-900/90 px-2 py-1 shadow-lg backdrop-blur"
+      aria-label="Fullscreen image controls"
+      @pointerdown="onFullscreenControlsPointerDown"
+      @pointermove="onFullscreenControlsPointerMove"
+      @pointerup="onFullscreenControlsPointerUp"
+      @pointercancel="onFullscreenControlsPointerCancel"
+    >
       <Button v-tooltip.bottom="'Zoom out'" icon="pi pi-search-minus" severity="secondary" text :disabled="scale <= 0.1" aria-label="Zoom out" @click.stop="zoomBy(-0.25)" />
       <span class="min-w-12 text-center text-xs text-zinc-300" aria-label="Zoom level">{{ zoomLevel }}</span>
       <Button v-tooltip.bottom="'Zoom in'" icon="pi pi-search-plus" severity="secondary" text :disabled="scale >= 8" aria-label="Zoom in" @click.stop="zoomBy(0.25)" />
@@ -600,7 +667,10 @@ function onKeyDown(event: KeyboardEvent) {
       <Button v-tooltip.bottom="'Next image'" icon="pi pi-chevron-right" severity="secondary" text :disabled="!canNext" aria-label="Next image" @click.stop="animateNavigate(1)" />
       <Button v-tooltip.bottom="thumbnailsVisible ? 'Hide thumbnails' : 'Show thumbnails'" icon="pi pi-images" severity="secondary" text :aria-label="thumbnailsVisible ? 'Hide thumbnails' : 'Show thumbnails'" @click.stop="toggleThumbnails" />
     </nav>
-    <Button v-if="immersive" v-tooltip.left="'Exit fullscreen'" icon="pi pi-times" severity="secondary" rounded style="position: absolute; right: 0.75rem; top: 0.75rem" class="z-50 border border-zinc-700 bg-black/65 shadow-lg" aria-label="Exit fullscreen" @click.stop="toggleFullscreen" />
+    <div v-if="immersive" class="absolute right-3 top-3 z-50 flex items-center gap-1">
+      <Button v-if="touchEnabled && !fullscreenControlsVisible" v-tooltip.left="'Show image controls'" icon="pi pi-sliders-h" severity="secondary" rounded class="border border-zinc-700 bg-black/65 shadow-lg" aria-label="Show fullscreen image controls" @click.stop="fullscreenControlsVisible = true" />
+      <Button v-tooltip.left="'Exit fullscreen'" icon="pi pi-times" severity="secondary" rounded class="border border-zinc-700 bg-black/65 shadow-lg" aria-label="Exit fullscreen" @click.stop="toggleFullscreen" />
+    </div>
 
     <div class="relative min-h-0 flex-1 overflow-hidden bg-black">
       <div ref="track" class="absolute inset-0 flex h-full min-h-0 max-h-full w-full will-change-transform" :style="trackStyle" data-gallery-track>
@@ -642,7 +712,7 @@ function onKeyDown(event: KeyboardEvent) {
       </div>
     </div>
 
-    <footer v-if="thumbnailsVisible" class="shrink-0 overflow-hidden border-t border-zinc-800 bg-zinc-900/95 px-2 py-2" data-thumbnail-strip>
+    <footer v-show="thumbnailsVisible" class="shrink-0 overflow-hidden border-t border-zinc-800 bg-zinc-900/95 px-2 py-2" data-thumbnail-strip>
       <div class="mb-1 flex items-center justify-between px-1 text-[11px] text-zinc-500">
         <span>Gallery</span>
         <span>{{ thumbnailsLoaded }} / {{ images.length }} thumbnails</span>
@@ -673,6 +743,7 @@ function onKeyDown(event: KeyboardEvent) {
 .gallery-fullscreen-controls {
   scrollbar-width: none;
   -ms-overflow-style: none;
+  touch-action: pan-x;
 }
 
 .gallery-fullscreen-controls::-webkit-scrollbar {
