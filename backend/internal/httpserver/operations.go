@@ -40,7 +40,7 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 			CleanupPolicy: "The incomplete item is removed. Items completed before cancellation are retained.",
 		}, func(ctx context.Context, reporter operations.Reporter) error {
 			return s.files.CopyMove(ctx, req.Kind, req.Sources, req.Destination, func(p filesystem.TransferProgress) {
-				reporter.UpdatePhase("transferring", p.BytesDone, p.BytesTotal, p.ItemsDone, p.ItemsTotal, p.Message)
+				reporter.UpdatePhase(p.Phase, p.BytesDone, p.BytesTotal, p.ItemsDone, p.ItemsTotal, p.Message)
 			})
 		})
 		writeJSON(w, http.StatusAccepted, op)
@@ -55,7 +55,11 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 			CleanupPolicy: "The incomplete item is restored. Items already placed in the Recycle Bin are retained.",
 		}, func(ctx context.Context, reporter operations.Reporter) error {
 			return s.files.Trash(ctx, req.Sources, func(p filesystem.TransferProgress) {
-				reporter.UpdatePhase("moving_to_recycle_bin", p.BytesDone, p.BytesTotal, p.ItemsDone, p.ItemsTotal, p.Message)
+				phase := p.Phase
+				if phase == "" {
+					phase = "moving_to_recycle_bin"
+				}
+				reporter.UpdatePhase(phase, p.BytesDone, p.BytesTotal, p.ItemsDone, p.ItemsTotal, p.Message)
 			})
 		})
 		writeJSON(w, http.StatusAccepted, op)

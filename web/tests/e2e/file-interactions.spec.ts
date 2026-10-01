@@ -1548,13 +1548,14 @@ test('task drawer separates active work from persistent history', async ({ page 
       sources: ['/source/photos'],
       destination: '/target',
       state: 'running',
-      phase: 'transferring',
+      phase: 'copying',
       message: 'Copying photos',
       progress_done: 262144,
       progress_total: 1048576,
       progress_unit: 'bytes',
       bytes_done: 262144,
       bytes_total: 1048576,
+      bytes_per_second: 90492134,
       items_done: 1,
       items_total: 4,
       cancellable: true,
@@ -1621,6 +1622,7 @@ test('task drawer separates active work from persistent history', async ({ page 
   await expect(drawer.getByText('History', { exact: true })).toBeVisible()
   await expect(drawer.getByText('Copying photos')).toBeVisible()
   await expect(drawer.getByRole('progressbar', { name: 'Copy photos progress' })).toHaveAttribute('aria-valuenow', '25')
+  await expect(drawer.getByText(/86\.3 MiB\/s/)).toBeVisible()
   await expect(drawer.getByRole('button', { name: 'Cancel' })).toBeVisible()
   await expect(drawer.getByText('interrupted', { exact: true })).toBeVisible()
 

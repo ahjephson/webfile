@@ -35,6 +35,46 @@ func TestOperationCompletesAndReportsProgress(t *testing.T) {
 	}
 }
 
+func TestCopyingOperationReportsAndClearsTransferRate(t *testing.T) {
+	manager := New(10)
+	updates, cancel := manager.Subscribe()
+	defer cancel()
+
+	op := manager.Start("copy", []string{"/a"}, "/b", func(_ context.Context, reporter Reporter) error {
+		reporter.UpdatePhase("copying", 0, 100, 0, 1, "Copying a")
+		reporter.UpdatePhase("copying", 50, 100, 0, 1, "Copying a")
+		reporter.UpdatePhase("copying", 100, 100, 0, 1, "Copying a")
+		reporter.UpdatePhase("flushing", 100, 100, 0, 1, "Copying a")
+		return nil
+	})
+
+	foundRate := false
+	foundClearedRate := false
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case update := <-updates:
+			if update.ID != op.ID {
+				continue
+			}
+			if update.Phase == "copying" && update.BytesPerSecond != nil {
+				foundRate = *update.BytesPerSecond > 0
+			}
+			if update.Phase == "flushing" && update.BytesPerSecond == nil {
+				foundClearedRate = true
+			}
+			if update.State == StateCompleted {
+				if !foundRate || !foundClearedRate {
+					t.Fatalf("rate lifecycle missing: rate=%v cleared=%v", foundRate, foundClearedRate)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("operation did not complete")
+		}
+	}
+}
+
 func TestProgressUnitAndPhaseChangesBroadcastAtomically(t *testing.T) {
 	manager := New(10)
 	updates, cancel := manager.Subscribe()

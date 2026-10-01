@@ -80,6 +80,7 @@ export interface FileOperation {
   progress_unit?: 'bytes' | 'items' | 'percent'
   bytes_done: number
   bytes_total: number
+  bytes_per_second?: number | null
   items_done: number
   items_total: number
   cancellable: boolean

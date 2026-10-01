@@ -42,7 +42,8 @@ function stateLabel(operation: FileOperation) {
 }
 
 function phaseLabel(operation: FileOperation) {
-  return operation.phase?.replaceAll('_', ' ') ?? stateLabel(operation)
+  const value = operation.phase?.replaceAll('_', ' ') ?? stateLabel(operation)
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`
 }
 
 function formatBytes(bytes: number): string {
@@ -59,7 +60,14 @@ function formatBytes(bytes: number): string {
 
 function formatProgress(operation: FileOperation): string {
   if (operation.progress_unit === 'percent') return `${Math.round(operation.progress_done)}%`
-  if (operation.progress_unit === 'bytes') return `${formatBytes(operation.progress_done)} / ${formatBytes(operation.progress_total)}`
+  if (operation.progress_unit === 'bytes') {
+    const progress = `${formatBytes(operation.progress_done)} / ${formatBytes(operation.progress_total)}`
+    if (operation.phase === 'copying' && operation.bytes_per_second && operation.bytes_per_second > 0) {
+      return `${progress} · ${formatBytes(operation.bytes_per_second)}/s`
+    }
+    if (active(operation)) return `${progress} · ${phaseLabel(operation)}`
+    return progress
+  }
   if (operation.progress_unit === 'items') return `${operation.progress_done} / ${operation.progress_total} items`
   return phaseLabel(operation)
 }

@@ -15,6 +15,7 @@ import (
 )
 
 type TransferProgress struct {
+	Phase      string
 	BytesDone  int64
 	BytesTotal int64
 	ItemsDone  int64
@@ -23,6 +24,15 @@ type TransferProgress struct {
 }
 
 type progressFunc func(TransferProgress)
+
+const (
+	transferPhaseScanning       = "scanning"
+	transferPhaseCopying        = "copying"
+	transferPhaseFlushing       = "flushing"
+	transferPhasePublishing     = "publishing"
+	transferPhaseRemovingSource = "removing_source"
+	transferPhaseCompleted      = "completed"
+)
 
 type measuredEntry struct {
 	VirtualPath string
@@ -41,6 +51,9 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 	}
 	if len(sources) == 0 {
 		return errors.New("at least one source is required")
+	}
+	if report != nil {
+		report(TransferProgress{Phase: transferPhaseScanning, Message: "Scanning sources"})
 	}
 
 	destRoot, destAbs, err := s.resolver.ResolveExisting(destinationDir)
@@ -95,9 +108,10 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 	}
 
 	var bytesDone, itemsDone int64
-	emit := func(message string) {
+	emit := func(phase, message string) {
 		if report != nil {
 			report(TransferProgress{
+				Phase:      phase,
 				BytesDone:  bytesDone,
 				BytesTotal: bytesTotal,
 				ItemsDone:  itemsDone,
@@ -106,7 +120,7 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 			})
 		}
 	}
-	emit("Preparing")
+	emit(transferPhaseScanning, "Scan complete")
 
 	for _, source := range measured {
 		if err := ctx.Err(); err != nil {
@@ -119,7 +133,7 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 			if err := renameNoReplace(source.Absolute, target); err == nil {
 				bytesDone += source.Bytes
 				itemsDone += source.Items
-				emit(message)
+				emit(transferPhaseCompleted, message)
 				continue
 			} else if errors.Is(err, ErrConflict) {
 				return err
@@ -129,23 +143,24 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 		}
 
 		startBytes, startItems := bytesDone, itemsDone
-		err := copyTree(ctx, source.Absolute, target, func(deltaBytes, deltaItems int64) {
+		err := copyTree(ctx, source.Absolute, target, func(phase string, deltaBytes, deltaItems int64) {
 			bytesDone += deltaBytes
 			itemsDone += deltaItems
-			emit(message)
+			emit(phase, message)
 		})
 		if err != nil {
 			bytesDone, itemsDone = startBytes, startItems
 			return err
 		}
 		if kind == "move" {
+			emit(transferPhaseRemovingSource, message)
 			if err := os.RemoveAll(source.Absolute); err != nil {
 				return fmt.Errorf("copied but could not remove source %s: %w", source.VirtualPath, err)
 			}
 		}
 	}
 
-	emit("Complete")
+	emit(transferPhaseCompleted, "Complete")
 	return nil
 }
 
@@ -175,7 +190,7 @@ func measureTree(ctx context.Context, source string) (int64, int64, error) {
 	return bytes, items, err
 }
 
-func copyTree(ctx context.Context, source, destination string, progress func(deltaBytes, deltaItems int64)) (err error) {
+func copyTree(ctx context.Context, source, destination string, progress func(phase string, deltaBytes, deltaItems int64)) (err error) {
 	if _, statErr := os.Lstat(destination); statErr == nil {
 		return ErrConflict
 	} else if !errors.Is(statErr, fs.ErrNotExist) {
@@ -229,7 +244,7 @@ func copyTree(ctx context.Context, source, destination string, progress func(del
 				created = true
 			}
 			dirs = append(dirs, dirTime{path: target, mode: info.Mode().Perm(), at: info.ModTime(), mt: info.ModTime()})
-			progress(0, 1)
+			progress(transferPhaseCopying, 0, 1)
 			return nil
 
 		case info.Mode()&os.ModeSymlink != 0:
@@ -246,17 +261,19 @@ func copyTree(ctx context.Context, source, destination string, progress func(del
 			if rel == "." {
 				created = true
 			}
-			progress(0, 1)
+			progress(transferPhaseCopying, 0, 1)
 			return nil
 
 		case info.Mode().IsRegular():
-			if copyErr := copyFileAtomic(ctx, current, target, info.Mode().Perm(), info.ModTime(), progress); copyErr != nil {
+			if copyErr := copyFileAtomic(ctx, current, target, info.Mode().Perm(), info.ModTime(), func(phase string, deltaBytes int64) {
+				progress(phase, deltaBytes, 0)
+			}); copyErr != nil {
 				return copyErr
 			}
 			if rel == "." {
 				created = true
 			}
-			progress(0, 1)
+			progress(transferPhasePublishing, 0, 1)
 			return nil
 
 		default:
@@ -269,6 +286,7 @@ func copyTree(ctx context.Context, source, destination string, progress func(del
 
 	// Creating children changes directory mtimes. Restore directory metadata
 	// from the bottom up after the tree is complete.
+	progress(transferPhasePublishing, 0, 0)
 	for i := len(dirs) - 1; i >= 0; i-- {
 		_ = os.Chmod(dirs[i].path, dirs[i].mode)
 		_ = os.Chtimes(dirs[i].path, dirs[i].at, dirs[i].mt)
@@ -276,7 +294,7 @@ func copyTree(ctx context.Context, source, destination string, progress func(del
 	return nil
 }
 
-func copyFileAtomic(ctx context.Context, source, destination string, mode fs.FileMode, modified time.Time, progress func(deltaBytes, deltaItems int64)) error {
+func copyFileAtomic(ctx context.Context, source, destination string, mode fs.FileMode, modified time.Time, progress func(phase string, deltaBytes int64)) error {
 	in, err := os.Open(source)
 	if err != nil {
 		return err
@@ -310,7 +328,7 @@ func copyFileAtomic(ctx context.Context, source, destination string, mode fs.Fil
 				return err
 			}
 			if progress != nil {
-				progress(int64(n), 0)
+				progress(transferPhaseCopying, int64(n))
 			}
 		}
 		if errors.Is(readErr, io.EOF) {
@@ -321,6 +339,9 @@ func copyFileAtomic(ctx context.Context, source, destination string, mode fs.Fil
 			return readErr
 		}
 	}
+	if progress != nil {
+		progress(transferPhaseFlushing, 0)
+	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		return err
@@ -329,54 +350,17 @@ func copyFileAtomic(ctx context.Context, source, destination string, mode fs.Fil
 		return err
 	}
 
-	// Hard-linking a temp file in the destination directory gives us O_EXCL
-	// semantics without exposing partially-written final files.
-	if err := os.Link(tmpName, destination); err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return ErrConflict
-		}
-		// Some mounted/FUSE filesystems do not support hard links. Keep the
-		// no-overwrite guarantee by falling back to an exclusive final create;
-		// the already-complete temp file is copied, so source reads/progress are
-		// not repeated.
-		if fallbackErr := copyTempExclusive(tmpName, destination, mode); fallbackErr != nil {
-			return fallbackErr
-		}
+	if progress != nil {
+		progress(transferPhasePublishing, 0)
+	}
+	// The temporary file already lives in the destination directory. An atomic
+	// no-replace rename publishes it without exposing partial output and works
+	// on filesystems that support renameat2 even when hard links are unavailable.
+	// The platform fallback retains exclusive-create semantics where necessary.
+	if err := renameNoReplace(tmpName, destination); err != nil {
+		return err
 	}
 	_ = os.Chtimes(destination, modified, modified)
-	return nil
-}
-
-func copyTempExclusive(source, destination string, mode fs.FileMode) error {
-	in, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
-	if err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return ErrConflict
-		}
-		return err
-	}
-	ok := false
-	defer func() {
-		_ = out.Close()
-		if !ok {
-			_ = os.Remove(destination)
-		}
-	}()
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	if err := out.Sync(); err != nil {
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	ok = true
 	return nil
 }
 

@@ -35,27 +35,28 @@ const (
 )
 
 type Operation struct {
-	ID            string       `json:"id"`
-	Kind          string       `json:"kind"`
-	Sources       []string     `json:"sources,omitempty"`
-	Destination   string       `json:"destination,omitempty"`
-	State         State        `json:"state"`
-	Phase         string       `json:"phase,omitempty"`
-	Message       string       `json:"message,omitempty"`
-	Error         string       `json:"error,omitempty"`
-	ProgressDone  int64        `json:"progress_done"`
-	ProgressTotal int64        `json:"progress_total"`
-	ProgressUnit  ProgressUnit `json:"progress_unit,omitempty"`
-	BytesDone     int64        `json:"bytes_done"`
-	BytesTotal    int64        `json:"bytes_total"`
-	ItemsDone     int64        `json:"items_done"`
-	ItemsTotal    int64        `json:"items_total"`
-	Cancellable   bool         `json:"cancellable"`
-	CleanupPolicy string       `json:"cleanup_policy,omitempty"`
-	CleanupError  string       `json:"cleanup_error,omitempty"`
-	StartedAt     time.Time    `json:"started_at"`
-	UpdatedAt     time.Time    `json:"updated_at"`
-	FinishedAt    *time.Time   `json:"finished_at,omitempty"`
+	ID             string       `json:"id"`
+	Kind           string       `json:"kind"`
+	Sources        []string     `json:"sources,omitempty"`
+	Destination    string       `json:"destination,omitempty"`
+	State          State        `json:"state"`
+	Phase          string       `json:"phase,omitempty"`
+	Message        string       `json:"message,omitempty"`
+	Error          string       `json:"error,omitempty"`
+	ProgressDone   int64        `json:"progress_done"`
+	ProgressTotal  int64        `json:"progress_total"`
+	ProgressUnit   ProgressUnit `json:"progress_unit,omitempty"`
+	BytesDone      int64        `json:"bytes_done"`
+	BytesTotal     int64        `json:"bytes_total"`
+	BytesPerSecond *int64       `json:"bytes_per_second,omitempty"`
+	ItemsDone      int64        `json:"items_done"`
+	ItemsTotal     int64        `json:"items_total"`
+	Cancellable    bool         `json:"cancellable"`
+	CleanupPolicy  string       `json:"cleanup_policy,omitempty"`
+	CleanupError   string       `json:"cleanup_error,omitempty"`
+	StartedAt      time.Time    `json:"started_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
+	FinishedAt     *time.Time   `json:"finished_at,omitempty"`
 }
 
 type ProgressUpdate struct {
@@ -121,13 +122,16 @@ type TaskOptions struct {
 }
 
 type record struct {
-	op              Operation
-	run             RunFunc
-	cleanup         CleanupFunc
-	cancel          context.CancelFunc
-	external        bool
-	lastBroadcast   time.Time
-	lastPersistence time.Time
+	op               Operation
+	run              RunFunc
+	cleanup          CleanupFunc
+	cancel           context.CancelFunc
+	external         bool
+	lastBroadcast    time.Time
+	lastPersistence  time.Time
+	rateSamples      []transferRateSample
+	lastByteProgress time.Time
+	rateHeartbeat    bool
 }
 
 type Manager struct {
@@ -278,6 +282,7 @@ func (m *Manager) execute(ctx context.Context, id string, run RunFunc) {
 		rec.op.State = StateCleaningUp
 		rec.op.Phase = "cleaning_up"
 		rec.op.Message = "Cleaning up"
+		resetTransferRate(rec)
 		rec.op.UpdatedAt = time.Now().UTC()
 		rec.op.Cancellable = false
 		rec.cancel = nil
@@ -303,6 +308,7 @@ func (m *Manager) execute(ctx context.Context, id string, run RunFunc) {
 		rec.op.UpdatedAt = now
 		rec.op.FinishedAt = timePointer(now)
 		rec.op.Cancellable = false
+		resetTransferRate(rec)
 		rec.cancel = nil
 		switch {
 		case cancelled:
@@ -349,6 +355,7 @@ func (m *Manager) UpsertExternal(id, kind string, sources []string, destination 
 	rec.op.Phase = string(state)
 	rec.op.BytesDone = bytesDone
 	rec.op.BytesTotal = bytesTotal
+	resetTransferRate(rec)
 	rec.op.ProgressDone, rec.op.ProgressTotal, rec.op.ProgressUnit = primaryProgress(bytesDone, bytesTotal, itemsDone, itemsTotal)
 	rec.op.ItemsDone = itemsDone
 	rec.op.ItemsTotal = itemsTotal
@@ -394,6 +401,7 @@ func (m *Manager) Cancel(id string) bool {
 	rec.op.Phase = "cancelling"
 	rec.op.Message = "Cancelling"
 	rec.op.Cancellable = false
+	resetTransferRate(rec)
 	rec.op.UpdatedAt = time.Now().UTC()
 	m.persistLocked(rec, true)
 	m.broadcastLocked(rec.op)
@@ -418,6 +426,7 @@ func (m *Manager) finishExternalCancellation(id string) {
 	rec.op.State = StateCancelled
 	rec.op.Phase = "cancelled"
 	rec.op.Message = "Cancelled"
+	resetTransferRate(rec)
 	rec.op.UpdatedAt = now
 	rec.op.FinishedAt = timePointer(now)
 	rec.cancel = nil
@@ -553,9 +562,22 @@ func (m *Manager) updateProgress(id string, p ProgressUpdate) {
 	if rec == nil || terminalState(rec.op.State) || rec.op.State == StateCancelling || rec.op.State == StateCleaningUp {
 		return
 	}
+	now := time.Now()
 	stateChanged := rec.op.State != StateRunning
 	phaseChanged := p.Phase != "" && rec.op.Phase != p.Phase
 	unitChanged := rec.op.ProgressUnit != p.ProgressUnit
+	previousBytes := rec.op.BytesDone
+	nextPhase := rec.op.Phase
+	if p.Phase != "" {
+		nextPhase = p.Phase
+	}
+	if phaseChanged || p.BytesDone < previousBytes || nextPhase != transferRateActivePhase || p.BytesTotal <= 0 {
+		resetTransferRate(rec)
+	}
+	if nextPhase == transferRateActivePhase && p.BytesTotal > 0 && p.BytesDone > previousBytes {
+		rec.lastByteProgress = now
+		rec.rateSamples, rec.op.BytesPerSecond = appendTransferRateSample(rec.rateSamples, now, p.BytesDone)
+	}
 	rec.op.State = StateRunning
 	rec.op.ProgressDone = maxInt64(0, p.ProgressDone)
 	rec.op.ProgressTotal = maxInt64(0, p.ProgressTotal)
@@ -568,7 +590,11 @@ func (m *Manager) updateProgress(id string, p ProgressUpdate) {
 		rec.op.Phase = p.Phase
 	}
 	rec.op.Message = p.Message
-	rec.op.UpdatedAt = time.Now().UTC()
+	rec.op.UpdatedAt = now.UTC()
+	if rec.op.BytesPerSecond != nil && !rec.rateHeartbeat {
+		rec.rateHeartbeat = true
+		go m.expireTransferRate(id)
+	}
 
 	changed := stateChanged || phaseChanged || unitChanged
 	terminalProgress := p.ProgressTotal > 0 && p.ProgressDone >= p.ProgressTotal
@@ -600,6 +626,7 @@ func (m *Manager) setStatus(id string, state State, phase, message string) {
 		rec.op.ProgressDone, rec.op.ProgressTotal, rec.op.ProgressUnit = 0, 0, ""
 		rec.op.BytesDone, rec.op.BytesTotal = 0, 0
 		rec.op.ItemsDone, rec.op.ItemsTotal = 0, 0
+		resetTransferRate(rec)
 	}
 	rec.op.UpdatedAt = time.Now().UTC()
 	m.persistLocked(rec, true)
@@ -634,6 +661,39 @@ func (m *Manager) broadcastLocked(op Operation) {
 			}
 		}
 	}
+}
+
+func (m *Manager) expireTransferRate(id string) {
+	ticker := time.NewTicker(transferRateHeartbeat)
+	defer ticker.Stop()
+	for now := range ticker.C {
+		m.mu.Lock()
+		rec := m.records[id]
+		if rec == nil || terminalState(rec.op.State) || rec.op.BytesPerSecond == nil {
+			if rec != nil {
+				rec.rateHeartbeat = false
+			}
+			m.mu.Unlock()
+			return
+		}
+		if !transferRateExpired(rec.lastByteProgress, now) {
+			m.mu.Unlock()
+			continue
+		}
+		rec.op.BytesPerSecond = nil
+		rec.rateSamples = nil
+		rec.rateHeartbeat = false
+		rec.op.UpdatedAt = now.UTC()
+		m.broadcastLocked(rec.op)
+		m.mu.Unlock()
+		return
+	}
+}
+
+func resetTransferRate(rec *record) {
+	rec.op.BytesPerSecond = nil
+	rec.rateSamples = nil
+	rec.lastByteProgress = time.Time{}
 }
 
 func (m *Manager) trimLocked() {
@@ -671,6 +731,10 @@ func terminalState(state State) bool {
 func cloneOperation(op Operation) Operation {
 	out := op
 	out.Sources = append([]string(nil), op.Sources...)
+	if op.BytesPerSecond != nil {
+		rate := *op.BytesPerSecond
+		out.BytesPerSecond = &rate
+	}
 	if op.FinishedAt != nil {
 		finished := *op.FinishedAt
 		out.FinishedAt = &finished

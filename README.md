@@ -82,7 +82,8 @@ shared task system. Per-user workers persist task history in
   default);
 - lifecycle state includes queued, preparing, awaiting-input, running,
   cancelling, cleanup, terminal and interrupted states;
-- progress and state changes are delivered over the existing WebSocket;
+- progress, explicit filesystem phases and smoothed copy/move throughput are
+  delivered over the existing WebSocket;
 - task history survives worker and broker restarts;
 - work found active after an unclean restart is marked interrupted rather than
   incorrectly reported as still running;

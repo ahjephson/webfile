@@ -8,6 +8,15 @@ import (
 	"testing"
 )
 
+func containsPhase(progress []TransferProgress, phase string) bool {
+	for _, update := range progress {
+		if update.Phase == phase {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCopyMoveCopiesDirectoryTree(t *testing.T) {
 	root := t.TempDir()
 	resolver, err := NewResolver([]Root{{Name: "Files", Path: root}})
@@ -26,10 +35,11 @@ func TestCopyMoveCopiesDirectoryTree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var last TransferProgress
-	if err := svc.CopyMove(context.Background(), "copy", []string{"/Files/src"}, "/Files/dest", func(p TransferProgress) { last = p }); err != nil {
+	var updates []TransferProgress
+	if err := svc.CopyMove(context.Background(), "copy", []string{"/Files/src"}, "/Files/dest", func(p TransferProgress) { updates = append(updates, p) }); err != nil {
 		t.Fatal(err)
 	}
+	last := updates[len(updates)-1]
 	data, err := os.ReadFile(filepath.Join(root, "dest", "src", "sub", "hello.txt"))
 	if err != nil {
 		t.Fatal(err)
@@ -42,6 +52,11 @@ func TestCopyMoveCopiesDirectoryTree(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "src", "sub", "hello.txt")); err != nil {
 		t.Fatalf("copy removed source: %v", err)
+	}
+	for _, phase := range []string{transferPhaseScanning, transferPhaseCopying, transferPhaseFlushing, transferPhasePublishing, transferPhaseCompleted} {
+		if !containsPhase(updates, phase) {
+			t.Fatalf("missing %q phase in %#v", phase, updates)
+		}
 	}
 }
 

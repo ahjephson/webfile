@@ -125,7 +125,7 @@ func (s *Service) Trash(ctx context.Context, sources []string, report progressFu
 			itemsDone += source.items
 			emit("Moving " + item.Name + " to Recycle Bin")
 		} else if errors.Is(err, syscall.EXDEV) || errors.Is(err, errRenameNoReplaceUnsupported) {
-			if err := copyTree(ctx, source.absolute, trashPath, func(deltaBytes, deltaItems int64) {
+			if err := copyTree(ctx, source.absolute, trashPath, func(_ string, deltaBytes, deltaItems int64) {
 				bytesDone += deltaBytes
 				itemsDone += deltaItems
 				emit("Moving " + item.Name + " to Recycle Bin")
@@ -286,7 +286,7 @@ func movePhysical(ctx context.Context, source, destination string) error {
 	} else if !errors.Is(err, syscall.EXDEV) && !errors.Is(err, errRenameNoReplaceUnsupported) {
 		return err
 	}
-	if err := copyTree(ctx, source, destination, func(int64, int64) {}); err != nil {
+	if err := copyTree(ctx, source, destination, func(string, int64, int64) {}); err != nil {
 		return err
 	}
 	return os.RemoveAll(source)

@@ -1,6 +1,7 @@
 # Copy and move progress design
 
-Status: planned; not yet implemented.
+Status: implemented 2026-10-01. A possible `copy_file_range` optimization
+remains an optional follow-up.
 
 ## Goals
 
@@ -12,7 +13,7 @@ Status: planned; not yet implemented.
 - Preserve cancellation, no-overwrite behaviour, atomic publication where the
   destination filesystem supports it, and durable task history.
 
-## Current behaviour
+## Previous behaviour
 
 WebFile measures the complete source tree before copying so it can report total
 bytes and items. It then copies each regular file through Go using a 1 MiB
