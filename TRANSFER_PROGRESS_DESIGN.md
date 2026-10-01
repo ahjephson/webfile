@@ -104,12 +104,13 @@ instead of a misleading zero rate.
 
 ## Copy engine
 
-Linux copies first use chunked `copy_file_range` calls so compatible local
-filesystems can keep data movement inside the kernel. Each completed chunk
-updates cancellation and progress normally. If the kernel or either filesystem
-does not support the operation, copying resumes from the current file offsets
-through the portable buffered implementation without restarting or
-double-counting the transfer.
+Linux copies first use `copy_file_range` calls of up to 4 MiB so compatible
+local filesystems can keep data movement inside the kernel. Each completed
+chunk updates cancellation and progress normally. If the kernel or either
+filesystem does not support the operation, copying resumes from the current
+file offsets through the portable buffered implementation without restarting
+or double-counting the transfer. A future advanced per-user setting may select
+1 MiB, 4 MiB, 16 MiB, or 64 MiB; 4 MiB remains the default.
 
 Temporary files are published through atomic no-replace rename where supported.
 The fallback retains exclusive no-overwrite behaviour, and any slower

@@ -38,6 +38,14 @@ follow that user across browsers and sessions. They do not include per-tab
 - Automatically open the Tasks panel when a background operation starts.
 - Optional persistent start location, distinct from restoring a tab's last folder.
 
+## Advanced
+
+### Transfers
+
+- Copy chunk size: 1 MiB, 4 MiB, 16 MiB, or 64 MiB, defaulting to 4 MiB.
+  This controls the maximum size of each Linux `copy_file_range` request,
+  trading syscall frequency against progress and cancellation granularity.
+
 ## Delivery order and boundaries
 
 The initial delivery should expose the four preferences already supported by

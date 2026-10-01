@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const copyFileRangeChunk = 16 * 1024 * 1024
+const copyFileRangeChunk = 4 * 1024 * 1024
 
 // copyFileRangePlatform copies from the files' current offsets and advances
 // both offsets. A false complete result asks the caller to resume with its
