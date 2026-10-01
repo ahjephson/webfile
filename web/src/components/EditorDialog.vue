@@ -74,6 +74,13 @@ function syncFullscreenState() {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  const saveShortcut = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's'
+  if (saveShortcut) {
+    event.preventDefault()
+    if (!loading.value && !saving.value && !conflict.value && (dirty.value || newDocument.value)) void save()
+    return
+  }
+
   if (event.key !== 'Escape') return
   if (languagePicker.value) {
     languagePicker.value = false
