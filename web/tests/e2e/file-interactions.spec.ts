@@ -529,6 +529,51 @@ test('the file hash restores an editor across reload, back, and forward navigati
   await expect(page.locator('[data-file-entry]')).toBeVisible()
 })
 
+test('saving recreates an edited file that was removed after opening', async ({ page }) => {
+  let saveAttempts = 0
+  await page.route('**/api/fs/dir**', route => route.fulfill({
+    json: {
+      path: '/docs',
+      entries: [{ name: 'notes.txt', path: '/docs/notes.txt', is_dir: false, size: 12, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }],
+    },
+  }))
+  await page.route('**/api/fs/content-type**', route => route.fulfill({ json: { path: '/docs/notes.txt', content_type: 'text/plain; charset=utf-8' } }))
+  await page.route('**/api/fs/file**', async route => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({
+        json: { path: '/docs/notes.txt', content: 'Editor text', modified: '2000-01-01T00:00:00Z', etag: 'original-etag' },
+      })
+      return
+    }
+
+    saveAttempts += 1
+    if (saveAttempts === 1) {
+      expect(route.request().headers()['if-match']).toBe('original-etag')
+      await route.fulfill({ status: 404, json: { error: 'file not found' } })
+      return
+    }
+
+    expect(route.request().headers()['if-none-match']).toBe('*')
+    await route.fulfill({
+      json: {
+        path: '/docs/notes.txt',
+        content: route.request().postData() ?? '',
+        modified: '2000-01-01T00:00:01Z',
+        etag: 'recreated-etag',
+      },
+    })
+  })
+
+  await page.goto('/#path=%2Fdocs&file=notes.txt')
+  const editor = page.getByRole('textbox', { name: 'Editor content' })
+  await editor.focus()
+  await page.keyboard.type(' updated')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+  expect(saveAttempts).toBe(2)
+})
+
 test('a legacy full-path file hash is restored and normalized to a filename', async ({ page }) => {
   await page.route('**/api/fs/dir**', route => route.fulfill({
     json: {

@@ -131,11 +131,18 @@ async function save(options?: { force?: boolean; path?: string; createOnly?: boo
   error.value = ''
   try {
     const target = options?.path ?? currentPath.value
-    const result = await api.saveFile(target, content.value, {
-      etag: etag.value,
-      createOnly: options?.createOnly ?? newDocument.value,
-      force: options?.force,
-    })
+    const createOnly = options?.createOnly ?? newDocument.value
+    let result
+    try {
+      result = await api.saveFile(target, content.value, {
+        etag: etag.value,
+        createOnly,
+        force: options?.force,
+      })
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 404 && !createOnly)) throw err
+      result = await api.saveFile(target, content.value, { createOnly: true })
+    }
     currentPath.value = target
     saveAsPath.value = target
     newDocument.value = false
