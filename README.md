@@ -236,13 +236,13 @@ sudo apt install build-essential libpam0g-dev
 Then:
 
 ```bash
-make build VERSION=v0.1.0
+make build VERSION=0.1.0
 ```
 
 or create a release archive:
 
 ```bash
-make package VERSION=v0.1.0
+make package VERSION=0.1.0
 ```
 
 The release binary embeds the compiled Vue frontend. Node is a build-time
@@ -309,8 +309,8 @@ both HTTPS package and checksum URLs:
 
 ```bash
 sudo webfile-update \
-  https://example/releases/webfile-v0.2.0-linux-amd64.tar.gz \
-  https://example/releases/webfile-v0.2.0-linux-amd64.tar.gz.sha256
+  https://example/releases/webfile-0.2.0-linux-amd64.tar.gz \
+  https://example/releases/webfile-0.2.0-linux-amd64.tar.gz.sha256
 ```
 
 It verifies the checksum, atomically replaces the binary, updates the shipped
@@ -321,6 +321,20 @@ installation if the new service does not start successfully.
 `.github/workflows/release.yml` builds/tests tagged releases and publishes the
 package + checksum. Frontend dependencies are reproducibly installed from the
 committed `web/package-lock.json` with `npm ci`.
+
+Release tags use bare semantic versions such as `0.4.0`, without a `v` prefix.
+After validating and committing a release on `main`, create and push an
+annotated tag:
+
+```bash
+make test-production
+make package VERSION=0.4.0
+git tag -a 0.4.0 -m "WebFile 0.4.0"
+git push origin main 0.4.0
+```
+
+Pushing the tag starts the release workflow. Every future release build should
+have a matching version tag.
 
 ## Repository layout
 

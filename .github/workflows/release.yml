@@ -2,7 +2,7 @@ name: release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['[0-9]*']
 
 permissions:
   contents: write
@@ -25,13 +25,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential libpam0g-dev
       - name: Frontend dependencies
         working-directory: web
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Build frontend
         working-directory: web
         run: npm run build
       - name: Test backend
         working-directory: backend
-        run: go test ./... && go vet ./...
+        run: CGO_ENABLED=1 go test -tags "production pam" ./... && CGO_ENABLED=1 go vet -tags "production pam" ./...
       - name: Package
         env:
           VERSION: ${{ github.ref_name }}
@@ -39,7 +39,7 @@ jobs:
         run: |
           mkdir -p dist/stage/webfile-${VERSION}-linux-amd64/deploy
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          CGO_ENABLED=1 go -C backend build -tags pam \
+          CGO_ENABLED=1 go -C backend build -tags "production pam" \
             -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
             -o ../dist/stage/webfile-${VERSION}-linux-amd64/webfile ./cmd/webfile
           cp README.md webfile.example.json dist/stage/webfile-${VERSION}-linux-amd64/
