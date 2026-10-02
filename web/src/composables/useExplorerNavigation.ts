@@ -67,10 +67,10 @@ export function useExplorerNavigation(username: string) {
     return `${directory.replace(/\/$/, '')}/${value}`
   }
 
-  function writeHash(path: string, replace = false, file: string | null = null) {
+  function writeHash(path: string, replace = false, file: string | null = null, visiblePath = path) {
     const fileName = file?.split('/').at(-1) ?? ''
     const filePart = fileName ? `&file=${encodeURIComponent(fileName)}` : ''
-    const url = `${window.location.pathname}${window.location.search}#path=${encodeURIComponent(path)}${filePart}`
+    const url = `${window.location.pathname}${window.location.search}#path=${encodeURIComponent(visiblePath)}${filePart}`
     const current = readWebFileHistoryState()
     const position = replace ? (current?.webfilePosition ?? 0) : (current?.webfilePosition ?? 0) + 1
     let folderTrail = current?.webfileFolderTrail ? [...current.webfileFolderTrail] : []

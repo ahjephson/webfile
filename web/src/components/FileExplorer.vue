@@ -55,7 +55,7 @@ const {
   readSessionState,
   readHashPath,
   readHashFile,
-  writeHash: writePathHash,
+  writeHash: writeRawPathHash,
   goToPathInHistory,
   storePath: storeSessionPath,
   clearPath: clearSessionPath,
@@ -136,6 +136,7 @@ let invalidateTimer: number | null = null
 let hashFileRequest = 0
 let breadcrumbResizeObserver: ResizeObserver | null = null
 let preferencesLoaded = false
+let navigationReady = false
 
 const {
   operations,
@@ -278,6 +279,10 @@ const parentPath = computed(() => {
 })
 
 onMounted(async () => {
+  await loadRootLayout()
+  currentPath.value = toInternalPath(readHashPath() ?? currentPath.value)
+  await nextTick()
+  navigationReady = true
   startRealtime(currentPath.value)
   breadcrumbResizeObserver = new ResizeObserver(scrollBreadcrumbToEnd)
   if (breadcrumbScroll.value) breadcrumbResizeObserver.observe(breadcrumbScroll.value)
@@ -287,17 +292,19 @@ onMounted(async () => {
   const initialFolderLoad = refresh(true)
   await Promise.all([loadPreferences(), loadOperations()])
   restorePasswordPrompt()
-  if (!await initialFolderLoad && currentPath.value !== '/') {
+  const fallbackPath = singleRootPath.value || '/'
+  if (!await initialFolderLoad && currentPath.value !== fallbackPath) {
     clearSessionPath()
-    navigateTo('/', true)
+    navigateTo(fallbackPath, true)
   } else {
-    const file = readHashFile()
+    const file = readInternalHashFile()
     writePathHash(currentPath.value, true, file)
     if (file) await restoreHashFile(file)
   }
 })
 
 watch(currentPath, path => {
+  if (!navigationReady) return
   clearSelection()
   clearFocus(path)
   search.value = ''
@@ -323,6 +330,37 @@ onBeforeUnmount(() => {
   window.removeEventListener('hashchange', applyHashPath)
   breadcrumbResizeObserver?.disconnect()
 })
+
+async function loadRootLayout() {
+  try {
+    const result = await api.list('/')
+    singleRootPath.value = result.single_root_path ?? ''
+  } catch {
+    singleRootPath.value = ''
+  }
+}
+
+function toInternalPath(path: string): string {
+  const root = singleRootPath.value
+  if (!root || path === root || path.startsWith(`${root}/`)) return path
+  return path === '/' ? root : `${root}${path}`
+}
+
+function toVisiblePath(path: string): string {
+  const root = singleRootPath.value
+  if (!root) return path
+  if (path === root) return '/'
+  return path.startsWith(`${root}/`) ? path.slice(root.length) : path
+}
+
+function readInternalHashFile(): string | null {
+  const path = readHashFile()
+  return path ? toInternalPath(path) : null
+}
+
+function writePathHash(path: string, replace = false, file: string | null = null) {
+  writeRawPathHash(path, replace, file, toVisiblePath(path))
+}
 
 async function scrollBreadcrumbToEnd() {
   await nextTick()
@@ -401,10 +439,14 @@ function applyHashPath() {
 async function applyHashLocation() {
   const request = ++hashFileRequest
   const path = readHashPath()
-  if (path && path !== currentPath.value) {
-    currentPath.value = path
+  const internalPath = path ? toInternalPath(path) : null
+  if (internalPath && internalPath !== currentPath.value) {
+    currentPath.value = internalPath
   }
-  const file = readHashFile()
+  const file = readInternalHashFile()
+  if (path && internalPath && path !== toVisiblePath(internalPath)) {
+    writePathHash(internalPath, true, file)
+  }
   if (!file) {
     previewVisible.value = false
     editorVisible.value = false
@@ -431,7 +473,7 @@ async function refresh(showSpinner: boolean): Promise<boolean> {
     const result = await api.list(requestedPath)
     if (requestedPath !== currentPath.value) return false
     singleRootPath.value = result.single_root_path ?? ''
-    if (requestedPath === '/' && singleRootPath.value) {
+    if (requestedPath === '/' && singleRootPath.value && navigationReady) {
       navigateTo(singleRootPath.value, true)
       return true
     }
@@ -665,7 +707,7 @@ function setEditorVisible(visible: boolean) {
 
 function onEditorSaved(path: string) {
   editorIsNew.value = false
-  if (readHashFile() !== path) writePathHash(currentPath.value, false, path)
+  if (readInternalHashFile() !== path) writePathHash(currentPath.value, false, path)
   void refresh(false)
 }
 
@@ -1125,7 +1167,7 @@ function operationLabel(value: string) {
     <div v-if="error" class="border-b border-red-950 bg-red-950/50 px-4 py-3 text-sm text-red-200">{{ error }}</div>
 
     <div class="flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950 px-3 py-2">
-      <nav ref="breadcrumbScroll" class="min-w-0 flex-1 overflow-x-auto" aria-label="Breadcrumb" data-breadcrumb-scroll>
+      <nav ref="breadcrumbScroll" class="min-w-0 flex-1 overflow-x-auto" aria-label="Breadcrumb" data-breadcrumb-scroll :data-single-root="singleRootPath ? 'true' : 'false'">
         <div class="flex min-w-max items-center gap-1 text-sm">
           <template v-for="(crumb, index) in breadcrumbs" :key="crumb.path">
             <i v-if="index" class="pi pi-angle-right text-xs text-zinc-600" />

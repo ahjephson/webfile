@@ -88,7 +88,7 @@ async function dispatchContextMenuProbe(target: Locator) {
 
 async function openConfiguredRoot(page: Page) {
   await page.goto('/')
-  await expect.poll(() => new URLSearchParams(new URL(page.url()).hash.replace(/^#/, '')).get('path')).toMatch(/^\/.+/)
+  await expect(page.locator('nav[aria-label="Breadcrumb"]')).toHaveAttribute('data-single-root', 'true')
   const rootRow = page.locator('[data-file-entry]').first()
   await expect(rootRow).toBeVisible()
 }
@@ -645,7 +645,7 @@ test('a single configured root becomes Files and is hidden from navigation', asy
   })
 
   await page.goto('/')
-  await expect(page).toHaveURL(/#path=%2FOnly%20Root$/)
+  await expect(page).toHaveURL(/#path=%2F$/)
   await expect(page.locator('[data-file-entry]').filter({ hasText: 'Only Root' })).toHaveCount(0)
   await expect(page.locator('[data-file-entry]').filter({ hasText: 'child' })).toBeVisible()
   await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveText(['Files'])
@@ -653,8 +653,27 @@ test('a single configured root becomes Files and is hidden from navigation', asy
 
   await page.locator('[data-file-entry]').filter({ hasText: 'child' }).dblclick()
   await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveText(['Files', 'child'])
+  await expect(page).toHaveURL(/#path=%2Fchild$/)
   await page.getByRole('button', { name: 'Files', exact: true }).click()
-  await expect(page).toHaveURL(/#path=%2FOnly%20Root$/)
+  await expect(page).toHaveURL(/#path=%2F$/)
+})
+
+test('a root-relative deep link resolves within the single configured root', async ({ page }) => {
+  const requestedPaths: string[] = []
+  await page.route('**/api/fs/dir**', async route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
+    requestedPaths.push(path)
+    await route.fulfill({ json: { path, entries: [], single_root_path: '/Only Root' } })
+  })
+
+  await page.goto('/#path=%2Fchild')
+
+  await expect(page).toHaveURL(/#path=%2Fchild$/)
+  await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveText(['Files', 'child'])
+  await expect.poll(() => requestedPaths).toContain('/Only Root/child')
+
+  await page.goto('/#path=%2FOnly%20Root%2Fchild')
+  await expect(page).toHaveURL(/#path=%2Fchild$/)
 })
 
 test('multiple configured roots remain visible below Files', async ({ page }) => {
