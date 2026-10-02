@@ -517,9 +517,13 @@ function navigateTo(path: string, replaceHistory = false) {
   writePathHash(path, replaceHistory)
 }
 
-function navigateBreadcrumb(path: string) {
+function navigateHistoryAware(path: string) {
   if (path === currentPath.value) return
   if (!goToPathInHistory(path)) navigateTo(path)
+}
+
+function navigateBreadcrumb(path: string) {
+  navigateHistoryAware(path)
 }
 
 function showOperationTerminalToast(operation: FileOperation) {
@@ -988,7 +992,7 @@ function onBackgroundDrop(event: DragEvent) {
 }
 
 function goUp() {
-  if (parentPath.value) navigateTo(parentPath.value)
+  if (parentPath.value) navigateHistoryAware(parentPath.value)
 }
 
 function openFilter() {
