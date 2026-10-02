@@ -1,11 +1,9 @@
-# Per-user settings design
+# Potential per-user settings
 
-Status: initial delivery implemented.
+Status: future options; not currently scheduled.
 
-The current settings page exposes appearance (theme, default view, grid tile
-size, dotfile visibility, and inaccessible-item visibility), editor defaults,
-and the transfer copy chunk size. The remaining appearance, preview, and
-file-interaction preferences below are planned follow-up work.
+This document tracks only possible additions to the implemented settings page.
+It is not a commitment to deliver them.
 
 Settings are durable preferences controlled by the signed-in user and should
 follow that user across browsers and sessions. They do not include per-tab
@@ -13,22 +11,7 @@ follow that user across browsers and sessions. They do not include per-tab
 
 ## Appearance
 
-- Theme: System, Light, or Dark.
-- Default view: List or Grid.
-- Grid tile size: Small, Medium, or Large.
 - Interface density: Compact or Comfortable.
-- Show dotfiles by default.
-- Hide inaccessible files and folders, defaulting to off.
-
-## Editor
-
-- Word wrap.
-- Font size.
-- Show line numbers.
-- Show whitespace.
-- Show minimap.
-- Compact or rich toolbar by default.
-- Markdown preview enabled by default.
 
 ## Previews
 
@@ -44,20 +27,7 @@ follow that user across browsers and sessions. They do not include per-tab
 - Automatically open the Tasks panel when a background operation starts.
 - Optional persistent start location, distinct from restoring a tab's last folder.
 
-## Advanced
-
-### Transfers
-
-- Copy chunk size: 1 MiB, 4 MiB, 16 MiB, or 64 MiB, defaulting to 4 MiB.
-  This controls the maximum size of each Linux `copy_file_range` request,
-  trading syscall frequency against progress and cancellation granularity.
-
-## Delivery order and boundaries
-
-The initial delivery exposes theme, view mode, grid size, dotfile visibility,
-inaccessible-item visibility, the editor defaults, and the transfer copy chunk
-size. Interface density, preview defaults, and the remaining file-interaction
-preferences remain planned.
+## Boundaries
 
 Current folder, filter text, selection, open panels, and scroll position remain
 tab/session state. Roots, authentication, TLS, archive commands, watcher
