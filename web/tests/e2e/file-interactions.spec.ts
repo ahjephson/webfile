@@ -291,6 +291,27 @@ for (const view of ['list', 'grid'] as const) {
       await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
     })
 
+    test('actions button opens the selected item context actions', async ({ page }) => {
+      const checkbox = selectionButtons(page).first()
+
+      await showSelectionControls(page)
+      await checkbox.click()
+      await expect(page.getByRole('button', { name: 'Copy', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Move', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0)
+      await page.getByRole('button', { name: 'Actions' }).click()
+
+      const menu = page.getByRole('menu').filter({ visible: true })
+      await expect(menu).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: 'Open' })).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: 'Download' })).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: 'Details' })).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: 'Copy to…' })).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: 'Move to…' })).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: 'Rename…' })).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: 'Delete' })).toBeVisible()
+    })
+
     test('touch long-press opens while held and remains open after release', async ({ page }) => {
       const checkbox = selectionButtons(page).first()
       const menu = page.locator('.p-contextmenu')
@@ -532,7 +553,8 @@ test('delete is permanent and no recycle bin is exposed', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Open Recycle Bin' })).toHaveCount(0)
   await showSelectionControls(page)
   await selectionButtons(page).first().click()
-  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  await page.getByRole('button', { name: 'Actions' }).click()
+  await page.getByRole('menu').filter({ visible: true }).getByRole('menuitem', { name: 'Delete' }).click()
 
   const confirmation = page.getByRole('alertdialog', { name: 'Delete' })
   await expect(confirmation).toContainText('Permanently delete “delete-me.txt”? This cannot be undone.')

@@ -80,6 +80,7 @@ const showHidden = ref(false)
 const favourites = ref<Favourite[]>([])
 const gridColumns = ref(1)
 const contextMenu = ref<any>(null)
+const actionsMenu = ref<any>(null)
 const contextEntry = ref<FileEntry | null>(null)
 const themeMenu = ref<any>(null)
 const listView = ref<InstanceType<typeof VirtualFileList> | null>(null)
@@ -198,7 +199,6 @@ const filteredEntries = computed(() => {
 const selectedEntries = computed(() => entries.value.filter(entry => selectedPaths.value.has(entry.path)))
 const selectedOne = computed(() => selectedEntries.value.length === 1 ? selectedEntries.value[0] : null)
 const canMutate = computed(() => currentPath.value !== '/')
-const selectionContainsConfiguredRoot = computed(() => currentPath.value === '/' && selectedEntries.value.length > 0)
 const currentFavourite = computed(() => favourites.value.some(item => item.path === currentPath.value))
 
 const themeItems = computed(() => (['system', 'dark', 'light'] as ThemeMode[]).map(mode => ({
@@ -558,6 +558,11 @@ function openContext(entry: FileEntry, event: MouseEvent | PointerEvent) {
   if (!isTouch && detailsVisible.value) detailsPath.value = entry.path
   contextEntry.value = entry
   contextMenu.value?.show(event)
+}
+
+function showActionsMenu(event: Event) {
+  contextEntry.value = null
+  actionsMenu.value?.toggle(event)
 }
 
 function onContextMenuHide() {
@@ -1060,9 +1065,7 @@ function operationLabel(value: string) {
 
         <span class="mx-1 h-6 w-px bg-zinc-700" />
         <div class="flex items-center gap-1">
-          <Button v-if="selectedEntries.length && !selectionContainsConfiguredRoot" v-tooltip.bottom="'Copy'" icon="pi pi-copy" size="small" text aria-label="Copy" @click="openTransfer('copy')" />
-          <Button v-if="selectedEntries.length && !selectionContainsConfiguredRoot" v-tooltip.bottom="'Move'" icon="pi pi-arrow-right" size="small" text aria-label="Move" @click="openTransfer('move')" />
-          <Button v-if="selectedEntries.length && !selectionContainsConfiguredRoot" v-tooltip.bottom="'Delete'" icon="pi pi-trash" size="small" severity="danger" text aria-label="Delete" @click="deleteEntries()" />
+          <Button v-if="selectedEntries.length" v-tooltip.bottom="'Actions'" icon="pi pi-ellipsis-v" size="small" severity="secondary" text aria-label="Actions" @click="showActionsMenu" />
           <Button v-tooltip.bottom="detailsVisible ? 'Close details' : 'Open details'" icon="pi pi-info-circle" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': detailsVisible }" :aria-label="detailsVisible ? 'Close details' : 'Open details'" :aria-pressed="detailsVisible" @click="toggleDetailsPanel" />
         </div>
 
@@ -1235,6 +1238,7 @@ function operationLabel(value: string) {
     </div>
 
     <ContextMenu ref="contextMenu" :model="contextItems" :base-z-index="1100" @hide="onContextMenuHide" />
+    <Menu ref="actionsMenu" popup :model="contextItems" />
 
     <NewDocumentDialog v-model:visible="newDocumentVisible" @create="createDocument" />
     <NameDialog
