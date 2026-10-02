@@ -153,8 +153,7 @@ WebFile deliberately does **not** persist the filesystem tree. An atomic JSON
 state file under `runtime.data_dir` stores shared application state:
 
 - hashed sessions + CSRF state;
-- per-user view preferences (including hidden-file visibility);
-- per-user favourite folders.
+- per-user view preferences (including hidden-file visibility).
 
 Per-user background task state is kept separately in the SQLite database
 described above. Neither store catalogues user files.

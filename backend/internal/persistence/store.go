@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 )
@@ -33,15 +32,8 @@ type Preferences struct {
 	CopyChunkMiB          int    `json:"copy_chunk_mib,omitempty"`
 }
 
-type Favourite struct {
-	Path      string    `json:"path"`
-	Label     string    `json:"label,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 type userState struct {
 	Preferences Preferences `json:"preferences"`
-	Favourites  []Favourite `json:"favourites,omitempty"`
 }
 
 type diskState struct {
@@ -132,52 +124,6 @@ func (s *Store) SetPreferences(username string, prefs Preferences) error {
 	defer s.mu.Unlock()
 	u := s.data.Users[username]
 	u.Preferences = prefs
-	s.data.Users[username] = u
-	return s.saveLocked()
-}
-
-func (s *Store) Favourites(username string) []Favourite {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	stored := s.data.Users[username].Favourites
-	items := make([]Favourite, len(stored))
-	copy(items, stored)
-	sort.SliceStable(items, func(i, j int) bool { return items[i].CreatedAt.Before(items[j].CreatedAt) })
-	return items
-}
-
-func (s *Store) AddFavourite(username string, favourite Favourite) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	u := s.data.Users[username]
-	for i := range u.Favourites {
-		if u.Favourites[i].Path == favourite.Path {
-			if favourite.Label != "" {
-				u.Favourites[i].Label = favourite.Label
-			}
-			s.data.Users[username] = u
-			return s.saveLocked()
-		}
-	}
-	if favourite.CreatedAt.IsZero() {
-		favourite.CreatedAt = time.Now().UTC()
-	}
-	u.Favourites = append(u.Favourites, favourite)
-	s.data.Users[username] = u
-	return s.saveLocked()
-}
-
-func (s *Store) RemoveFavourite(username, path string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	u := s.data.Users[username]
-	out := u.Favourites[:0]
-	for _, favourite := range u.Favourites {
-		if favourite.Path != path {
-			out = append(out, favourite)
-		}
-	}
-	u.Favourites = out
 	s.data.Users[username] = u
 	return s.saveLocked()
 }

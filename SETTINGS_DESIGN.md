@@ -61,5 +61,5 @@ and file-interaction preferences remain planned.
 Current folder, filter text, selection, open panels, and scroll position remain
 tab/session state. Roots, authentication, TLS, archive commands, watcher
 behaviour, caches, file-size limits, worker paths, and task concurrency remain
-administrator configuration. Favourites and task history remain user data
-managed by their existing interfaces rather than settings.
+administrator configuration. Task history remains user data managed by its
+existing interface rather than settings.

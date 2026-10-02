@@ -1,6 +1,5 @@
 import type {
   DirectoryResponse,
-  Favourite,
   FileContent,
   FileDetails,
   FileEntry,
@@ -279,24 +278,6 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(preferences),
     })
-  },
-
-  async favourites(): Promise<{ favourites: Favourite[] }> {
-    const response = await request<{ favourites?: Favourite[] | null }>('/api/favourites')
-    return { favourites: arrayOrEmpty(response.favourites) }
-  },
-
-  addFavourite(path: string, label?: string) {
-    return request<Favourite>('/api/favourites', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, label: label ?? '' }),
-    })
-  },
-
-  removeFavourite(path: string) {
-    const query = new URLSearchParams({ path })
-    return request<void>(`/api/favourites?${query}`, { method: 'DELETE' })
   },
 
   downloadUrl(path: string) {

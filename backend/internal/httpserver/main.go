@@ -73,9 +73,6 @@ func (s *MainServer) routes() {
 	s.mux.HandleFunc("DELETE /api/elevation", s.dropElevation)
 	s.mux.HandleFunc("GET /api/preferences", s.getPreferences)
 	s.mux.HandleFunc("PUT /api/preferences", s.putPreferences)
-	s.mux.HandleFunc("GET /api/favourites", s.listFavourites)
-	s.mux.HandleFunc("POST /api/favourites", s.addFavourite)
-	s.mux.HandleFunc("DELETE /api/favourites", s.removeFavourite)
 	s.mux.HandleFunc("/api/fs/", s.proxyFilesystem)
 	s.mux.Handle("/", spaHandler())
 }
@@ -343,57 +340,6 @@ func (s *MainServer) putPreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, prefs)
-}
-
-func (s *MainServer) listFavourites(w http.ResponseWriter, r *http.Request) {
-	id, _, ok := s.identityForRequest(r)
-	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"favourites": s.opts.State.Favourites(id.Username)})
-}
-
-func (s *MainServer) addFavourite(w http.ResponseWriter, r *http.Request) {
-	id, _, ok := s.identityForRequest(r)
-	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-		return
-	}
-	var favourite persistence.Favourite
-	if err := decodeJSON(r, &favourite); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	favourite.Path = strings.TrimSpace(favourite.Path)
-	if favourite.Path == "" || !strings.HasPrefix(favourite.Path, "/") {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
-		return
-	}
-	favourite.CreatedAt = time.Now().UTC()
-	if err := s.opts.State.AddFavourite(id.Username, favourite); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save favourite"})
-		return
-	}
-	writeJSON(w, http.StatusCreated, favourite)
-}
-
-func (s *MainServer) removeFavourite(w http.ResponseWriter, r *http.Request) {
-	id, _, ok := s.identityForRequest(r)
-	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-		return
-	}
-	path := strings.TrimSpace(r.URL.Query().Get("path"))
-	if path == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
-		return
-	}
-	if err := s.opts.State.RemoveFavourite(id.Username, path); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not remove favourite"})
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *MainServer) csrfGuard(next http.Handler) http.Handler {

@@ -9,7 +9,7 @@ import SplitButton from 'primevue/splitbutton'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '@/api/client'
-import type { Favourite, FileEntry, FileOperation, VideoThumbnailJob } from '@/types/files'
+import type { FileEntry, FileOperation, VideoThumbnailJob } from '@/types/files'
 import { resolvedTheme, setTheme, themeMode, type ThemeMode } from '@/theme'
 import { defaultPreferences, normalizePreferences, type UserPreferences } from '@/preferences'
 import SettingsDialog from '@/components/SettingsDialog.vue'
@@ -84,7 +84,6 @@ const {
 const viewMode = ref<ViewMode>('list')
 const gridSize = ref<GridSize>('medium')
 const showHidden = ref(false)
-const favourites = ref<Favourite[]>([])
 const gridColumns = ref(1)
 const contextMenu = ref<any>(null)
 const actionsMenu = ref<any>(null)
@@ -126,7 +125,6 @@ const userPreferences = ref<UserPreferences>({ ...defaultPreferences })
 const thumbnailJobs = ref<VideoThumbnailJob[]>([])
 const detailsVisible = ref(restoredExplorerState.detailsVisible)
 const detailsPath = ref(restoredStateMatchesPath ? restoredExplorerState.detailsPath : currentPath.value)
-const favouritesVisible = ref(false)
 const transferEntries = ref<FileEntry[]>([])
 const renameTarget = ref<FileEntry | null>(null)
 const extractTarget = ref<FileEntry | null>(null)
@@ -206,7 +204,6 @@ const filteredEntries = computed(() => {
 const selectedEntries = computed(() => entries.value.filter(entry => selectedPaths.value.has(entry.path)))
 const selectedOne = computed(() => selectedEntries.value.length === 1 ? selectedEntries.value[0] : null)
 const canMutate = computed(() => currentPath.value !== '/')
-const currentFavourite = computed(() => favourites.value.some(item => item.path === currentPath.value))
 const elevationLabel = computed(() => {
   if (!props.elevationExpiresAt) return 'Elevated access active'
   const expires = new Date(props.elevationExpiresAt)
@@ -281,7 +278,7 @@ onMounted(async () => {
   window.addEventListener('popstate', applyHashPath)
   window.addEventListener('hashchange', applyHashPath)
   const initialFolderLoad = refresh(true)
-  await Promise.all([loadPreferences(), loadFavourites(), loadOperations()])
+  await Promise.all([loadPreferences(), loadOperations()])
   restorePasswordPrompt()
   if (!await initialFolderLoad && currentPath.value !== '/') {
     clearSessionPath()
@@ -389,25 +386,6 @@ const gridSizeItems = computed(() => ([
   { label: 'Medium tiles', icon: gridSize.value === 'medium' ? 'pi pi-check' : undefined, command: () => chooseGridSize('medium') },
   { label: 'Large tiles', icon: gridSize.value === 'large' ? 'pi pi-check' : undefined, command: () => chooseGridSize('large') },
 ]))
-
-async function loadFavourites() {
-  try {
-    favourites.value = (await api.favourites()).favourites
-  } catch {
-    favourites.value = []
-  }
-}
-
-async function toggleFavourite() {
-  if (currentPath.value === '/') return
-  try {
-    if (currentFavourite.value) await api.removeFavourite(currentPath.value)
-    else await api.addFavourite(currentPath.value)
-    await loadFavourites()
-  } catch (err) {
-    showError(err, 'Could not update favourite')
-  }
-}
 
 function applyHashPath() {
   void applyHashLocation()
@@ -1077,11 +1055,6 @@ function operationLabel(value: string) {
         </div>
         <span class="mx-1 h-6 w-px bg-zinc-700" />
         <div class="flex items-center gap-1">
-          <Button v-tooltip.bottom="favouritesVisible ? 'Close favourites' : 'Open favourites'" icon="pi pi-star" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': favouritesVisible }" :aria-label="favouritesVisible ? 'Close favourites' : 'Open favourites'" :aria-pressed="favouritesVisible" @click="favouritesVisible = !favouritesVisible" />
-        </div>
-
-        <span class="mx-1 h-6 w-px bg-zinc-700" />
-        <div class="flex items-center gap-1">
           <Button v-if="selectedEntries.length" v-tooltip.bottom="'Actions'" icon="pi pi-ellipsis-v" size="small" severity="secondary" text aria-label="Actions" @click="showActionsMenu" />
           <Button v-tooltip.bottom="detailsVisible ? 'Close details' : 'Open details'" icon="pi pi-info-circle" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': detailsVisible }" :aria-label="detailsVisible ? 'Close details' : 'Open details'" :aria-pressed="detailsVisible" @click="toggleDetailsPanel" />
         </div>
@@ -1193,28 +1166,6 @@ function operationLabel(value: string) {
     </div>
 
     <div class="flex min-h-0 flex-1">
-      <aside v-if="favouritesVisible" class="flex h-full w-72 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900 text-zinc-100 shadow-2xl">
-        <header class="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
-          <h2 class="font-semibold">Favourites</h2>
-          <div class="flex items-center gap-1">
-            <Button v-tooltip.bottom="currentFavourite ? 'Remove current folder' : 'Add current folder'" :icon="currentFavourite ? 'pi pi-star-fill' : 'pi pi-star'" severity="secondary" text rounded :disabled="currentPath === '/'" :aria-label="currentFavourite ? 'Remove current folder' : 'Add current folder'" @click="toggleFavourite" />
-            <Button v-tooltip.bottom="'Close favourites'" icon="pi pi-times" severity="secondary" text rounded aria-label="Close favourites" @click="favouritesVisible = false" />
-          </div>
-        </header>
-        <div v-if="favourites.length" class="min-h-0 flex-1 space-y-1 overflow-auto p-2">
-          <button
-            v-for="favourite in favourites"
-            :key="favourite.path"
-            class="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white"
-            :title="favourite.path"
-            @click="navigateTo(favourite.path)"
-          >
-            <i class="pi pi-folder text-amber-400" />
-            <span class="min-w-0 flex-1 truncate">{{ favourite.label || favourite.path.split('/').filter(Boolean).at(-1) || favourite.path }}</span>
-          </button>
-        </div>
-        <div v-else class="grid min-h-0 flex-1 place-items-center p-6 text-center text-sm text-zinc-500">No favourite folders yet.</div>
-      </aside>
       <div
         ref="fileViewHost"
         class="relative min-h-0 min-w-0 flex-1 outline-none"

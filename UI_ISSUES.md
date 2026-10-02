@@ -37,7 +37,7 @@ Per-user settings are tracked separately in `SETTINGS_DESIGN.md`.
 
 - [x] Context menus, dialogs, and tooltips use the same compact typography, spacing, and control density as the main interface.
 - [x] Right-clicking a file or folder focuses that row and opens its context menu without changing checkbox multi-selection.
-- [x] Details is a true toggle with a visible active state, matching Favourites.
+- [x] Details is a true toggle with a visible active state.
 - [x] The same toggle convention applies to toolbar actions that open closable persistent views or panels:
   - activating the action opens the view;
   - its toolbar button visibly indicates the active state;
@@ -49,10 +49,10 @@ Per-user settings are tracked separately in `SETTINGS_DESIGN.md`.
 Visual references: `codex-clipboard-42f25200-ad50-4af3-b4b6-0d1291c397e3.png` and `codex-clipboard-825f7158-c949-466f-8b29-2c3207da5dea.png`.
 
 - [x] Toggle buttons use an unmistakable selected state based on a visible border, consistently applied to every toggled toolbar button.
-- [x] Toggles retain their normal icon in both states. In particular, Favourites keeps the outline star when active.
+- [x] Toggles retain their normal icon in both states.
 - [x] Dialog title, field, supporting text, action text, header/content/footer padding, and overall control density match the primary interface.
 - [x] The text editor toolbar has separate Find and Replace buttons using the established icon-only button and tooltip convention.
-- [x] The app bar is grouped into creation, locations, contextual file actions, application controls, appearance, and identity, with separators between groups.
+- [x] The app bar is grouped into creation, contextual file actions, application controls, appearance, and identity, with separators between groups.
 - [x] Operations and Settings live in the app bar.
 - [x] Breadcrumb-row controls are grouped on the right: selection status, Refresh, Filter, and the List/Grid/Show-hidden view controls.
 

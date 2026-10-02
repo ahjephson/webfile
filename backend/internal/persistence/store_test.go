@@ -1,34 +1,15 @@
 package persistence
 
 import (
-	"encoding/json"
+	"bytes"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 )
 
-func TestFavouritesForUnknownUserSerializesAsEmptyArray(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	favourites := store.Favourites("alex")
-	if favourites == nil {
-		t.Fatal("favourites must be a non-nil empty slice")
-	}
-
-	data, err := json.Marshal(favourites)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "[]" {
-		t.Fatalf("favourites JSON = %s", data)
-	}
-}
-
-func TestStatePersistsPreferencesFavouritesAndSessions(t *testing.T) {
+func TestStatePersistsPreferencesAndSessions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	store, err := Open(path)
 	if err != nil {
@@ -44,9 +25,6 @@ func TestStatePersistsPreferencesFavouritesAndSessions(t *testing.T) {
 	if err := store.SetPreferences("alex", wantPreferences); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AddFavourite("alex", Favourite{Path: "/Media/Movies", CreatedAt: time.Now().UTC()}); err != nil {
-		t.Fatal(err)
-	}
 	expires := time.Now().Add(time.Hour).UTC()
 	if err := store.PutSession("hash", SessionRecord{Username: "alex", ExpiresAt: expires, CSRFToken: "csrf"}); err != nil {
 		t.Fatal(err)
@@ -60,11 +38,30 @@ func TestStatePersistsPreferencesFavouritesAndSessions(t *testing.T) {
 	if prefs.EditorLineNumbers == nil || *prefs.EditorLineNumbers || !reflect.DeepEqual(prefs, wantPreferences) {
 		t.Fatalf("prefs=%+v, want %+v", prefs, wantPreferences)
 	}
-	if favs := reopened.Favourites("alex"); len(favs) != 1 || favs[0].Path != "/Media/Movies" {
-		t.Fatalf("favourites=%+v", favs)
-	}
 	rec, ok := reopened.GetSession("hash")
 	if !ok || rec.Username != "alex" || rec.CSRFToken != "csrf" {
 		t.Fatalf("session=%+v ok=%v", rec, ok)
+	}
+}
+
+func TestLegacyFavouritesAreDroppedOnNextStateWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	legacy := []byte(`{"version":1,"users":{"alex":{"preferences":{},"favourites":[{"path":"/Media"}]}}}`)
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPreferences("alex", Preferences{Theme: "dark"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("favourites")) {
+		t.Fatalf("legacy favourites remained in state: %s", data)
 	}
 }

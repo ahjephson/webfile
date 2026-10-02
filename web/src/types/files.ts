@@ -57,12 +57,6 @@ export interface Preferences {
   copy_chunk_mib?: 1 | 4 | 16 | 64
 }
 
-export interface Favourite {
-  path: string
-  label?: string
-  created_at: string
-}
-
 export interface UploadSession {
   id: string
   path: string
