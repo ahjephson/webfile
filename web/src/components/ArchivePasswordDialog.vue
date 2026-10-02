@@ -47,12 +47,20 @@ function updateVisible(value: boolean) {
     @update:visible="updateVisible"
     @after-hide="emit('after-hide')"
   >
-    <form class="space-y-4" @submit.prevent="submit">
+    <form class="space-y-4" autocomplete="off" @submit.prevent="submit">
       <p class="text-sm text-zinc-300">This archive is encrypted. Enter its password to continue extraction.</p>
       <p v-if="error" class="text-sm text-red-300" role="alert">{{ error }}</p>
       <div class="space-y-2">
         <label for="archive-password" class="block text-sm font-medium">Password</label>
-        <Password input-id="archive-password" ref="passwordInput" v-model="password" fluid :feedback="false" toggle-mask autocomplete="current-password" />
+        <Password
+          input-id="archive-password"
+          ref="passwordInput"
+          v-model="password"
+          fluid
+          :feedback="false"
+          toggle-mask
+          :input-props="{ autocomplete: 'off', name: 'archive-passphrase', spellcheck: false }"
+        />
       </div>
       <div class="flex justify-end gap-2">
         <Button label="Cancel" severity="secondary" text :disabled="busy" @click="emit('cancel')" />

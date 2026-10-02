@@ -2380,7 +2380,12 @@ test('Extract defaults to an archive-named folder and prompts when the task requ
 
   const passwordDialog = page.getByRole('dialog', { name: 'Password required — secure.tar.gz' })
   await expect(passwordDialog).toBeVisible()
-  await passwordDialog.getByLabel('Password').fill('secret')
+  const passwordInput = passwordDialog.getByLabel('Password')
+  await expect(passwordDialog.locator('form')).toHaveAttribute('autocomplete', 'off')
+  await expect(passwordInput).toHaveAttribute('autocomplete', 'off')
+  await expect(passwordInput).toHaveAttribute('name', 'archive-passphrase')
+  await expect(passwordInput).toHaveValue('')
+  await passwordInput.fill('secret')
   await passwordDialog.getByRole('button', { name: 'Continue' }).click()
   await expect(passwordDialog).toBeHidden()
 
