@@ -42,4 +42,8 @@ func TestSessionSurvivesStateReopen(t *testing.T) {
 	if !ok || got.Username != id.Username || gotCSRF != csrf {
 		t.Fatalf("got=%+v csrf=%q ok=%v", got, gotCSRF, ok)
 	}
+	key, ok := store2.Key(req)
+	if !ok || key == "" || key == cookies[0].Value {
+		t.Fatalf("key=%q ok=%v", key, ok)
+	}
 }

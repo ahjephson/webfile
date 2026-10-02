@@ -31,6 +31,7 @@ type Auth struct {
 	Mode             string `json:"mode"`
 	PAMService       string `json:"pam_service"`
 	SessionTTL       string `json:"session_ttl"`
+	ElevationTTL     string `json:"elevation_ttl"`
 	CookieSecure     bool   `json:"cookie_secure"`
 	LoginMaxAttempts int    `json:"login_max_attempts"`
 	LoginWindow      string `json:"login_window"`
@@ -87,6 +88,7 @@ func Default() Config {
 			Mode:             "none",
 			PAMService:       "webfile",
 			SessionTTL:       "12h",
+			ElevationTTL:     "5m",
 			LoginMaxAttempts: 5,
 			LoginWindow:      "1m",
 			LoginBlock:       "5m",
@@ -197,6 +199,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Auth.SessionTTL == "" {
 		c.Auth.SessionTTL = "12h"
+	}
+	if c.Auth.ElevationTTL == "" {
+		c.Auth.ElevationTTL = "5m"
 	}
 	if c.Auth.LoginMaxAttempts <= 0 {
 		c.Auth.LoginMaxAttempts = 5

@@ -72,6 +72,9 @@ export interface SessionStatus {
   mode: 'none' | 'pam'
   user?: SessionUser
   csrf_token?: string
+  elevation_available?: boolean
+  elevated?: boolean
+  elevation_expires_at?: string
 }
 
 interface UploadInitResponse {
@@ -103,6 +106,20 @@ export const api = {
   async logout() {
     await request<void>('/api/logout', { method: 'POST' })
     setCSRF('')
+  },
+
+  async elevate(password: string) {
+    const status = await request<SessionStatus>('/api/elevation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    setCSRF(status.csrf_token)
+    return status
+  },
+
+  dropElevation() {
+    return request<void>('/api/elevation', { method: 'DELETE' })
   },
 
   async list(path: string): Promise<DirectoryResponse> {

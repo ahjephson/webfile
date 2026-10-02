@@ -37,9 +37,16 @@ type TransferMode = 'copy' | 'move'
 const props = defineProps<{
   username: string
   showLogout: boolean
+  elevationAvailable: boolean
+  elevated: boolean
+  elevationExpiresAt?: string
 }>()
 
-const emit = defineEmits<{ logout: [] }>()
+const emit = defineEmits<{
+  logout: []
+  requestElevation: []
+  dropElevation: []
+}>()
 const toast = useToast()
 const confirm = useConfirm()
 
@@ -200,6 +207,12 @@ const selectedEntries = computed(() => entries.value.filter(entry => selectedPat
 const selectedOne = computed(() => selectedEntries.value.length === 1 ? selectedEntries.value[0] : null)
 const canMutate = computed(() => currentPath.value !== '/')
 const currentFavourite = computed(() => favourites.value.some(item => item.path === currentPath.value))
+const elevationLabel = computed(() => {
+  if (!props.elevationExpiresAt) return 'Elevated access active'
+  const expires = new Date(props.elevationExpiresAt)
+  if (Number.isNaN(expires.getTime())) return 'Elevated access active'
+  return `Elevated until ${expires.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+})
 
 const themeItems = computed(() => (['system', 'dark', 'light'] as ThemeMode[]).map(mode => ({
   mode,
@@ -216,7 +229,11 @@ const contextItems = computed(() => {
   const result: Array<{ label?: string; icon?: string; command?: () => void; separator?: boolean; disabled?: boolean }> = []
 
   if (one) {
-    result.push({ label: 'Open', icon: one.is_dir ? 'pi pi-folder-open' : 'pi pi-file-edit', command: () => openEntry(one) })
+    if (one.is_dir && one.can_navigate === false && props.elevationAvailable && !props.elevated) {
+      result.push({ label: 'Elevate access…', icon: 'pi pi-shield', command: () => emit('requestElevation') })
+      result.push({ separator: true })
+    }
+    result.push({ label: 'Open', icon: one.is_dir ? 'pi pi-folder-open' : 'pi pi-file-edit', disabled: one.is_dir && one.can_navigate === false, command: () => openEntry(one) })
     result.push({ label: 'Download', icon: 'pi pi-download', command: () => download(one) })
     result.push({ label: 'Details', icon: 'pi pi-info-circle', command: () => toggleDetails(one) })
     if (isArchive(one)) {
@@ -1085,6 +1102,27 @@ function operationLabel(value: string) {
           </template>
         </Menu>
         <span v-if="props.username || props.showLogout" class="mx-1 h-6 w-px bg-zinc-700" />
+        <Button
+          v-if="props.elevationAvailable && !props.elevated"
+          v-tooltip.bottom="'Elevate access'"
+          icon="pi pi-shield"
+          severity="secondary"
+          text
+          rounded
+          aria-label="Elevate access"
+          @click="emit('requestElevation')"
+        />
+        <Button
+          v-if="props.elevated"
+          v-tooltip.bottom="'Drop elevated access'"
+          :label="elevationLabel"
+          icon="pi pi-shield"
+          severity="warn"
+          size="small"
+          outlined
+          aria-label="Drop elevated access"
+          @click="emit('dropElevation')"
+        />
         <span class="hidden items-center gap-1 text-xs text-zinc-500 sm:flex">
           <i class="pi pi-circle-fill text-[0.45rem]" :class="watchConnected ? 'text-emerald-500' : 'text-zinc-600'" /> live
         </span>

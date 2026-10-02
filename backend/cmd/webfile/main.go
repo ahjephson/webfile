@@ -78,6 +78,11 @@ func serve(args []string) {
 	fatalIf(err, "invalid auth.login_window")
 	loginBlock, err := time.ParseDuration(cfg.Auth.LoginBlock)
 	fatalIf(err, "invalid auth.login_block")
+	elevationTTL, err := time.ParseDuration(cfg.Auth.ElevationTTL)
+	fatalIf(err, "invalid auth.elevation_ttl")
+	if elevationTTL <= 0 {
+		fatalIf(errors.New("auth.elevation_ttl must be greater than zero"), "configuration failed")
+	}
 	if cfg.Auth.Mode == "pam" && !auth.PAMAvailable() {
 		fatalIf(errors.New("auth.mode is pam but PAM support is not compiled in; rebuild with CGO_ENABLED=1 and -tags pam"), "authentication unavailable")
 	}
@@ -123,6 +128,7 @@ func serve(args []string) {
 		LoginMaxAttempts: cfg.Auth.LoginMaxAttempts,
 		LoginWindow:      loginWindow,
 		LoginBlock:       loginBlock,
+		ElevationTTL:     elevationTTL,
 	})
 
 	httpServer := &http.Server{
@@ -172,19 +178,25 @@ func launcherMain(args []string) {
 	cfg, err := config.Load(absConfig)
 	fatalIf(err, "launcher configuration failed")
 	fatalIf(validateBuildConfig(cfg), "launcher configuration is incompatible with this "+buildMode+" build")
+	elevationTTL, err := time.ParseDuration(cfg.Auth.ElevationTTL)
+	fatalIf(err, "invalid auth.elevation_ttl")
+	if elevationTTL <= 0 {
+		fatalIf(errors.New("auth.elevation_ttl must be greater than zero"), "launcher configuration failed")
+	}
 	executable, err := os.Executable()
 	fatalIf(err, "resolve executable")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	srv := launcher.Server{
-		Executable:  executable,
-		ConfigPath:  absConfig,
-		SocketPath:  cfg.Runtime.LauncherSocket,
-		WorkerDir:   cfg.Runtime.WorkerDir,
-		BrokerGroup: cfg.Runtime.LauncherGroup,
-		MinUserUID:  cfg.Runtime.MinUserUID,
-		PAMService:  cfg.Auth.PAMService,
-		CacheSocket: cfg.Thumbnails.CacheSocket,
+		Executable:   executable,
+		ConfigPath:   absConfig,
+		SocketPath:   cfg.Runtime.LauncherSocket,
+		WorkerDir:    cfg.Runtime.WorkerDir,
+		BrokerGroup:  cfg.Runtime.LauncherGroup,
+		MinUserUID:   cfg.Runtime.MinUserUID,
+		PAMService:   cfg.Auth.PAMService,
+		CacheSocket:  cfg.Thumbnails.CacheSocket,
+		ElevationTTL: elevationTTL,
 	}
 	slog.Info("worker launcher ready", slog.String("socket", cfg.Runtime.LauncherSocket))
 	fatalIf(srv.Serve(ctx), "launcher stopped")
@@ -196,6 +208,7 @@ func workerMain(args []string) {
 	socketPath := flags.String("socket", "", "unix socket path")
 	username := flags.String("username", "", "linux username")
 	home := flags.String("home", "", "linux home directory")
+	stateDir := flags.String("state-dir", "", "private worker state directory")
 	cacheSocket := flags.String("thumbnail-cache-socket", "", "broker thumbnail cache socket")
 	cacheToken := flags.String("thumbnail-cache-token", "", "broker thumbnail cache capability")
 	_ = flags.Parse(args)
@@ -223,7 +236,11 @@ func workerMain(args []string) {
 		MaxQueued:          cfg.Thumbnails.MaxQueued,
 	})
 	defer files.Close()
-	uploads := filesystem.NewUploadManager(resolver, filepath.Join(*home, ".local", "share", "webfile", "uploads"))
+	workerStateDir := *stateDir
+	if workerStateDir == "" {
+		workerStateDir = filepath.Join(*home, ".local", "share", "webfile")
+	}
+	uploads := filesystem.NewUploadManager(resolver, filepath.Join(workerStateDir, "uploads"))
 	pollInterval, err := time.ParseDuration(cfg.Watch.PollInterval)
 	fatalIf(err, "invalid watch.poll_interval")
 	watchManager, err := watch.New(watch.Options{Polling: watch.PollingMode(cfg.Watch.Polling), PollInterval: pollInterval})
@@ -235,7 +252,7 @@ func workerMain(args []string) {
 		InspectArgs:        cfg.Archive.InspectArgs,
 		InspectPasswordArg: cfg.Archive.InspectPasswordArg,
 	}, resolver)
-	taskDatabase := filepath.Join(*home, ".local", "share", "webfile", "tasks.db")
+	taskDatabase := filepath.Join(workerStateDir, "tasks.db")
 	opManager, err := operations.Open(taskDatabase, 100, 2)
 	fatalIf(err, "open task database")
 	defer func() {

@@ -2,6 +2,12 @@ package config
 
 import "testing"
 
+func TestDefaultElevationTTLIsShortLived(t *testing.T) {
+	if got := Default().Auth.ElevationTTL; got != "5m" {
+		t.Fatalf("elevation ttl = %q", got)
+	}
+}
+
 func TestValidateRequiresCompleteTLSKeyPair(t *testing.T) {
 	target := Default()
 	target.Roots = []Root{{Name: "Root", Path: "/"}}

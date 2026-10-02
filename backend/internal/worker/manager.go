@@ -85,6 +85,38 @@ func (m *Manager) Ensure(ctx context.Context, id identity.Identity) (*Process, e
 	return p, nil
 }
 
+func (m *Manager) Elevate(ctx context.Context, id identity.Identity, password string) (*Process, string, error) {
+	m.mu.Lock()
+	closed := m.closed
+	m.mu.Unlock()
+	if closed {
+		return nil, "", errors.New("worker manager is closed")
+	}
+	if m.launcherSocket == "" {
+		return nil, "", errors.New("filesystem elevation requires the privileged launcher")
+	}
+	token, err := launcher.RandomElevationToken()
+	if err != nil {
+		return nil, "", fmt.Errorf("create elevation capability: %w", err)
+	}
+	cacheToken, err := m.cacheAuth.Issue(0)
+	if err != nil {
+		return nil, "", fmt.Errorf("issue elevated thumbnail cache capability: %w", err)
+	}
+	socket, err := launcher.ClientElevate(ctx, m.launcherSocket, id.Username, password, token, cacheToken)
+	if err != nil {
+		return nil, "", err
+	}
+	return &Process{Identity: id, Socket: socket, Proxy: proxyForSocket(socket), remote: true}, token, nil
+}
+
+func (m *Manager) DropElevation(ctx context.Context, token string) error {
+	if token == "" || m.launcherSocket == "" {
+		return nil
+	}
+	return launcher.ClientDropElevation(ctx, m.launcherSocket, token)
+}
+
 func (p *Process) alive() bool {
 	if p == nil {
 		return false

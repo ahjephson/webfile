@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"webfile/internal/identity"
@@ -26,19 +27,32 @@ type MainOptions struct {
 	LoginMaxAttempts int
 	LoginWindow      time.Duration
 	LoginBlock       time.Duration
+	ElevationTTL     time.Duration
 }
 
 type MainServer struct {
-	opts    MainOptions
-	mux     *http.ServeMux
-	limiter *loginLimiter
+	opts        MainOptions
+	mux         *http.ServeMux
+	limiter     *loginLimiter
+	elevationMu sync.Mutex
+	elevations  map[string]elevationState
+}
+
+type elevationState struct {
+	token     string
+	process   *worker.Process
+	expiresAt time.Time
 }
 
 func NewMain(opts MainOptions) *MainServer {
 	s := &MainServer{
-		opts:    opts,
-		mux:     http.NewServeMux(),
-		limiter: newLoginLimiter(opts.LoginMaxAttempts, opts.LoginWindow, opts.LoginBlock),
+		opts:       opts,
+		mux:        http.NewServeMux(),
+		limiter:    newLoginLimiter(opts.LoginMaxAttempts, opts.LoginWindow, opts.LoginBlock),
+		elevations: make(map[string]elevationState),
+	}
+	if s.opts.ElevationTTL <= 0 {
+		s.opts.ElevationTTL = 5 * time.Minute
 	}
 	s.routes()
 	return s
@@ -55,6 +69,8 @@ func (s *MainServer) routes() {
 	s.mux.HandleFunc("GET /api/session", s.getSession)
 	s.mux.HandleFunc("POST /api/login", s.login)
 	s.mux.HandleFunc("POST /api/logout", s.logout)
+	s.mux.HandleFunc("POST /api/elevation", s.elevate)
+	s.mux.HandleFunc("DELETE /api/elevation", s.dropElevation)
 	s.mux.HandleFunc("GET /api/preferences", s.getPreferences)
 	s.mux.HandleFunc("PUT /api/preferences", s.putPreferences)
 	s.mux.HandleFunc("GET /api/favourites", s.listFavourites)
@@ -74,6 +90,13 @@ func (s *MainServer) getSession(w http.ResponseWriter, r *http.Request) {
 		response["user"] = id
 		if s.opts.AuthMode == "pam" {
 			response["csrf_token"] = csrf
+			response["elevation_available"] = true
+			if state, elevated := s.elevationForRequest(r); elevated {
+				response["elevated"] = true
+				response["elevation_expires_at"] = state.expiresAt
+			} else {
+				response["elevated"] = false
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -121,15 +144,18 @@ func (s *MainServer) login(w http.ResponseWriter, r *http.Request) {
 	}
 	s.limiter.Success(r, req.Username)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated": true,
-		"mode":          s.opts.AuthMode,
-		"user":          id,
-		"csrf_token":    csrf,
+		"authenticated":       true,
+		"mode":                s.opts.AuthMode,
+		"user":                id,
+		"csrf_token":          csrf,
+		"elevation_available": true,
+		"elevated":            false,
 	})
 }
 
 func (s *MainServer) logout(w http.ResponseWriter, r *http.Request) {
 	if s.opts.AuthMode == "pam" {
+		s.dropElevationForRequest(r)
 		s.opts.Sessions.Delete(w, r)
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -141,12 +167,124 @@ func (s *MainServer) proxyFilesystem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 		return
 	}
-	process, err := s.opts.Workers.Ensure(r.Context(), id)
+	process := (*worker.Process)(nil)
+	if state, elevated := s.elevationForRequest(r); elevated {
+		process = state.process
+	}
+	var err error
+	if process == nil {
+		process, err = s.opts.Workers.Ensure(r.Context(), id)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 	process.Proxy.ServeHTTP(w, r)
+}
+
+func (s *MainServer) elevate(w http.ResponseWriter, r *http.Request) {
+	if s.opts.AuthMode != "pam" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "filesystem elevation is unavailable"})
+		return
+	}
+	id, csrf, ok := s.identityForRequest(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &req); err != nil || req.Password == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	if retryAfter := s.limiter.RetryAfter(r, id.Username); retryAfter > 0 {
+		seconds := int64((retryAfter + time.Second - 1) / time.Second)
+		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many authentication attempts; try again later"})
+		return
+	}
+	process, token, err := s.opts.Workers.Elevate(r.Context(), id, req.Password)
+	if err != nil {
+		if err.Error() == "invalid credentials" {
+			s.limiter.Failure(r, id.Username)
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		} else {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not start elevated filesystem worker"})
+		}
+		return
+	}
+	s.limiter.Success(r, id.Username)
+	key, ok := s.opts.Sessions.Key(r)
+	if !ok {
+		_ = s.opts.Workers.DropElevation(context.Background(), token)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+	s.dropElevationForKey(key)
+	state := elevationState{token: token, process: process, expiresAt: time.Now().Add(s.opts.ElevationTTL)}
+	s.elevationMu.Lock()
+	s.elevations[key] = state
+	s.elevationMu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authenticated":        true,
+		"mode":                 "pam",
+		"user":                 id,
+		"csrf_token":           csrf,
+		"elevation_available":  true,
+		"elevated":             true,
+		"elevation_expires_at": state.expiresAt,
+	})
+}
+
+func (s *MainServer) dropElevation(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := s.identityForRequest(r); !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+	s.dropElevationForRequest(r)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *MainServer) elevationForRequest(r *http.Request) (elevationState, bool) {
+	if s.opts.AuthMode != "pam" {
+		return elevationState{}, false
+	}
+	key, ok := s.opts.Sessions.Key(r)
+	if !ok {
+		return elevationState{}, false
+	}
+	s.elevationMu.Lock()
+	state, ok := s.elevations[key]
+	if ok && !time.Now().Before(state.expiresAt) {
+		delete(s.elevations, key)
+		ok = false
+	}
+	s.elevationMu.Unlock()
+	if !ok && state.token != "" {
+		go func() { _ = s.opts.Workers.DropElevation(context.Background(), state.token) }()
+	}
+	return state, ok
+}
+
+func (s *MainServer) dropElevationForRequest(r *http.Request) {
+	key, ok := s.opts.Sessions.Key(r)
+	if ok {
+		s.dropElevationForKey(key)
+	}
+}
+
+func (s *MainServer) dropElevationForKey(key string) {
+	s.elevationMu.Lock()
+	state, ok := s.elevations[key]
+	if ok {
+		delete(s.elevations, key)
+	}
+	s.elevationMu.Unlock()
+	if ok {
+		_ = s.opts.Workers.DropElevation(context.Background(), state.token)
+	}
 }
 
 func (s *MainServer) identityForRequest(r *http.Request) (identity.Identity, string, bool) {

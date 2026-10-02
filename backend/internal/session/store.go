@@ -75,6 +75,15 @@ func (s *Store) Get(r *http.Request) (identity.Identity, string, bool) {
 	return id, rec.CSRFToken, true
 }
 
+// Key returns a non-secret, stable key for the current browser session.
+func (s *Store) Key(r *http.Request) (string, bool) {
+	cookie, err := r.Cookie(s.cookieName())
+	if err != nil || cookie.Value == "" {
+		return "", false
+	}
+	return tokenHash(cookie.Value), true
+}
+
 func (s *Store) VerifyCSRF(r *http.Request) bool {
 	_, expected, ok := s.Get(r)
 	if !ok || expected == "" {
