@@ -758,6 +758,72 @@ test('the destination browser also treats a single configured root as Files', as
   await expect(dialog.getByRole('button', { name: 'Parent directory' })).toHaveCount(0)
 })
 
+test('destination folders select on one click or tap and open on a double action', async ({ page }) => {
+  const requestedPaths: string[] = []
+  await page.route('**/api/fs/dir**', async route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? '/Files'
+    requestedPaths.push(path)
+    const entries = path === '/Files'
+      ? [
+          { name: 'folder', path: '/Files/folder', is_dir: true, can_navigate: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' },
+          { name: 'source.txt', path: '/Files/source.txt', is_dir: false, can_read: true, size: 1, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' },
+        ]
+      : []
+    await route.fulfill({ json: { path, entries, single_root_path: '/Files' } })
+  })
+
+  await page.goto('/#path=%2FFiles')
+  await showSelectionControls(page)
+  await page.locator('[data-file-entry]').filter({ hasText: 'source.txt' }).locator('[data-selection-control]').click()
+  await page.getByRole('button', { name: 'Actions' }).click()
+  await page.getByRole('menuitem', { name: 'Copy to…' }).click()
+
+  let dialog = page.getByRole('dialog', { name: 'Copy to…' })
+  let folder = dialog.getByRole('button', { name: 'folder', exact: true })
+  const requestsBeforeClick = requestedPaths.length
+
+  await folder.click()
+
+  await expect(dialog).toContainText('Destination: /Files/folder')
+  await expect(dialog.getByRole('button', { name: 'Files', exact: true })).toBeVisible()
+  expect(requestedPaths).toHaveLength(requestsBeforeClick)
+
+  await folder.dblclick()
+
+  await expect(dialog.getByRole('button', { name: 'folder', exact: true })).toBeVisible()
+  await expect(dialog).toContainText('Destination: /Files/folder')
+  await expect.poll(() => requestedPaths).toContain('/Files/folder')
+
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: 'Actions' }).click()
+  await page.getByRole('menuitem', { name: 'Copy to…' }).click()
+  dialog = page.getByRole('dialog', { name: 'Copy to…' })
+  folder = dialog.getByRole('button', { name: 'folder', exact: true })
+  const requestsBeforeTap = requestedPaths.length
+
+  await touchPoint(page, folder)
+
+  await expect(dialog).toContainText('Destination: /Files/folder')
+  await expect(dialog.getByRole('button', { name: 'Files', exact: true })).toBeVisible()
+  expect(requestedPaths).toHaveLength(requestsBeforeTap)
+
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: 'Actions' }).click()
+  await page.getByRole('menuitem', { name: 'Copy to…' }).click()
+  dialog = page.getByRole('dialog', { name: 'Copy to…' })
+  folder = dialog.getByRole('button', { name: 'folder', exact: true })
+  const box = await folder.boundingBox()
+  if (!box) throw new Error('Touch target is not visible')
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+
+  await page.touchscreen.tap(x, y)
+  await page.touchscreen.tap(x, y)
+
+  await expect(dialog.getByRole('button', { name: 'folder', exact: true })).toBeVisible()
+  await expect.poll(() => requestedPaths).toContain('/Files/folder')
+})
+
 test('the destination browser uses the main listing visibility preferences', async ({ page }) => {
   await page.route('**/api/preferences', route => route.fulfill({
     json: { show_hidden: false, hide_inaccessible: true },

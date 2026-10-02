@@ -53,6 +53,7 @@ const crumbs = computed(() => {
   }
   return result
 })
+const destinationPath = computed(() => focusedPath.value || current.value)
 
 watch(() => props.visible, visible => {
   if (!visible) return
@@ -91,8 +92,13 @@ function openFolder(folder: FileEntry) {
   open(folder.path)
 }
 
+function selectFolder(folder: FileEntry) {
+  if (folder.can_navigate === false) return
+  focusedPath.value = folder.path
+}
+
 function submit() {
-  emit('submit', current.value)
+  emit('submit', destinationPath.value)
   emit('update:visible', false)
 }
 </script>
@@ -141,7 +147,7 @@ function submit() {
             :title="folder.can_navigate === false ? 'You do not have permission to open this folder' : undefined"
             :class="focusedPath === folder.path ? 'bg-zinc-900' : ''"
             :aria-disabled="folder.can_navigate === false"
-            @click="focusedPath = folder.path"
+            @click="selectFolder(folder)"
             @dblclick="openFolder(folder)"
             @keydown.enter.prevent="openFolder(folder)"
           >
@@ -157,7 +163,7 @@ function submit() {
 
       <div class="flex items-center justify-between gap-4">
         <div class="min-w-0 text-sm text-zinc-400">
-          Destination: <span class="font-mono text-zinc-200">{{ current }}</span>
+          Destination: <span class="font-mono text-zinc-200">{{ destinationPath }}</span>
         </div>
         <div class="flex shrink-0 gap-2">
           <Button label="Cancel" severity="secondary" text @click="emit('update:visible', false)" />
