@@ -14,6 +14,7 @@ export interface FileEntry {
 export interface DirectoryResponse {
   path: string
   entries: FileEntry[]
+  single_root_path?: string
 }
 
 export interface FileContent {

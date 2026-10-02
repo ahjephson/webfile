@@ -24,18 +24,24 @@ const entries = ref<FileEntry[]>([])
 const loading = ref(false)
 const error = ref('')
 const focusedPath = ref('')
+const singleRootPath = ref('')
 
 const folders = computed(() => entries.value.filter(entry => entry.is_dir))
 const parentPath = computed(() => {
-  if (current.value === '/') return ''
+  if (current.value === '/' || current.value === singleRootPath.value) return ''
   const parts = current.value.split('/').filter(Boolean)
   parts.pop()
-  return parts.length ? `/${parts.join('/')}` : '/'
+  const parent = parts.length ? `/${parts.join('/')}` : '/'
+  return singleRootPath.value && !parent.startsWith(`${singleRootPath.value}/`) && parent !== singleRootPath.value ? '' : parent
 })
 const crumbs = computed(() => {
-  const parts = current.value.split('/').filter(Boolean)
-  const result: Array<{ label: string; path: string }> = [{ label: 'Roots', path: '/' }]
-  let cursor = ''
+  const displayRoot = singleRootPath.value || '/'
+  const relativePath = singleRootPath.value && current.value.startsWith(`${singleRootPath.value}/`)
+    ? current.value.slice(singleRootPath.value.length)
+    : current.value === displayRoot ? '' : current.value
+  const parts = relativePath.split('/').filter(Boolean)
+  const result: Array<{ label: string; path: string }> = [{ label: singleRootPath.value ? 'Files' : 'Roots', path: displayRoot }]
+  let cursor = singleRootPath.value
   for (const part of parts) {
     cursor += `/${part}`
     result.push({ label: part, path: cursor })
@@ -55,6 +61,12 @@ async function load() {
   focusedPath.value = ''
   try {
     const response = await api.list(current.value)
+    singleRootPath.value = response.single_root_path ?? ''
+    if (current.value === '/' && singleRootPath.value) {
+      current.value = singleRootPath.value
+      await load()
+      return
+    }
     entries.value = response.entries
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)

@@ -88,10 +88,9 @@ async function dispatchContextMenuProbe(target: Locator) {
 
 async function openConfiguredRoot(page: Page) {
   await page.goto('/')
+  await expect.poll(() => new URLSearchParams(new URL(page.url()).hash.replace(/^#/, '')).get('path')).toMatch(/^\/.+/)
   const rootRow = page.locator('[data-file-entry]').first()
   await expect(rootRow).toBeVisible()
-  await rootRow.dblclick()
-  await expect(page.locator('[data-file-entry]').first()).toBeVisible()
 }
 
 async function chooseView(page: Page, view: 'list' | 'grid') {
@@ -282,6 +281,8 @@ for (const view of ['list', 'grid'] as const) {
     })
 
     test('parent navigation requires a mouse double click', async ({ page }) => {
+      await entryFor(selectionButtons(page).first()).dblclick()
+      await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(2)
       const parent = page.getByRole('button', { name: 'Parent directory' })
       const breadcrumbBefore = await page.locator('nav[aria-label="Breadcrumb"] button').count()
 
@@ -295,6 +296,8 @@ for (const view of ['list', 'grid'] as const) {
     })
 
     test('parent navigation works with a single touch tap', async ({ page }) => {
+      await entryFor(selectionButtons(page).first()).dblclick()
+      await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(2)
       const parent = page.getByRole('button', { name: 'Parent directory' })
       const breadcrumbBefore = await page.locator('nav[aria-label="Breadcrumb"] button').count()
 
@@ -628,6 +631,74 @@ test('folder navigation updates the hash and browser back restores the previous 
 
   await expect(page).toHaveURL(/#path=%2Fone$/)
   await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(2)
+})
+
+test('a single configured root becomes Files and is hidden from navigation', async ({ page }) => {
+  await page.route('**/api/fs/dir**', async route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
+    const entries = path === '/'
+      ? [{ name: 'Only Root', path: '/Only Root', is_dir: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' }]
+      : path === '/Only Root'
+        ? [{ name: 'child', path: '/Only Root/child', is_dir: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' }]
+        : []
+    await route.fulfill({ json: { path, entries, single_root_path: '/Only Root' } })
+  })
+
+  await page.goto('/')
+  await expect(page).toHaveURL(/#path=%2FOnly%20Root$/)
+  await expect(page.locator('[data-file-entry]').filter({ hasText: 'Only Root' })).toHaveCount(0)
+  await expect(page.locator('[data-file-entry]').filter({ hasText: 'child' })).toBeVisible()
+  await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveText(['Files'])
+  await expect(page.getByRole('button', { name: 'Parent directory' })).toHaveCount(0)
+
+  await page.locator('[data-file-entry]').filter({ hasText: 'child' }).dblclick()
+  await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveText(['Files', 'child'])
+  await page.getByRole('button', { name: 'Files', exact: true }).click()
+  await expect(page).toHaveURL(/#path=%2FOnly%20Root$/)
+})
+
+test('multiple configured roots remain visible below Files', async ({ page }) => {
+  await page.route('**/api/fs/dir**', async route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
+    await route.fulfill({
+      json: {
+        path,
+        entries: path === '/' ? [
+          { name: 'First Root', path: '/First Root', is_dir: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' },
+          { name: 'Second Root', path: '/Second Root', is_dir: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' },
+        ] : [],
+      },
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.locator('[data-file-entry]').filter({ hasText: 'First Root' })).toBeVisible()
+  await expect(page.locator('[data-file-entry]').filter({ hasText: 'Second Root' })).toBeVisible()
+  await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveText(['Files'])
+})
+
+test('the destination browser also treats a single configured root as Files', async ({ page }) => {
+  await page.route('**/api/fs/dir**', async route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? '/Only Root'
+    const entries = path === '/Only Root'
+      ? [
+          { name: 'folder', path: '/Only Root/folder', is_dir: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' },
+          { name: 'file.txt', path: '/Only Root/file.txt', is_dir: false, size: 1, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' },
+        ]
+      : []
+    await route.fulfill({ json: { path, entries, single_root_path: '/Only Root' } })
+  })
+
+  await page.goto('/#path=%2FOnly%20Root')
+  await showSelectionControls(page)
+  await selectionButtons(page).nth(1).click()
+  await page.getByRole('button', { name: 'Actions' }).click()
+  await page.getByRole('menuitem', { name: 'Copy to…' }).click()
+
+  const dialog = page.getByRole('dialog', { name: 'Copy to…' })
+  await expect(dialog.getByRole('button', { name: 'Files', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Only Root', exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'Parent directory' })).toHaveCount(0)
 })
 
 test('breadcrumb navigation pops directly to a visited ancestor with one popstate', async ({ page }) => {

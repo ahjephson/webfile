@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -25,6 +26,25 @@ func testDownloadServer(t *testing.T) (*Server, string) {
 		t.Fatal(err)
 	}
 	return &Server{files: filesystem.NewService(resolver, 1024*1024)}, root
+}
+
+func TestListDirReportsSingleConfiguredRoot(t *testing.T) {
+	target, _ := testDownloadServer(t)
+	request := httptest.NewRequest(http.MethodGet, "/api/fs/dir?path=%2F", nil)
+	response := httptest.NewRecorder()
+
+	target.listDir(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("got status %d: %s", response.Code, response.Body.String())
+	}
+	var payload directoryResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.SingleRootPath != "/Files" {
+		t.Fatalf("got single root path %q, want %q", payload.SingleRootPath, "/Files")
+	}
 }
 
 func TestInlineDownloadAllowsDetectedRasterImageWithSandbox(t *testing.T) {

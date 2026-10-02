@@ -72,6 +72,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/fs/ws", s.websocket)
 }
 
+type directoryResponse struct {
+	Path           string             `json:"path"`
+	Entries        []filesystem.Entry `json:"entries"`
+	SingleRootPath string             `json:"single_root_path,omitempty"`
+}
+
 func (s *Server) listDir(w http.ResponseWriter, r *http.Request) {
 	p := queryPath(r)
 	entries, err := s.files.List(r.Context(), p)
@@ -79,7 +85,12 @@ func (s *Server) listDir(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"path": filesystem.CleanVirtual(p), "entries": entries})
+	response := directoryResponse{Path: filesystem.CleanVirtual(p), Entries: entries}
+	roots := s.files.Resolver().Roots()
+	if len(roots) == 1 {
+		response.SingleRootPath = filesystem.VirtualJoin("/", roots[0].Name)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {

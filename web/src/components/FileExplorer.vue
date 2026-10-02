@@ -63,6 +63,7 @@ const {
 } = useExplorerNavigation(props.username)
 const currentPath = ref(readHashPath() ?? readSessionPath())
 const restoredExplorerState = readSessionState()
+const singleRootPath = ref('')
 const restoredStateMatchesPath = restoredExplorerState.directory === currentPath.value
 const entries = ref<FileEntry[]>([])
 const loading = ref(false)
@@ -253,10 +254,14 @@ const contextItems = computed(() => {
 })
 
 const breadcrumbs = computed(() => {
-  if (currentPath.value === '/') return [{ name: 'Files', path: '/' }]
-  const parts = currentPath.value.split('/').filter(Boolean)
-  const crumbs = [{ name: 'Files', path: '/' }]
-  let p = ''
+  const displayRoot = singleRootPath.value || '/'
+  if (currentPath.value === '/' || currentPath.value === displayRoot) return [{ name: 'Files', path: displayRoot }]
+  const relativePath = singleRootPath.value && currentPath.value.startsWith(`${singleRootPath.value}/`)
+    ? currentPath.value.slice(singleRootPath.value.length)
+    : currentPath.value
+  const parts = relativePath.split('/').filter(Boolean)
+  const crumbs = [{ name: 'Files', path: displayRoot }]
+  let p = singleRootPath.value
   for (const part of parts) {
     p += `/${part}`
     crumbs.push({ name: part, path: p })
@@ -265,10 +270,11 @@ const breadcrumbs = computed(() => {
 })
 
 const parentPath = computed(() => {
-  if (currentPath.value === '/') return ''
+  if (currentPath.value === '/' || currentPath.value === singleRootPath.value) return ''
   const parts = currentPath.value.split('/').filter(Boolean)
   parts.pop()
-  return parts.length ? `/${parts.join('/')}` : '/'
+  const parent = parts.length ? `/${parts.join('/')}` : '/'
+  return singleRootPath.value && !parent.startsWith(`${singleRootPath.value}/`) && parent !== singleRootPath.value ? '' : parent
 })
 
 onMounted(async () => {
@@ -424,6 +430,11 @@ async function refresh(showSpinner: boolean): Promise<boolean> {
   try {
     const result = await api.list(requestedPath)
     if (requestedPath !== currentPath.value) return false
+    singleRootPath.value = result.single_root_path ?? ''
+    if (requestedPath === '/' && singleRootPath.value) {
+      navigateTo(singleRootPath.value, true)
+      return true
+    }
     entries.value = result.entries
     const existing = new Set(result.entries.map(entry => entry.path))
     selectedPaths.value = new Set([...selectedPaths.value].filter(path => existing.has(path)))
