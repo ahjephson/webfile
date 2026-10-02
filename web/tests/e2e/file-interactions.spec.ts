@@ -341,6 +341,12 @@ for (const view of ['list', 'grid'] as const) {
       await expect(page.getByRole('button', { name: 'Copy', exact: true })).toHaveCount(0)
       await expect(page.getByRole('button', { name: 'Move', exact: true })).toHaveCount(0)
       await expect(page.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0)
+      const detailsBox = await page.getByRole('button', { name: 'Open details' }).boundingBox()
+      const actionsBox = await page.getByRole('button', { name: 'Actions' }).boundingBox()
+      expect(detailsBox).not.toBeNull()
+      expect(actionsBox).not.toBeNull()
+      expect(actionsBox!.x).toBeGreaterThan(detailsBox!.x)
+
       await page.getByRole('button', { name: 'Actions' }).click()
 
       const menu = page.getByRole('menu').filter({ visible: true })

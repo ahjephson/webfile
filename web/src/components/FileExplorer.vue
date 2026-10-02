@@ -1114,8 +1114,8 @@ function operationLabel(value: string) {
         </div>
         <span class="mx-1 h-6 w-px bg-zinc-700" />
         <div class="flex items-center gap-1">
-          <Button v-if="selectedEntries.length" v-tooltip.bottom="'Actions'" icon="pi pi-ellipsis-v" size="small" severity="secondary" text aria-label="Actions" @click="showActionsMenu" />
           <Button v-tooltip.bottom="detailsVisible ? 'Close details' : 'Open details'" icon="pi pi-info-circle" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': detailsVisible }" :aria-label="detailsVisible ? 'Close details' : 'Open details'" :aria-pressed="detailsVisible" @click="toggleDetailsPanel" />
+          <Button v-if="selectedEntries.length" v-tooltip.bottom="'Actions'" icon="pi pi-ellipsis-v" size="small" severity="secondary" text aria-label="Actions" @click="showActionsMenu" />
         </div>
 
         <span class="min-w-2 flex-1" />
