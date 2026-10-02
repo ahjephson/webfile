@@ -24,6 +24,7 @@ const pathVisual = computed(() => fileVisualForPath(props.entry.path))
 const visual = computed(() => detectedContentType.value
   ? fileVisualForContentType(detectedContentType.value, props.entry.path)
   : pathVisual.value)
+const lockedDirectory = computed(() => props.entry.is_dir && props.entry.can_navigate === false)
 const showImageThumbnail = computed(() => props.tile && !props.entry.is_dir && visual.value.kind === 'image' && !thumbnailFailed.value)
 const showVideoThumbnail = computed(() => props.tile && !props.entry.is_dir && visual.value.kind === 'video' && !thumbnailFailed.value)
 const tileHeight = computed(() => ({ small: '4rem', medium: '7rem', large: '10rem' })[props.tileSize ?? 'medium'])
@@ -111,8 +112,17 @@ function stopVideoAnimation() {
     class="pointer-events-none grid min-h-0 min-w-0 place-items-center"
     :class="tile ? 'w-full overflow-hidden' : 'shrink-0'"
     :style="tile ? { height: tileHeight } : undefined"
+    :role="lockedDirectory ? 'img' : undefined"
+    :aria-label="lockedDirectory ? `No permission to open ${entry.name}` : undefined"
+    :aria-hidden="lockedDirectory ? undefined : 'true'"
+    :title="lockedDirectory ? 'You do not have permission to open this folder' : undefined"
   >
-    <i class="pi pi-folder text-amber-400" :style="{ fontSize: tile ? tileIconSize : '1.125rem' }" aria-hidden="true" />
+    <span class="relative grid place-items-center">
+      <i class="pi pi-folder" :class="lockedDirectory ? 'text-zinc-500' : 'text-amber-400'" :style="{ fontSize: tile ? tileIconSize : '1.125rem' }" aria-hidden="true" />
+      <span v-if="lockedDirectory" class="absolute -bottom-1 -right-2 grid place-items-center rounded-full border border-zinc-700 bg-zinc-950 text-red-400 shadow" :class="tile ? 'h-7 w-7 text-sm' : 'h-4 w-4 text-[0.6rem]'" data-directory-lock aria-hidden="true">
+        <i class="pi pi-lock" />
+      </span>
+    </span>
   </span>
   <span
     v-else

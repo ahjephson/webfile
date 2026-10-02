@@ -111,6 +111,45 @@ async function showSelectionControls(page: Page) {
   await expect(page.getByRole('button', { name: 'Hide selection controls' })).toHaveAttribute('aria-pressed', 'true')
 }
 
+test('inaccessible directories show a lock indicator in list and grid views', async ({ page }) => {
+  await page.route('**/api/fs/dir**', async route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
+    const entries = path === '/'
+      ? [{
+          name: 'Files',
+          path: '/Files',
+          is_dir: true,
+          can_navigate: true,
+          size: 0,
+          modified: '2000-01-01T00:00:00Z',
+          mode: 'drwxr-xr-x',
+        }]
+      : [{
+          name: 'restricted',
+          path: '/Files/restricted',
+          is_dir: true,
+          can_navigate: false,
+          size: 0,
+          modified: '2000-01-01T00:00:00Z',
+          mode: 'd---------',
+        }]
+    await route.fulfill({ json: { path, entries } })
+  })
+
+  await page.goto('/')
+  const rootRow = page.locator('[data-file-entry]').filter({ hasText: 'Files' })
+  await expect(rootRow).toBeVisible()
+  await rootRow.dblclick()
+  const restricted = page.locator('[data-file-entry]').filter({ hasText: 'restricted' })
+  await expect(restricted).toBeVisible()
+
+  for (const view of ['grid', 'list'] as const) {
+    await chooseView(page, view)
+    await expect(restricted.getByRole('img', { name: 'No permission to open restricted' })).toBeVisible()
+    await expect(restricted.locator('[data-directory-lock]')).toBeVisible()
+  }
+})
+
 for (const view of ['list', 'grid'] as const) {
   test.describe(`${view} file interactions`, () => {
     test.beforeEach(async ({ page }) => {

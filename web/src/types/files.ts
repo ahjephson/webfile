@@ -8,6 +8,7 @@ export interface FileEntry {
   mode: string
   uid?: number
   gid?: number
+  can_navigate?: boolean
 }
 
 export interface DirectoryResponse {

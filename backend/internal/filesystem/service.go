@@ -28,15 +28,16 @@ var (
 )
 
 type Entry struct {
-	Name       string    `json:"name"`
-	Path       string    `json:"path"`
-	IsDir      bool      `json:"is_dir"`
-	Size       int64     `json:"size"`
-	SizeStatus string    `json:"size_status,omitempty"`
-	Modified   time.Time `json:"modified"`
-	Mode       string    `json:"mode"`
-	UID        uint32    `json:"uid,omitempty"`
-	GID        uint32    `json:"gid,omitempty"`
+	Name        string    `json:"name"`
+	Path        string    `json:"path"`
+	IsDir       bool      `json:"is_dir"`
+	Size        int64     `json:"size"`
+	SizeStatus  string    `json:"size_status,omitempty"`
+	Modified    time.Time `json:"modified"`
+	Mode        string    `json:"mode"`
+	UID         uint32    `json:"uid,omitempty"`
+	GID         uint32    `json:"gid,omitempty"`
+	CanNavigate *bool     `json:"can_navigate,omitempty"`
 }
 
 type FileContent struct {
@@ -105,6 +106,8 @@ func (s *Service) List(ctx context.Context, virtualPath string) ([]Entry, error)
 				continue
 			}
 			entry := toEntry("/", root.Name, st)
+			canNavigate := canNavigateDirectory(root.Path)
+			entry.CanNavigate = &canNavigate
 			s.applyCachedFolderSize(&entry, root.Path)
 			entries = append(entries, entry)
 		}
@@ -145,8 +148,11 @@ func (s *Service) List(ctx context.Context, virtualPath string) ([]Entry, error)
 			continue
 		}
 		entry := toEntry(virtualPath, de.Name(), info)
+		entryPath := filepath.Join(abs, de.Name())
 		if entry.IsDir {
-			s.applyCachedFolderSize(&entry, filepath.Join(abs, de.Name()))
+			canNavigate := canNavigateDirectory(entryPath)
+			entry.CanNavigate = &canNavigate
+			s.applyCachedFolderSize(&entry, entryPath)
 		}
 		out = append(out, entry)
 		collationKeys[entry.Name] = hostCollationKey(entry.Name)

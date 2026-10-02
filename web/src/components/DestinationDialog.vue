@@ -116,12 +116,16 @@ function submit() {
             v-for="folder in folders"
             :key="folder.path"
             class="flex w-full items-center gap-3 border-b border-zinc-900 px-4 py-3 text-left hover:bg-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-400"
+            :title="folder.can_navigate === false ? 'You do not have permission to open this folder' : undefined"
             :class="focusedPath === folder.path ? 'bg-zinc-900' : ''"
             @click="focusedPath = folder.path"
             @dblclick="open(folder.path)"
             @keydown.enter.prevent="open(folder.path)"
           >
-            <i class="pi pi-folder text-lg text-amber-400" />
+            <span class="relative grid place-items-center">
+              <i class="pi pi-folder text-lg" :class="folder.can_navigate === false ? 'text-zinc-500' : 'text-amber-400'" aria-hidden="true" />
+              <i v-if="folder.can_navigate === false" class="pi pi-lock absolute -bottom-1 -right-2 text-[0.65rem] text-red-400" :aria-label="`No permission to open ${folder.name}`" data-directory-lock />
+            </span>
             <span class="min-w-0 flex-1 truncate">{{ folder.name }}</span>
           </button>
           <div v-if="folders.length === 0" class="p-6 text-center text-sm text-zinc-500">No folders here.</div>

@@ -100,6 +100,43 @@ func TestListOmitsRootExcludedNames(t *testing.T) {
 	}
 }
 
+func TestListReportsDirectoryNavigationAccess(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "accessible"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "restricted"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := NewResolver([]Root{{Name: "Files", Path: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(resolver, 1024*1024)
+	t.Cleanup(service.Close)
+
+	entries, err := service.List(context.Background(), "/Files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := make(map[string]Entry, len(entries))
+	for _, entry := range entries {
+		byName[entry.Name] = entry
+	}
+	if value := byName["accessible"].CanNavigate; value == nil || !*value {
+		t.Fatalf("accessible directory navigation = %v", value)
+	}
+	if value := byName["restricted"].CanNavigate; value == nil || *value {
+		t.Fatalf("restricted directory navigation = %v", value)
+	}
+	if value := byName["file.txt"].CanNavigate; value != nil {
+		t.Fatalf("file navigation = %v, want nil", *value)
+	}
+}
+
 func TestListSortsMixedCaseNamesUsingHostCollation(t *testing.T) {
 	svc, root := testService(t)
 	want := []string{"z", "A", "a", "Z"}
