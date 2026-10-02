@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Drawer from 'primevue/drawer'
 import type { FileOperation, VideoThumbnailJob } from '@/types/files'
@@ -23,12 +23,66 @@ const ordered = computed(() => props.operations
   .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at)))
 const activeTasks = computed(() => ordered.value.filter(active))
 const history = computed(() => ordered.value.filter(operation => !active(operation)))
-const visibleThumbnailJobs = computed(() => props.thumbnailJobs.filter(job => job.state !== 'ready' && job.state !== 'cancelled'))
+const processingThumbnailStates = ['probing', 'generating', 'publishing']
+const visibleThumbnailJobs = computed(() => props.thumbnailJobs
+  .filter(job => job.state !== 'ready' && job.state !== 'cancelled')
+  .sort((a, b) => {
+    const stateDifference = thumbnailStateRank(a) - thumbnailStateRank(b)
+    if (stateDifference !== 0) return stateDifference
+    if (a.state === 'queued' && b.state === 'queued') {
+      const positionDifference = (a.queue_position ?? Number.MAX_SAFE_INTEGER) - (b.queue_position ?? Number.MAX_SAFE_INTEGER)
+      if (positionDifference !== 0) return positionDifference
+    }
+    const aTime = Date.parse(a.started_at ?? a.updated_at)
+    const bTime = Date.parse(b.started_at ?? b.updated_at)
+    return a.state === 'failed' ? bTime - aTime : aTime - bTime
+  }))
+const displayedThumbnailJobs = computed(() => visibleThumbnailJobs.value.slice(0, 10))
+const remainingThumbnailJobs = computed(() => Math.max(0, visibleThumbnailJobs.value.length - displayedThumbnailJobs.value.length))
 const thumbnailSummary = computed(() => {
-  const generating = visibleThumbnailJobs.value.filter(job => ['probing', 'generating', 'publishing'].includes(job.state)).length
+  const generating = visibleThumbnailJobs.value.filter(job => processingThumbnailStates.includes(job.state)).length
   const queued = visibleThumbnailJobs.value.filter(job => job.state === 'queued').length
   return [generating ? `${generating} generating` : '', queued ? `${queued} queued` : ''].filter(Boolean).join(', ')
 })
+const thumbnailsExpanded = ref(true)
+const activeExpanded = ref(true)
+const historyExpanded = ref(true)
+const taskPanelContent = ref<HTMLElement | null>(null)
+let indeterminateFrame: number | null = null
+
+watch(() => props.visible, visible => {
+  if (visible) startIndeterminateProgress()
+  else stopIndeterminateProgress()
+}, { immediate: true, flush: 'post' })
+
+onBeforeUnmount(stopIndeterminateProgress)
+
+function thumbnailStateRank(job: VideoThumbnailJob): number {
+  if (processingThumbnailStates.includes(job.state)) return 0
+  if (job.state === 'queued') return 1
+  if (job.state === 'failed') return 2
+  return 3
+}
+
+function startIndeterminateProgress() {
+  if (indeterminateFrame !== null) return
+  indeterminateFrame = window.requestAnimationFrame(updateIndeterminateProgress)
+}
+
+function stopIndeterminateProgress() {
+  if (indeterminateFrame !== null) window.cancelAnimationFrame(indeterminateFrame)
+  indeterminateFrame = null
+}
+
+function updateIndeterminateProgress(timestamp: number) {
+  const duration = 1100
+  const linearProgress = timestamp % duration / duration
+  const easedProgress = linearProgress < 0.5
+    ? 2 * linearProgress * linearProgress
+    : 1 - Math.pow(-2 * linearProgress + 2, 2) / 2
+  taskPanelContent.value?.style.setProperty('--webfile-indeterminate-offset', `${-120 + 440 * easedProgress}%`)
+  indeterminateFrame = window.requestAnimationFrame(updateIndeterminateProgress)
+}
 
 function percent(operation: FileOperation): number | null {
   if (operation.progress_total <= 0) return null
@@ -88,15 +142,28 @@ function formatDate(value?: string) {
 
 <template>
   <Drawer :visible="visible" position="right" header="Tasks" :style="{ width: 'min(32rem, 94vw)' }" @update:visible="emit('update:visible', $event)">
-    <div v-if="ordered.length === 0 && visibleThumbnailJobs.length === 0" class="py-12 text-center text-sm text-zinc-500">No tasks yet.</div>
-    <div v-else class="space-y-5">
+    <div ref="taskPanelContent">
+      <div v-if="ordered.length === 0 && visibleThumbnailJobs.length === 0" class="py-12 text-center text-sm text-zinc-500">No tasks yet.</div>
+      <div v-else class="space-y-5">
       <section v-if="visibleThumbnailJobs.length" aria-labelledby="thumbnail-tasks-heading">
         <div class="mb-2 flex items-center justify-between gap-3">
-          <h3 id="thumbnail-tasks-heading" class="text-xs font-semibold uppercase tracking-wide text-violet-400">Video thumbnails</h3>
+          <h3 id="thumbnail-tasks-heading">
+            <button
+              class="flex items-center gap-2 rounded px-1 py-1 text-xs font-semibold uppercase tracking-wide text-violet-400 hover:bg-zinc-800"
+              :aria-expanded="thumbnailsExpanded"
+              aria-controls="thumbnail-tasks-content"
+              :aria-label="`${thumbnailsExpanded ? 'Collapse' : 'Expand'} Video thumbnails (${visibleThumbnailJobs.length})`"
+              @click="thumbnailsExpanded = !thumbnailsExpanded"
+            >
+              <i class="pi text-[0.65rem]" :class="thumbnailsExpanded ? 'pi-chevron-down' : 'pi-chevron-right'" />
+              <span>Video thumbnails</span>
+              <span class="rounded-full bg-violet-950 px-1.5 py-0.5 text-[0.65rem] tabular-nums text-violet-300">{{ visibleThumbnailJobs.length }}</span>
+            </button>
+          </h3>
           <span class="text-xs text-zinc-500">{{ thumbnailSummary }}</span>
         </div>
-        <div class="space-y-2">
-          <article v-for="job in visibleThumbnailJobs" :key="job.id" class="rounded-lg border border-violet-900/70 bg-violet-950/20 p-3">
+        <div v-if="thumbnailsExpanded" id="thumbnail-tasks-content" class="space-y-2">
+          <article v-for="job in displayedThumbnailJobs" :key="job.id" class="rounded-lg border border-violet-900/70 bg-violet-950/20 p-3" :data-thumbnail-job="job.id">
             <div class="flex items-start gap-3">
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-medium">{{ job.name }}</div>
@@ -106,17 +173,30 @@ function formatDate(value?: string) {
               </div>
               <Button v-if="job.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel-thumbnail', job.id)" />
             </div>
-            <div v-if="job.state !== 'queued' && job.state !== 'failed'" class="mt-3 h-1.5 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${job.name} thumbnail progress`">
+            <div v-if="job.state !== 'failed'" class="mt-3 h-1.5 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${job.name} thumbnail progress`">
               <div class="webfile-indeterminate h-full w-1/3 bg-violet-500" />
             </div>
             <p v-if="job.error" class="mt-2 text-xs text-red-300">{{ job.error }}</p>
           </article>
+          <p v-if="remainingThumbnailJobs" class="rounded-lg border border-dashed border-violet-900/70 px-3 py-2 text-center text-xs text-zinc-500">and {{ remainingThumbnailJobs }} more</p>
         </div>
       </section>
 
       <section v-if="activeTasks.length" aria-labelledby="active-tasks-heading">
-        <h3 id="active-tasks-heading" class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Active</h3>
-        <div class="space-y-3">
+        <h3 id="active-tasks-heading" class="mb-2">
+          <button
+            class="flex items-center gap-2 rounded px-1 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-500 hover:bg-zinc-800"
+            :aria-expanded="activeExpanded"
+            aria-controls="active-tasks-content"
+            :aria-label="`${activeExpanded ? 'Collapse' : 'Expand'} Active (${activeTasks.length})`"
+            @click="activeExpanded = !activeExpanded"
+          >
+            <i class="pi text-[0.65rem]" :class="activeExpanded ? 'pi-chevron-down' : 'pi-chevron-right'" />
+            <span>Active</span>
+            <span class="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[0.65rem] tabular-nums text-zinc-300">{{ activeTasks.length }}</span>
+          </button>
+        </h3>
+        <div v-if="activeExpanded" id="active-tasks-content" class="space-y-3">
           <article v-for="operation in activeTasks" :key="operation.id" class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
             <div class="flex items-start gap-3">
               <div class="min-w-0 flex-1">
@@ -151,10 +231,22 @@ function formatDate(value?: string) {
 
       <section v-if="history.length" aria-labelledby="task-history-heading">
         <div class="mb-2 flex min-h-8 items-center justify-between gap-2">
-          <h3 id="task-history-heading" class="text-xs font-semibold uppercase tracking-wide text-zinc-500">History</h3>
+          <h3 id="task-history-heading">
+            <button
+              class="flex items-center gap-2 rounded px-1 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-500 hover:bg-zinc-800"
+              :aria-expanded="historyExpanded"
+              aria-controls="task-history-content"
+              :aria-label="`${historyExpanded ? 'Collapse' : 'Expand'} History (${history.length})`"
+              @click="historyExpanded = !historyExpanded"
+            >
+              <i class="pi text-[0.65rem]" :class="historyExpanded ? 'pi-chevron-down' : 'pi-chevron-right'" />
+              <span>History</span>
+              <span class="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[0.65rem] tabular-nums text-zinc-300">{{ history.length }}</span>
+            </button>
+          </h3>
           <Button v-tooltip.left="'Clear history'" icon="pi pi-trash" size="small" severity="secondary" text aria-label="Clear task history" @click="emit('clear-history')" />
         </div>
-        <div class="space-y-3">
+        <div v-if="historyExpanded" id="task-history-content" class="space-y-3">
           <article v-for="operation in history" :key="operation.id" class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
             <div class="flex items-start gap-3">
               <div class="min-w-0 flex-1">
@@ -184,6 +276,7 @@ function formatDate(value?: string) {
           </article>
         </div>
       </section>
+      </div>
     </div>
   </Drawer>
 </template>

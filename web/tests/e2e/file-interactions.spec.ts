@@ -2307,6 +2307,13 @@ test('task drawer separates active work from persistent history', async ({ page 
   const drawer = page.getByRole('complementary')
   await expect(drawer.getByText('Active', { exact: true })).toBeVisible()
   await expect(drawer.getByText('History', { exact: true })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: 'Collapse Active (1)' })).toBeVisible()
+  const historyToggle = drawer.getByRole('button', { name: 'Collapse History (2)' })
+  await expect(historyToggle).toBeVisible()
+  await historyToggle.click()
+  await expect(drawer.getByText('Extract archive.zip')).toHaveCount(0)
+  await drawer.getByRole('button', { name: 'Expand History (2)' }).click()
+  await expect(drawer.getByText('Extract archive.zip')).toBeVisible()
   await expect(drawer.getByText('Copying photos')).toBeVisible()
   await expect(drawer.getByRole('progressbar', { name: 'Copy photos progress' })).toHaveAttribute('aria-valuenow', '25')
   await expect(drawer.getByText(/86\.3 MiB\/s/)).toBeVisible()
@@ -2343,15 +2350,22 @@ test('task drawer separates active work from persistent history', async ({ page 
 
 test('task drawer surfaces the transient video thumbnail queue separately', async ({ page }) => {
   let cancelled = ''
-  const jobs = [{
-    id: 'thumbnail-1',
-    path: '/media/clip.mp4',
-    name: 'clip.mp4',
+  const queuedJobs = Array.from({ length: 11 }, (_, index) => ({
+    id: `queued-${index + 1}`,
+    path: `/media/queued-${index + 1}.mp4`,
+    name: `queued-${index + 1}.mp4`,
     state: 'queued',
-    queue_position: 3,
+    queue_position: index + 1,
     cancellable: true,
-    updated_at: '2000-01-01T00:00:00Z',
-  }]
+    updated_at: `2000-01-01T00:00:${String(index).padStart(2, '0')}Z`,
+  }))
+  const jobs = [
+    queuedJobs[1],
+    { id: 'processing-2', path: '/media/processing-2.mp4', name: 'processing-2.mp4', state: 'generating', cancellable: true, started_at: '2000-01-01T00:00:01Z', updated_at: '2000-01-01T00:00:01Z' },
+    queuedJobs[0],
+    { id: 'processing-1', path: '/media/processing-1.mp4', name: 'processing-1.mp4', state: 'probing', cancellable: true, started_at: '2000-01-01T00:00:00Z', updated_at: '2000-01-01T00:00:00Z' },
+    ...queuedJobs.slice(2),
+  ]
   await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries: [] } }))
   await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [] } }))
   await page.route('**/api/fs/thumbnails/jobs**', route => {
@@ -2363,16 +2377,34 @@ test('task drawer surfaces the transient video thumbnail queue separately', asyn
   })
 
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Open tasks' })).toHaveText('1')
+  await expect(page.getByRole('button', { name: 'Open tasks' })).toHaveText('13')
   await page.getByRole('button', { name: 'Open tasks' }).click()
 
   const drawer = page.getByRole('complementary')
   await expect(drawer.getByText('Video thumbnails', { exact: true })).toBeVisible()
-  await expect(drawer.getByText('1 queued', { exact: true })).toBeVisible()
-  await expect(drawer.getByText('clip.mp4')).toBeVisible()
-  await expect(drawer.getByText('Queue position 3', { exact: false })).toBeVisible()
-  await drawer.getByRole('button', { name: 'Cancel' }).click()
-  await expect.poll(() => cancelled).toBe('thumbnail-1')
+  await expect(drawer.getByText('2 generating, 11 queued', { exact: true })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: 'Collapse Video thumbnails (13)' })).toBeVisible()
+  const visibleJobIDs = await drawer.locator('[data-thumbnail-job]').evaluateAll(elements => elements.map(element => element.getAttribute('data-thumbnail-job')))
+  expect(visibleJobIDs).toEqual([
+    'processing-1', 'processing-2',
+    'queued-1', 'queued-2', 'queued-3', 'queued-4', 'queued-5', 'queued-6', 'queued-7', 'queued-8',
+  ])
+  await expect(drawer.getByText('and 3 more', { exact: true })).toBeVisible()
+  const progressBars = drawer.locator('[data-thumbnail-job] .webfile-indeterminate')
+  await expect(progressBars).toHaveCount(10)
+  const progressTransforms = await progressBars.evaluateAll(elements => elements.map(element => getComputedStyle(element).transform))
+  expect(new Set(progressTransforms).size).toBe(1)
+  const firstTransform = progressTransforms[0]
+  await page.waitForTimeout(100)
+  const nextTransforms = await progressBars.evaluateAll(elements => elements.map(element => getComputedStyle(element).transform))
+  expect(new Set(nextTransforms).size).toBe(1)
+  expect(nextTransforms[0]).not.toBe(firstTransform)
+
+  await drawer.getByRole('button', { name: 'Collapse Video thumbnails (13)' }).click()
+  await expect(drawer.locator('[data-thumbnail-job]')).toHaveCount(0)
+  await drawer.getByRole('button', { name: 'Expand Video thumbnails (13)' }).click()
+  await drawer.locator('[data-thumbnail-job="queued-1"]').getByRole('button', { name: 'Cancel' }).click()
+  await expect.poll(() => cancelled).toBe('queued-1')
 })
 
 test('Extract here starts a single-pass task in the archive directory', async ({ page }) => {

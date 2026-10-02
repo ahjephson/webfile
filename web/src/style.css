@@ -314,11 +314,14 @@ button,
   -webkit-tap-highlight-color: transparent;
 }
 
-@keyframes webfile-indeterminate {
-  from { transform: translateX(-120%); }
-  to { transform: translateX(320%); }
+.webfile-indeterminate {
+  transform: translateX(var(--webfile-indeterminate-offset, -120%));
 }
 
-.webfile-indeterminate {
-  animation: webfile-indeterminate 1.1s ease-in-out infinite;
+@media (prefers-reduced-motion: reduce) {
+  .webfile-indeterminate {
+    width: 100% !important;
+    opacity: 55%;
+    transform: none;
+  }
 }
