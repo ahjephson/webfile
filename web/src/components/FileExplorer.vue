@@ -219,7 +219,7 @@ const displayedParentPath = computed(() => trashMode.value ? '' : parentPath.val
 const themeItems = computed(() => (['system', 'dark', 'light'] as ThemeMode[]).map(mode => ({
   mode,
   label: mode[0].toUpperCase() + mode.slice(1),
-  icon: themeMode.value === mode ? 'pi pi-check' : mode === 'system' ? 'pi pi-desktop' : mode === 'dark' ? 'pi pi-moon' : 'pi pi-sun',
+  icon: themeMode.value === mode ? 'pi pi-check' : mode === 'system' ? 'pi pi-palette' : mode === 'dark' ? 'pi pi-moon' : 'pi pi-sun',
 })))
 
 const contextItems = computed(() => {
@@ -1193,7 +1193,7 @@ function operationLabel(value: string) {
           <Button v-tooltip.bottom="'Settings'" icon="pi pi-cog" size="small" severity="secondary" text aria-label="Settings" @click="settingsVisible = true" />
         </div>
         <span class="mx-1 h-6 w-px bg-zinc-700" />
-        <Button v-tooltip.bottom="`Theme: ${themeMode}`" :icon="themeMode === 'system' ? 'pi pi-desktop' : themeMode === 'dark' ? 'pi pi-moon' : 'pi pi-sun'" size="small" severity="secondary" text aria-label="Choose theme" @click="showThemeMenu" />
+        <Button v-tooltip.bottom="`Theme: ${themeMode}`" :icon="themeMode === 'system' ? 'pi pi-palette' : themeMode === 'dark' ? 'pi pi-moon' : 'pi pi-sun'" size="small" severity="secondary" text aria-label="Choose theme" @click="showThemeMenu" />
         <Menu ref="themeMenu" popup :model="themeItems">
           <template #item="{ item, props }">
             <a v-bind="props.action" @click="selectTheme(item.mode)">
