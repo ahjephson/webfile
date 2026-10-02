@@ -168,6 +168,24 @@ for (const view of ['list', 'grid'] as const) {
       await expect(box).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
     })
 
+    test('control-clicking the only selected item removes its selection background', async ({ page }) => {
+      const checkbox = selectionButtons(page).first()
+      const entry = entryFor(checkbox)
+
+      await showSelectionControls(page)
+      await entry.click()
+      await expect(checkbox).toHaveAttribute('aria-pressed', 'true')
+      await expect(entry).toHaveClass(/webfile-focus-tint/)
+
+      await entry.click({ modifiers: ['Control'] })
+
+      await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
+      await expect(page.locator('[data-selection-control][aria-pressed="true"]')).toHaveCount(0)
+      await expect(page.getByText('0 selected', { exact: true })).toBeVisible()
+      await expect(entry).not.toHaveClass(/webfile-selection-tint|webfile-focus-tint/)
+      await expect(entry).toHaveClass(/outline-sky-500/)
+    })
+
     test('mouse click modifiers follow desktop multi-selection rules', async ({ page }) => {
       const checkboxes = selectionButtons(page)
       const first = checkboxes.nth(0)

@@ -181,7 +181,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: columns })
           class="group relative flex cursor-default flex-col items-center justify-center gap-1.5 overflow-hidden rounded-lg border border-transparent p-2 text-center hover:bg-zinc-900/70"
           :style="{ height: `${metrics.cellHeight}px` }"
           :class="[
-            focusedPath === cell.entry.path ? 'webfile-focus-tint' : selected.has(cell.entry.path) ? 'webfile-selection-tint' : '',
+            focusedPath === cell.entry.path && selected.has(cell.entry.path) ? 'webfile-focus-tint' : selected.has(cell.entry.path) ? 'webfile-selection-tint' : '',
             selected.has(cell.entry.path) || focusedPath === cell.entry.path ? 'outline outline-1 outline-sky-500/70' : '',
           ]"
           data-file-entry

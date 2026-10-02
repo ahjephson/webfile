@@ -155,7 +155,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
         :key="row.entry.path"
         class="absolute left-0 right-0 grid cursor-default grid-cols-[minmax(18rem,1fr)_8rem_13rem_8rem] items-center border-b border-zinc-900 px-3 text-sm hover:bg-zinc-900/70"
         :class="[
-          focusedPath === row.entry.path ? 'webfile-focus-tint' : selected.has(row.entry.path) ? 'webfile-selection-tint' : '',
+          focusedPath === row.entry.path && selected.has(row.entry.path) ? 'webfile-focus-tint' : selected.has(row.entry.path) ? 'webfile-selection-tint' : '',
           selected.has(row.entry.path) || focusedPath === row.entry.path ? 'outline outline-1 -outline-offset-1 outline-sky-500/70' : '',
         ]"
         :style="{ height: `${rowHeight}px`, transform: `translateY(${row.index * rowHeight}px)` }"
