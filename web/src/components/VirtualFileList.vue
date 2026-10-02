@@ -181,7 +181,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
               @dblclick.stop
             >
               <span
-                class="grid h-6 w-6 place-items-center rounded border border-zinc-500 shadow-sm"
+                class="webfile-selection-box grid h-6 w-6 place-items-center rounded border border-zinc-500 shadow-sm"
                 :class="selected.has(row.entry.path) ? 'border-sky-500 bg-sky-600 text-white' : 'bg-zinc-800 text-transparent'"
               >
                 <i class="pi pi-check text-xs" />

@@ -150,6 +150,24 @@ for (const view of ['list', 'grid'] as const) {
       await expect(page.getByRole('button', { name: 'Clear selection' })).toBeDisabled()
     })
 
+    test('light theme leaves unchecked selection boxes unfilled', async ({ page }) => {
+      await page.route('**/api/preferences', route => route.fulfill({
+        json: route.request().postDataJSON(),
+      }))
+      await page.getByRole('button', { name: 'Choose theme' }).click()
+      await page.getByRole('menuitem', { name: 'Light' }).click()
+      await showSelectionControls(page)
+
+      const checkbox = selectionButtons(page).first()
+      const box = checkbox.locator('.webfile-selection-box')
+      await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
+      await expect(box).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+
+      await checkbox.click()
+      await expect(checkbox).toHaveAttribute('aria-pressed', 'true')
+      await expect(box).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    })
+
     test('mouse click modifiers follow desktop multi-selection rules', async ({ page }) => {
       const checkboxes = selectionButtons(page)
       const first = checkboxes.nth(0)

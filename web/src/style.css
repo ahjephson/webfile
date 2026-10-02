@@ -149,6 +149,10 @@ body {
   background-color: rgb(186 230 253 / 70%) !important;
 }
 
+.webfile-light [aria-pressed="false"] > .webfile-selection-box {
+  background-color: transparent !important;
+}
+
 .webfile-dark {
   color-scheme: dark;
 }

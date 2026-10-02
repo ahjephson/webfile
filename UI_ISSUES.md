@@ -7,8 +7,6 @@ Per-user settings are tracked separately in `SETTINGS_DESIGN.md`.
 - [ ] Prevent a rapid touch/pen double-tap in grid view from navigating through
   more than one folder level. The equivalent list-view workflow passes in the
   full suite, but the grid regression currently reaches the nested folder.
-- [ ] Make unchecked file-selection boxes visibly unfilled in the light theme.
-  They currently use a light-grey fill in both list and grid views.
 
 ## Audit 2026-10-01
 
@@ -20,9 +18,14 @@ Per-user settings are tracked separately in `SETTINGS_DESIGN.md`.
 - In-app visual checks confirmed the Recycle Bin toggle state, lack of a parent
   row, return to the previous folder, compact toggle styling, and Copy/Move
   destination navigation by focus, double-click, and parent entry.
-- The same visual review found the light-theme selection-control issue recorded
-  above. The remaining historical resolved sections are still consistent with
+- The same visual review found the light-theme selection-control issue resolved
+  below. The remaining historical resolved sections are still consistent with
   the automated coverage, rendered UI, and implementation review.
+
+## Resolved 2026-10-02 — light-theme selection controls
+
+- [x] Unchecked file-selection boxes are visibly unfilled in the light theme in
+  both list and grid views, while selected boxes retain their blue fill.
 
 ## Resolved 2026-09-28 — consistency and toggle behaviour
 
