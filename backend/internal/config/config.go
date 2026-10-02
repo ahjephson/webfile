@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -13,6 +14,7 @@ type Root struct {
 	Name          string   `json:"name"`
 	Path          string   `json:"path"`
 	ExcludedNames []string `json:"excluded_names,omitempty"`
+	ExcludedPaths []string `json:"excluded_paths,omitempty"`
 }
 
 type Archive struct {
@@ -177,6 +179,18 @@ func (c *Config) Validate() error {
 			excluded[name] = struct{}{}
 			r.ExcludedNames[index] = name
 		}
+		excludedPaths := make(map[string]struct{}, len(r.ExcludedPaths))
+		for index, excludedPath := range r.ExcludedPaths {
+			normalized, err := normalizeExcludedPath(excludedPath)
+			if err != nil {
+				return fmt.Errorf("root %q has invalid excluded path %q: %w", r.Name, excludedPath, err)
+			}
+			if _, exists := excludedPaths[normalized]; exists {
+				return fmt.Errorf("root %q has duplicate excluded path %q", r.Name, excludedPath)
+			}
+			excludedPaths[normalized] = struct{}{}
+			r.ExcludedPaths[index] = normalized
+		}
 	}
 
 	if c.Archive.Executable != "" && len(c.Archive.ExtractArgs) == 0 {
@@ -257,6 +271,23 @@ func (c *Config) Validate() error {
 		return errors.New("thumbnails.max_queued must be greater than zero")
 	}
 	return nil
+}
+
+func normalizeExcludedPath(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.Contains(value, `\`) {
+		return "", errors.New("must be a non-empty root-relative path using forward slashes")
+	}
+	for _, segment := range strings.Split(strings.TrimPrefix(value, "/"), "/") {
+		if segment == "." || segment == ".." {
+			return "", errors.New("must not contain . or .. path segments")
+		}
+	}
+	normalized := path.Clean("/" + strings.TrimPrefix(value, "/"))
+	if normalized == "/" {
+		return "", errors.New("cannot exclude the root itself")
+	}
+	return normalized, nil
 }
 
 func (c Config) RootsForUser(username, home string) ([]Root, error) {

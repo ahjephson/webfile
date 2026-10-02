@@ -17,6 +17,10 @@ extraction, durable background tasks and persistent application state.
 - Configurable roots with `{home}` and `{user}` expansion.
 - Each root can set `excluded_names` to exact, case-sensitive entry names that
   should be omitted from directory listings anywhere beneath that root.
+- Each root can set `excluded_paths` to exact, case-sensitive, root-relative
+  paths (for example `/private/archive`) that should be omitted from listings
+  and rejected when accessed directly. Descendants of an excluded directory
+  are excluded too; glob patterns are not supported.
 - List/grid views are virtualised for very large individual directories.
 - One inotify watch for the directory each browser connection is currently
   viewing. inotify only invalidates the view; the browser then rereads the

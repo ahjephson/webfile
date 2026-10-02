@@ -339,7 +339,7 @@ func writeError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": err.Error(), "code": "conflict"})
 	case errors.Is(err, filesystem.ErrTooLarge):
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
-	case errors.Is(err, fs.ErrNotExist):
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, filesystem.ErrExcludedPath):
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 	case errors.Is(err, fs.ErrPermission):
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})

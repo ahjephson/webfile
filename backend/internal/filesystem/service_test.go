@@ -100,6 +100,44 @@ func TestListOmitsRootExcludedNames(t *testing.T) {
 	}
 }
 
+func TestExcludedPathsAreExactAndCannotBeOpenedDirectly(t *testing.T) {
+	root := t.TempDir()
+	for _, directory := range []string{"visible", "visible/private", "visible/private/child", "visible/private-suffix", "other", "other/private"} {
+		if err := os.Mkdir(filepath.Join(root, directory), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolver, err := NewResolver([]Root{{Name: "Files", Path: root, ExcludedPaths: []string{"/visible/private"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(resolver, 1024*1024)
+	t.Cleanup(service.Close)
+
+	entries, err := service.List(context.Background(), "/Files/visible")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name != "private-suffix" {
+		t.Fatalf("entries=%v", entries)
+	}
+	entries, err = service.List(context.Background(), "/Files/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name != "private" {
+		t.Fatalf("other entries=%v", entries)
+	}
+	for _, excluded := range []string{"/Files/visible/private", "/Files/visible/private/child"} {
+		if _, _, err := resolver.ResolveExisting(excluded); !errors.Is(err, ErrExcludedPath) {
+			t.Fatalf("ResolveExisting(%q) error = %v", excluded, err)
+		}
+	}
+	if _, _, err := resolver.ResolveForCreate("/Files/visible/private/new.txt"); !errors.Is(err, ErrExcludedPath) {
+		t.Fatalf("ResolveForCreate error = %v", err)
+	}
+}
+
 func TestListReportsDirectoryNavigationAccess(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "accessible"), 0o755); err != nil {

@@ -50,3 +50,34 @@ func TestValidateRejectsInvalidExcludedNames(t *testing.T) {
 		t.Fatal("excluded name containing a path separator was accepted")
 	}
 }
+
+func TestValidateNormalizesExcludedPaths(t *testing.T) {
+	target := Default()
+	target.Roots = []Root{{Name: "Root", Path: "/", ExcludedPaths: []string{"var/cache/hidden/"}}}
+	if err := target.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := target.Roots[0].ExcludedPaths[0]; got != "/var/cache/hidden" {
+		t.Fatalf("excluded path = %q", got)
+	}
+}
+
+func TestValidateRejectsInvalidExcludedPaths(t *testing.T) {
+	for _, excludedPath := range []string{"/", "../secret", "nested/../secret", `nested\secret`} {
+		t.Run(excludedPath, func(t *testing.T) {
+			target := Default()
+			target.Roots = []Root{{Name: "Root", Path: "/", ExcludedPaths: []string{excludedPath}}}
+			if err := target.Validate(); err == nil {
+				t.Fatalf("excluded path %q was accepted", excludedPath)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsDuplicateNormalizedExcludedPaths(t *testing.T) {
+	target := Default()
+	target.Roots = []Root{{Name: "Root", Path: "/", ExcludedPaths: []string{"var/cache", "/var/cache/"}}}
+	if err := target.Validate(); err == nil {
+		t.Fatal("duplicate excluded paths were accepted")
+	}
+}

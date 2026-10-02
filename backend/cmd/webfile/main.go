@@ -223,7 +223,7 @@ func workerMain(args []string) {
 	fatalIf(err, "resolve worker roots")
 	roots := make([]filesystem.Root, 0, len(rootCfg))
 	for _, r := range rootCfg {
-		roots = append(roots, filesystem.Root{Name: r.Name, Path: r.Path, ExcludedNames: r.ExcludedNames})
+		roots = append(roots, filesystem.Root{Name: r.Name, Path: r.Path, ExcludedNames: r.ExcludedNames, ExcludedPaths: r.ExcludedPaths})
 	}
 	resolver, err := filesystem.NewResolver(roots)
 	fatalIf(err, "filesystem resolver failed")

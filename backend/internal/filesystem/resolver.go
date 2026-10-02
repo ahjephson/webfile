@@ -10,14 +10,16 @@ import (
 )
 
 var (
-	ErrInvalidPath = errors.New("invalid path")
-	ErrOutsideRoot = errors.New("path escapes configured root")
+	ErrInvalidPath  = errors.New("invalid path")
+	ErrOutsideRoot  = errors.New("path escapes configured root")
+	ErrExcludedPath = errors.New("path is excluded")
 )
 
 type Root struct {
 	Name          string
 	Path          string
 	ExcludedNames []string
+	ExcludedPaths []string
 }
 
 type Resolver struct {
@@ -31,6 +33,9 @@ func NewResolver(roots []Root) (*Resolver, error) {
 		root.Path = filepath.Clean(root.Path)
 		if resolved, err := filepath.EvalSymlinks(root.Path); err == nil {
 			root.Path = resolved
+		}
+		for index, excludedPath := range root.ExcludedPaths {
+			root.ExcludedPaths[index] = path.Clean("/" + strings.TrimPrefix(excludedPath, "/"))
 		}
 		r.roots[root.Name] = root
 		r.rootOrder = append(r.rootOrder, root)
@@ -91,6 +96,9 @@ func (r *Resolver) ResolveExisting(v string) (Root, string, error) {
 	if err := ensureWithin(root.Path, resolved); err != nil {
 		return Root{}, "", err
 	}
+	if isExcludedPath(root, resolved) {
+		return Root{}, "", ErrExcludedPath
+	}
 	return root, resolved, nil
 }
 
@@ -112,6 +120,9 @@ func (r *Resolver) ResolveEntry(v string) (Root, string, error) {
 		return Root{}, "", err
 	}
 	entry := filepath.Join(resolvedParent, filepath.Base(candidate))
+	if isExcludedPath(root, entry) {
+		return Root{}, "", ErrExcludedPath
+	}
 	if _, err := os.Lstat(entry); err != nil {
 		return Root{}, "", err
 	}
@@ -131,7 +142,11 @@ func (r *Resolver) ResolveForCreate(v string) (Root, string, error) {
 	if err := ensureWithin(root.Path, resolvedParent); err != nil {
 		return Root{}, "", err
 	}
-	return root, filepath.Join(resolvedParent, filepath.Base(candidate)), nil
+	entry := filepath.Join(resolvedParent, filepath.Base(candidate))
+	if isExcludedPath(root, entry) {
+		return Root{}, "", ErrExcludedPath
+	}
+	return root, entry, nil
 }
 
 func (r *Resolver) resolveLexical(v string) (Root, string, error) {
@@ -150,7 +165,24 @@ func (r *Resolver) resolveLexical(v string) (Root, string, error) {
 	if err := ensureWithin(root.Path, candidate); err != nil {
 		return Root{}, "", err
 	}
+	if isExcludedPath(root, candidate) {
+		return Root{}, "", ErrExcludedPath
+	}
 	return root, candidate, nil
+}
+
+func isExcludedPath(root Root, candidate string) bool {
+	relative, err := filepath.Rel(root.Path, candidate)
+	if err != nil || relative == "." {
+		return false
+	}
+	virtualRelative := "/" + filepath.ToSlash(relative)
+	for _, excludedPath := range root.ExcludedPaths {
+		if virtualRelative == excludedPath || strings.HasPrefix(virtualRelative, excludedPath+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureWithin(root, candidate string) error {

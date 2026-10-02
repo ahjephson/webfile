@@ -141,6 +141,10 @@ func (s *Service) List(ctx context.Context, virtualPath string) ([]Entry, error)
 		if _, excluded := excludedNames[de.Name()]; excluded {
 			continue
 		}
+		entryPath := filepath.Join(abs, de.Name())
+		if isExcludedPath(root, entryPath) {
+			continue
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -149,7 +153,6 @@ func (s *Service) List(ctx context.Context, virtualPath string) ([]Entry, error)
 			continue
 		}
 		entry := toEntry(virtualPath, de.Name(), info)
-		entryPath := filepath.Join(abs, de.Name())
 		if entry.IsDir {
 			canNavigate := canNavigateDirectory(entryPath)
 			entry.CanNavigate = &canNavigate
