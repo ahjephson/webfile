@@ -97,11 +97,39 @@ func TestThumbnailCreatesAndCachesRepresentativeVideoSprite(t *testing.T) {
 	if strings.Count(argumentText, "-hide_banner") != 1 {
 		t.Fatalf("ffmpeg ran more than once: %q", argumentText)
 	}
-	if !strings.Contains(argumentText, "thumbnail=5") || !strings.Contains(argumentText, "tile=10x1:nb_frames=10") {
-		t.Fatalf("representative sprite filter was not used: %q", argumentText)
+	if strings.Count(argumentText, "-ss\n") != videoThumbnailFrames || strings.Count(argumentText, "-i\n") != videoThumbnailFrames {
+		t.Fatalf("fast seeks were not used for every sprite frame: %q", argumentText)
+	}
+	if !strings.Contains(argumentText, "5.000000") || !strings.Contains(argumentText, "95.000000") {
+		t.Fatalf("sprite timestamps do not span the video: %q", argumentText)
+	}
+	if strings.Contains(argumentText, "trim=") || !strings.Contains(argumentText, "hstack=inputs=10:shortest=1") {
+		t.Fatalf("fast-seek sprite filter was not used: %q", argumentText)
 	}
 	if !strings.Contains(argumentText, "scale=w=320:h=180:force_original_aspect_ratio=decrease") {
 		t.Fatalf("requested thumbnail bounds were not used: %q", argumentText)
+	}
+}
+
+func TestVideoThumbnailBatchPreservesSourceOrderBeforeWorkersStart(t *testing.T) {
+	queue := newVideoThumbnailQueue(&Service{}, ThumbnailOptions{MaxQueued: 10, VideoTimeout: time.Minute})
+	t.Cleanup(queue.close)
+	sources := []thumbnailSource{
+		{virtualPath: "/Files/first.mp4", key: "11111111111111111111111111111111"},
+		{virtualPath: "/Files/second.mp4", key: "22222222222222222222222222222222"},
+		{virtualPath: "/Files/third.mp4", key: "33333333333333333333333333333333"},
+	}
+	jobs := queue.scheduleBatch(sources)
+	if len(jobs) != len(sources) {
+		t.Fatalf("queued %d jobs, want %d", len(jobs), len(sources))
+	}
+	for index, source := range sources {
+		if jobs[index].Path != source.virtualPath || jobs[index].QueuePosition != index+1 {
+			t.Fatalf("job %d = %#v, want path %q at position %d", index, jobs[index], source.virtualPath, index+1)
+		}
+		if queue.queued[index].source.virtualPath != source.virtualPath {
+			t.Fatalf("queue item %d = %q, want %q", index, queue.queued[index].source.virtualPath, source.virtualPath)
+		}
 	}
 }
 
@@ -145,13 +173,13 @@ func TestVideoThumbnailRequestsAreQueuedAndDeduplicated(t *testing.T) {
 	}
 }
 
-func TestVideoSpriteFilterSkipsOpeningAndClosingFivePercent(t *testing.T) {
-	filter := videoSpriteFilter(200, 320, 180)
-	if !strings.Contains(filter, "trim=start=10.000000:end=190.000000") {
-		t.Fatalf("unexpected trim: %q", filter)
+func TestVideoThumbnailTimestampsSpanOpeningAndClosingFivePercent(t *testing.T) {
+	timestamps := videoThumbnailTimestamps(200)
+	if len(timestamps) != videoThumbnailFrames {
+		t.Fatalf("got %d timestamps, want %d", len(timestamps), videoThumbnailFrames)
 	}
-	if !strings.Contains(filter, "fps=0.277777778") {
-		t.Fatalf("unexpected sample rate: %q", filter)
+	if timestamps[0] != 10 || timestamps[len(timestamps)-1] != 190 {
+		t.Fatalf("timestamps span %.2f to %.2f, want 10 to 190", timestamps[0], timestamps[len(timestamps)-1])
 	}
 }
 

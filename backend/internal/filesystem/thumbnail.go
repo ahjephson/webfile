@@ -31,9 +31,8 @@ import (
 const maxThumbnailPixels = 25_000_000
 
 const (
-	videoThumbnailFrames     = 10
-	videoThumbnailCandidates = 5
-	thumbnailFormatVersion   = "thumbnail-v3"
+	videoThumbnailFrames   = 10
+	thumbnailFormatVersion = "thumbnail-v4"
 )
 
 var ErrThumbnailTooLarge = errors.New("image is too large to thumbnail")
@@ -128,6 +127,41 @@ func (s *Service) RequestThumbnail(ctx context.Context, virtualPath string, maxW
 		return ThumbnailResult{}, err
 	}
 	return ThumbnailResult{Thumbnail: &thumbnail, key: source.key}, nil
+}
+
+// QueueVideoThumbnails inspects and enqueues video paths as one ordered batch.
+// Workers are only woken after every source has been inserted, so the order
+// supplied by the directory listing is preserved even when requests would
+// otherwise arrive concurrently from multiple tiles.
+func (s *Service) QueueVideoThumbnails(ctx context.Context, virtualPaths []string, maxWidth, maxHeight int) ([]VideoThumbnailJob, error) {
+	sources := make([]thumbnailSource, 0, len(virtualPaths))
+	seen := make(map[string]struct{}, len(virtualPaths))
+	for _, virtualPath := range virtualPaths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		virtualPath = CleanVirtual(virtualPath)
+		if _, ok := seen[virtualPath]; ok {
+			continue
+		}
+		seen[virtualPath] = struct{}{}
+
+		source, file, err := s.inspectThumbnailSource(ctx, virtualPath, maxWidth, maxHeight)
+		if err != nil {
+			continue
+		}
+		_ = file.Close()
+		if !strings.HasPrefix(source.mediaType, "video/") {
+			continue
+		}
+		if _, ok, err := s.cachedThumbnail(ctx, source); err != nil {
+			return nil, err
+		} else if ok {
+			continue
+		}
+		sources = append(sources, source)
+	}
+	return s.videoQueue.scheduleBatch(sources), nil
 }
 
 func (s *Service) generateImageDeduplicated(ctx context.Context, file *os.File, source thumbnailSource) (Thumbnail, error) {
@@ -303,11 +337,15 @@ func (g videoThumbnailGenerator) generate(ctx context.Context, path string, widt
 	if err != nil || duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
 		return nil, errors.New("probe video duration: invalid duration")
 	}
-	command := exec.CommandContext(ctx, g.ffmpeg,
-		"-hide_banner", "-loglevel", "error", "-threads", strconv.Itoa(g.threads), "-i", path,
-		"-map", "0:v:0", "-an", "-vf", videoSpriteFilter(duration, width, height), "-frames:v", "1",
-		"-c:v", "libwebp", "-quality", "82", "-f", "image2pipe", "pipe:1",
+	args := []string{"-hide_banner", "-loglevel", "error"}
+	for _, timestamp := range videoThumbnailTimestamps(duration) {
+		args = append(args, "-threads", "1", "-ss", strconv.FormatFloat(timestamp, 'f', 6, 64), "-i", path)
+	}
+	args = append(args,
+		"-filter_complex", videoSpriteFilter(width, height), "-map", "[sprite]", "-an", "-frames:v", "1",
+		"-threads", strconv.Itoa(g.threads), "-c:v", "libwebp", "-quality", "82", "-f", "image2pipe", "pipe:1",
 	)
+	command := exec.CommandContext(ctx, g.ffmpeg, args...)
 	var output, errorOutput bytes.Buffer
 	command.Stdout, command.Stderr = &output, &errorOutput
 	if err := command.Run(); err != nil {
@@ -326,10 +364,24 @@ func (g videoThumbnailGenerator) generate(ctx context.Context, path string, widt
 	return output.Bytes(), nil
 }
 
-func videoSpriteFilter(duration float64, width, height int) string {
-	start, end := duration*0.05, duration*0.95
-	sampleRate := float64(videoThumbnailFrames*videoThumbnailCandidates) / math.Max(end-start, 0.001)
-	return fmt.Sprintf("trim=start=%.6f:end=%.6f,setpts=PTS-STARTPTS,fps=%.9f,thumbnail=%d,scale=w=%d:h=%d:force_original_aspect_ratio=decrease,pad=w=%d:h=%d:x=(ow-iw)/2:y=(oh-ih)/2:color=black,tile=%dx1:nb_frames=%d", start, end, sampleRate, videoThumbnailCandidates, width, height, width, height, videoThumbnailFrames, videoThumbnailFrames)
+func videoThumbnailTimestamps(duration float64) []float64 {
+	timestamps := make([]float64, videoThumbnailFrames)
+	for index := range timestamps {
+		fraction := 0.05 + 0.90*float64(index)/float64(videoThumbnailFrames-1)
+		timestamps[index] = duration * fraction
+	}
+	return timestamps
+}
+
+func videoSpriteFilter(width, height int) string {
+	parts := make([]string, 0, videoThumbnailFrames+1)
+	inputs := strings.Builder{}
+	for index := 0; index < videoThumbnailFrames; index++ {
+		parts = append(parts, fmt.Sprintf("[%d:v:0]scale=w=%d:h=%d:force_original_aspect_ratio=decrease,pad=w=%d:h=%d:x=(ow-iw)/2:y=(oh-ih)/2:color=black,setsar=1[v%d]", index, width, height, width, height, index))
+		fmt.Fprintf(&inputs, "[v%d]", index)
+	}
+	parts = append(parts, fmt.Sprintf("%shstack=inputs=%d:shortest=1[sprite]", inputs.String(), videoThumbnailFrames))
+	return strings.Join(parts, ";")
 }
 
 type memoryThumbnailCache struct {

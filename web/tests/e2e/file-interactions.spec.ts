@@ -1722,6 +1722,45 @@ test('video tiles animate a cached sprite on hover without requesting the video'
   expect(videoRequests).toBe(0)
 })
 
+test('video thumbnails are batch queued in directory order before tile requests', async ({ page }) => {
+  const orderedPaths = ['/first.mp4', '/second.mp4', '/third.mp4']
+  let queuedPaths: string[] = []
+  let batchComplete = false
+  let tileRequestedBeforeBatch = false
+  await page.route('**/api/fs/dir**', route => route.fulfill({
+    json: {
+      path: '/',
+      entries: orderedPaths.map((path, index) => ({
+        name: path.slice(1),
+        path,
+        is_dir: false,
+        size: index + 1,
+        modified: '2000-01-01T00:00:00Z',
+        mode: '-rw-r--r--',
+      })),
+    },
+  }))
+  await page.route('**/api/fs/thumbnails/queue', async route => {
+    queuedPaths = (route.request().postDataJSON() as { paths: string[] }).paths
+    await new Promise(resolve => setTimeout(resolve, 100))
+    batchComplete = true
+    await route.fulfill({ json: { jobs: [] } })
+  })
+  await page.route('**/api/fs/thumbnail?**', route => {
+    if (!batchComplete) tileRequestedBeforeBatch = true
+    return route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="100"><rect width="1000" height="100" fill="#7c3aed"/></svg>',
+    })
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Grid view' }).click()
+  await expect.poll(() => queuedPaths).toEqual(orderedPaths)
+  await expect(page.locator('[data-video-thumbnail]')).toHaveCount(orderedPaths.length)
+  expect(tileRequestedBeforeBatch).toBe(false)
+})
+
 test('a tall image is contained within both dimensions of the preview canvas', async ({ page }) => {
   await page.route('**/api/fs/dir**', route => route.fulfill({
     json: {

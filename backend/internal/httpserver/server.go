@@ -55,6 +55,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/fs/upload", s.upload)
 	s.mux.HandleFunc("GET /api/fs/download", s.download)
 	s.mux.HandleFunc("GET /api/fs/thumbnail", s.thumbnail)
+	s.mux.HandleFunc("POST /api/fs/thumbnails/queue", s.queueVideoThumbnails)
 	s.mux.HandleFunc("GET /api/fs/thumbnails/jobs", s.listThumbnailJobs)
 	s.mux.HandleFunc("DELETE /api/fs/thumbnails/jobs/{id}", s.cancelThumbnailJob)
 	s.mux.HandleFunc("GET /api/fs/details", s.details)
@@ -279,6 +280,37 @@ func (s *Server) thumbnail(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", thumbnail.ContentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(thumbnail.Data)))
 	_, _ = w.Write(thumbnail.Data)
+}
+
+type queueVideoThumbnailsRequest struct {
+	Paths  []string `json:"paths"`
+	Width  int      `json:"width"`
+	Height int      `json:"height"`
+}
+
+func (s *Server) queueVideoThumbnails(w http.ResponseWriter, r *http.Request) {
+	var req queueVideoThumbnailsRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if len(req.Paths) > 2000 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "too many thumbnail paths"})
+		return
+	}
+	width, height := req.Width, req.Height
+	if width < 32 || width > 1024 {
+		width = 320
+	}
+	if height < 32 || height > 1024 {
+		height = 320
+	}
+	jobs, err := s.files.QueueVideoThumbnails(r.Context(), req.Paths, width, height)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs})
 }
 
 func (s *Server) listThumbnailJobs(w http.ResponseWriter, _ *http.Request) {

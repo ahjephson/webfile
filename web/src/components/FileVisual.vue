@@ -8,6 +8,7 @@ const props = defineProps<{
   entry: FileEntry
   tile?: boolean
   tileSize?: 'small' | 'medium' | 'large'
+  thumbnailEnabled?: boolean
 }>()
 
 const detectedContentType = ref('')
@@ -27,7 +28,7 @@ const visual = computed(() => detectedContentType.value
 const lockedDirectory = computed(() => props.entry.is_dir && props.entry.can_navigate === false)
 const lockedFile = computed(() => !props.entry.is_dir && props.entry.can_read === false)
 const showImageThumbnail = computed(() => props.tile && !props.entry.is_dir && !lockedFile.value && visual.value.kind === 'image' && !thumbnailFailed.value)
-const showVideoThumbnail = computed(() => props.tile && !props.entry.is_dir && !lockedFile.value && visual.value.kind === 'video' && !thumbnailFailed.value)
+const showVideoThumbnail = computed(() => props.thumbnailEnabled !== false && props.tile && !props.entry.is_dir && !lockedFile.value && visual.value.kind === 'video' && !thumbnailFailed.value)
 const tileHeight = computed(() => ({ small: '4rem', medium: '7rem', large: '10rem' })[props.tileSize ?? 'medium'])
 const tileIconSize = computed(() => ({ small: '2.5rem', medium: '4rem', large: '5.5rem' })[props.tileSize ?? 'medium'])
 const videoSpriteStyle = computed(() => ({

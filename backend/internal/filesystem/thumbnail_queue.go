@@ -54,7 +54,7 @@ func newVideoThumbnailQueue(service *Service, options ThumbnailOptions) *videoTh
 	queue := &videoThumbnailQueue{
 		service: service, workers: options.VideoWorkers, maxQueued: options.MaxQueued, timeout: options.VideoTimeout,
 		jobs: make(map[string]*videoThumbnailJob), ids: make(map[string]*videoThumbnailJob),
-		subscribers: make(map[chan VideoThumbnailJob]struct{}), wake: make(chan struct{}, 1), stop: make(chan struct{}),
+		subscribers: make(map[chan VideoThumbnailJob]struct{}), wake: make(chan struct{}, options.VideoWorkers), stop: make(chan struct{}),
 		retryBackoff: 10 * time.Second, completedLife: 3 * time.Second,
 	}
 	for i := 0; i < queue.workers; i++ {
@@ -65,36 +65,49 @@ func newVideoThumbnailQueue(service *Service, options ThumbnailOptions) *videoTh
 }
 
 func (q *videoThumbnailQueue) schedule(source thumbnailSource) (VideoThumbnailJob, error) {
-	q.mu.Lock()
-	if existing := q.jobs[source.key]; existing != nil {
-		if existing.view.State != "failed" || time.Since(existing.view.UpdatedAt) < q.retryBackoff {
-			view := q.snapshotLocked(existing)
-			q.mu.Unlock()
-			return view, nil
-		}
-		delete(q.jobs, source.key)
-		delete(q.ids, existing.view.ID)
-	}
-	if len(q.queued) >= q.maxQueued {
-		q.mu.Unlock()
+	jobs := q.scheduleBatch([]thumbnailSource{source})
+	if len(jobs) == 0 {
 		return VideoThumbnailJob{}, ErrThumbnailQueueFull
 	}
-	now := time.Now().UTC()
-	job := &videoThumbnailJob{
-		view: VideoThumbnailJob{
-			ID: source.key[:16], Path: source.virtualPath, Name: filepath.Base(source.virtualPath),
-			State: "queued", Cancellable: true, UpdatedAt: now,
-		},
-		source: source,
-		done:   make(chan struct{}),
+	return jobs[0], nil
+}
+
+func (q *videoThumbnailQueue) scheduleBatch(sources []thumbnailSource) []VideoThumbnailJob {
+	q.mu.Lock()
+	jobs := make([]VideoThumbnailJob, 0, len(sources))
+	added := 0
+	for _, source := range sources {
+		if existing := q.jobs[source.key]; existing != nil {
+			if existing.view.State != "failed" || time.Since(existing.view.UpdatedAt) < q.retryBackoff {
+				jobs = append(jobs, q.snapshotLocked(existing))
+				continue
+			}
+			delete(q.jobs, source.key)
+			delete(q.ids, existing.view.ID)
+		}
+		if len(q.queued) >= q.maxQueued {
+			break
+		}
+		now := time.Now().UTC()
+		job := &videoThumbnailJob{
+			view: VideoThumbnailJob{
+				ID: source.key[:16], Path: source.virtualPath, Name: filepath.Base(source.virtualPath),
+				State: "queued", Cancellable: true, UpdatedAt: now,
+			},
+			source: source,
+			done:   make(chan struct{}),
+		}
+		q.jobs[source.key], q.ids[job.view.ID] = job, job
+		q.queued = append(q.queued, job)
+		jobs = append(jobs, q.snapshotLocked(job))
+		added++
 	}
-	q.jobs[source.key], q.ids[job.view.ID] = job, job
-	q.queued = append(q.queued, job)
-	view := q.snapshotLocked(job)
-	q.publishLocked(view)
+	q.publishQueuePositionsLocked()
 	q.mu.Unlock()
-	q.signal()
-	return view, nil
+	for index := 0; index < added && index < q.workers; index++ {
+		q.signal()
+	}
+	return jobs
 }
 
 func (q *videoThumbnailQueue) runWorker() {

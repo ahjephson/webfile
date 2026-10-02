@@ -10,6 +10,7 @@ const props = defineProps<{
   focusedPath: string
   selectionControlsVisible: boolean
   size: 'small' | 'medium' | 'large'
+  thumbnailsReady: boolean
   parentPath?: string
 }>()
 
@@ -210,7 +211,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: columns })
               <i class="pi pi-check text-xs" />
             </span>
           </button>
-          <FileVisual :entry="cell.entry" tile :tile-size="size" />
+          <FileVisual :entry="cell.entry" tile :tile-size="size" :thumbnail-enabled="thumbnailsReady" />
           <span class="w-full truncate text-sm" :title="cell.entry.name">{{ cell.entry.name }}</span>
           <span v-if="!cell.entry.is_dir || cell.entry.size_status === 'ready'" class="text-xs text-zinc-500">{{ formatBytes(cell.entry.size) }}</span>
         </div>

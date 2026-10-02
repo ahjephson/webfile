@@ -13,6 +13,7 @@ import type { FileEntry, FileOperation, VideoThumbnailJob } from '@/types/files'
 import { resolvedTheme, setTheme, themeMode, type ThemeMode } from '@/theme'
 import { defaultPreferences, normalizePreferences, type UserPreferences } from '@/preferences'
 import { isEntryVisible } from '@/utils/entryVisibility'
+import { fileVisualForPath } from '@/utils/fileVisual'
 import SettingsDialog from '@/components/SettingsDialog.vue'
 import { useRealtime } from '@/composables/useRealtime'
 import { useFilePreview } from '@/composables/useFilePreview'
@@ -129,6 +130,7 @@ const settingsVisible = ref(false)
 const settingsSaving = ref(false)
 const userPreferences = ref<UserPreferences>({ ...defaultPreferences })
 const thumbnailJobs = ref<VideoThumbnailJob[]>([])
+const thumbnailBatchReady = ref(true)
 const detailsVisible = ref(restoredExplorerState.detailsVisible)
 const detailsPath = ref(restoredStateMatchesPath ? restoredExplorerState.detailsPath : currentPath.value)
 const transferEntries = ref<FileEntry[]>([])
@@ -141,6 +143,7 @@ let hashFileRequest = 0
 let breadcrumbResizeObserver: ResizeObserver | null = null
 let preferencesLoaded = false
 let navigationReady = false
+let thumbnailBatchGeneration = 0
 
 const {
   operations,
@@ -222,6 +225,25 @@ const filteredEntries = computed(() => {
     return !q || entry.name.toLocaleLowerCase().includes(q)
   })
 })
+const orderedVideoThumbnailPaths = computed(() => filteredEntries.value
+  .filter(entry => !entry.is_dir && entry.can_read !== false && fileVisualForPath(entry.path).kind === 'video')
+  .map(entry => entry.path))
+
+watch([viewMode, orderedVideoThumbnailPaths], async ([mode, paths]) => {
+  const generation = ++thumbnailBatchGeneration
+  if (mode !== 'grid' || paths.length === 0) {
+    thumbnailBatchReady.value = true
+    return
+  }
+  thumbnailBatchReady.value = false
+  try {
+    await api.queueVideoThumbnails(paths)
+  } catch {
+    // Individual tile requests remain the fallback if batch scheduling fails.
+  } finally {
+    if (generation === thumbnailBatchGeneration) thumbnailBatchReady.value = true
+  }
+}, { flush: 'pre' })
 
 const selectedEntries = computed(() => entries.value.filter(entry => selectedPaths.value.has(entry.path)))
 const selectedOne = computed(() => selectedEntries.value.length === 1 ? selectedEntries.value[0] : null)
@@ -1341,6 +1363,7 @@ function operationLabel(value: string) {
             :focused-path="focusedPath"
             :selection-controls-visible="selectionControlsVisible"
             :size="gridSize"
+            :thumbnails-ready="thumbnailBatchReady"
             :parent-path="parentPath"
             @select="handleSelect"
             @focus="handleFocus"

@@ -302,6 +302,14 @@ export const api = {
     return { url: URL.createObjectURL(await response.blob()) }
   },
 
+  queueVideoThumbnails(paths: string[], width = 320, height = 320) {
+    return request<{ jobs: VideoThumbnailJob[] }>('/api/fs/thumbnails/queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths, width, height }),
+    })
+  },
+
   async thumbnailJobs(): Promise<{ jobs: VideoThumbnailJob[] }> {
     const response = await request<{ jobs?: VideoThumbnailJob[] | null }>('/api/fs/thumbnails/jobs')
     return { jobs: arrayOrEmpty(response.jobs) }
