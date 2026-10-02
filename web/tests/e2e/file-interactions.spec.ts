@@ -644,6 +644,12 @@ test('delete is permanent and no recycle bin is exposed', async ({ page }) => {
     kind: 'delete',
     sources: ['/folder/delete-me.txt'],
   })
+  const tasksButton = page.getByRole('button', { name: 'Open tasks' })
+  await expect(tasksButton).toHaveClass(/webfile-task-attention/)
+  await expect(page.getByRole('complementary')).toHaveCount(0)
+  await tasksButton.click()
+  await expect(page.getByRole('button', { name: 'Close tasks' })).not.toHaveClass(/webfile-task-attention/)
+  await expect(page.getByRole('complementary')).toBeVisible()
 })
 
 test('folder navigation updates the hash and browser back restores the previous folder', async ({ page }) => {
@@ -2345,6 +2351,8 @@ test('Extract here starts a single-pass task in the archive directory', async ({
 
   await expect.poll(() => operationRequest).not.toBeNull()
   expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/archive.zip'], destination: '/folder' })
+  await expect(page.getByRole('button', { name: 'Open tasks' })).toHaveClass(/webfile-task-attention/)
+  await expect(page.getByRole('complementary')).toHaveCount(0)
 })
 
 test('Extract defaults to an archive-named folder and prompts when the task requests a password', async ({ page }) => {

@@ -124,6 +124,7 @@ const extractBusy = ref(false)
 const destinationVisible = ref(false)
 const transferMode = ref<TransferMode>('copy')
 const operationsVisible = ref(false)
+const taskAttention = ref(false)
 const settingsVisible = ref(false)
 const settingsSaving = ref(false)
 const userPreferences = ref<UserPreferences>({ ...defaultPreferences })
@@ -173,8 +174,23 @@ const activeThumbnailJobs = computed(() => thumbnailJobs.value.filter(job => ['q
 const taskBadgeCount = computed(() => activeOperations.value.length + activeThumbnailJobs.value.length)
 
 watch(operationsVisible, visible => {
-  if (visible) void loadThumbnailJobs()
+  if (!visible) return
+  clearTaskAttention()
+  void loadThumbnailJobs()
 })
+
+function clearTaskAttention() {
+  taskAttention.value = false
+}
+
+function signalTaskAdded() {
+  if (operationsVisible.value) return
+  clearTaskAttention()
+  void nextTick(() => {
+    if (operationsVisible.value) return
+    taskAttention.value = true
+  })
+}
 
 async function loadThumbnailJobs() {
   try {
@@ -767,7 +783,7 @@ async function beginOperation(kind: 'copy' | 'move' | 'delete' | 'extract', sour
   try {
     const copyChunkMiB = kind === 'copy' || kind === 'move' ? userPreferences.value.copy_chunk_mib : undefined
     await startFileOperation(kind, sources, destination, copyChunkMiB)
-    operationsVisible.value = true
+    signalTaskAdded()
   } catch (err) {
     showError(err, `Could not start ${kind}`)
   }
@@ -833,6 +849,7 @@ async function prepareExtraction(destination: string) {
   try {
     const operation = await api.extract(extractTarget.value.path, extractDestination.value)
     handleOperationUpdate(operation)
+    signalTaskAdded()
     extractVisible.value = false
   } catch (err) {
     showError(err, 'Could not start extraction')
@@ -922,8 +939,13 @@ async function uploadFiles(event: Event) {
 async function uploadFileList(files: File[], destination: string) {
   for (const file of files) {
     try {
-      operationsVisible.value = true
-      const operation = await api.upload(destination, file, updateOperation)
+      let announced = false
+      const operation = await api.upload(destination, file, current => {
+        updateOperation(current)
+        if (announced) return
+        announced = true
+        signalTaskAdded()
+      })
       updateOperation(operation)
     } catch (err) {
       showError(err, `Could not upload ${file.name}`)
@@ -1152,7 +1174,19 @@ function operationLabel(value: string) {
 
         <span class="min-w-2 flex-1" />
         <div class="flex items-center gap-1">
-          <Button v-tooltip.bottom="operationsVisible ? 'Close tasks' : 'Open tasks'" icon="pi pi-list-check" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': operationsVisible }" :badge="taskBadgeCount ? String(taskBadgeCount) : undefined" :aria-label="operationsVisible ? 'Close tasks' : 'Open tasks'" :aria-pressed="operationsVisible" @click="operationsVisible = !operationsVisible" />
+          <Button
+            v-tooltip.bottom="operationsVisible ? 'Close tasks' : 'Open tasks'"
+            icon="pi pi-list-check"
+            size="small"
+            severity="secondary"
+            text
+            class="webfile-toggle"
+            :class="{ 'webfile-toggle-active': operationsVisible, 'webfile-task-attention': taskAttention }"
+            :badge="taskBadgeCount ? String(taskBadgeCount) : undefined"
+            :aria-label="operationsVisible ? 'Close tasks' : 'Open tasks'"
+            :aria-pressed="operationsVisible"
+            @click="operationsVisible = !operationsVisible"
+          />
           <Button v-tooltip.bottom="'Settings'" icon="pi pi-cog" size="small" severity="secondary" text aria-label="Settings" @click="settingsVisible = true" />
         </div>
         <span class="mx-1 h-6 w-px bg-zinc-700" />
