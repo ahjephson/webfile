@@ -66,6 +66,40 @@ func TestListNeverExposesExtractionStagingDirectories(t *testing.T) {
 	}
 }
 
+func TestListOmitsRootExcludedNames(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"lost+found", "visible"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nested := filepath.Join(root, "visible")
+	if err := os.Mkdir(filepath.Join(nested, "lost+found"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := NewResolver([]Root{{Name: "Files", Path: root, ExcludedNames: []string{"lost+found"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(resolver, 1024*1024)
+	t.Cleanup(service.Close)
+
+	entries, err := service.List(context.Background(), "/Files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name != "visible" {
+		t.Fatalf("entries=%v", entries)
+	}
+	entries, err = service.List(context.Background(), "/Files/visible")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("nested entries=%v", entries)
+	}
+}
+
 func TestListSortsMixedCaseNamesUsingHostCollation(t *testing.T) {
 	svc, root := testService(t)
 	want := []string{"z", "A", "a", "Z"}

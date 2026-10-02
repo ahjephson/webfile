@@ -15,6 +15,8 @@ extraction, durable background tasks and persistent application state.
 
 - Direct `os.ReadDir` listings; no filesystem mirror/database and no initial scan.
 - Configurable roots with `{home}` and `{user}` expansion.
+- Each root can set `excluded_names` to exact, case-sensitive entry names that
+  should be omitted from directory listings anywhere beneath that root.
 - List/grid views are virtualised for very large individual directories.
 - One inotify watch for the directory each browser connection is currently
   viewing. inotify only invalidates the view; the browser then rereads the

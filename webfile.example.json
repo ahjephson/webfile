@@ -36,8 +36,8 @@
     "poll_interval": "5s"
   },
   "roots": [
-    { "name": "Home", "path": "{home}" },
-    { "name": "Media", "path": "/srv/media" }
+    { "name": "Home", "path": "{home}", "excluded_names": ["lost+found"] },
+    { "name": "Media", "path": "/srv/media", "excluded_names": ["lost+found"] }
   ],
   "archive": {
     "executable": "/usr/bin/7zz",

@@ -36,3 +36,11 @@ func TestRootsForUserExpandsLinuxIdentityPlaceholders(t *testing.T) {
 		t.Fatalf("shared = %q", roots[1].Path)
 	}
 }
+
+func TestValidateRejectsInvalidExcludedNames(t *testing.T) {
+	target := Default()
+	target.Roots = []Root{{Name: "Root", Path: "/", ExcludedNames: []string{"valid", "nested/name"}}}
+	if err := target.Validate(); err == nil {
+		t.Fatal("excluded name containing a path separator was accepted")
+	}
+}

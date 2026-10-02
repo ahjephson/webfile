@@ -10,8 +10,9 @@ import (
 )
 
 type Root struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name          string   `json:"name"`
+	Path          string   `json:"path"`
+	ExcludedNames []string `json:"excluded_names,omitempty"`
 }
 
 type Archive struct {
@@ -161,6 +162,18 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("root %q: %w", r.Name, err)
 			}
 			r.Path = filepath.Clean(abs)
+		}
+		excluded := make(map[string]struct{}, len(r.ExcludedNames))
+		for index, name := range r.ExcludedNames {
+			name = strings.TrimSpace(name)
+			if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\\`) {
+				return fmt.Errorf("root %q has invalid excluded name %q", r.Name, name)
+			}
+			if _, exists := excluded[name]; exists {
+				return fmt.Errorf("root %q has duplicate excluded name %q", r.Name, name)
+			}
+			excluded[name] = struct{}{}
+			r.ExcludedNames[index] = name
 		}
 	}
 

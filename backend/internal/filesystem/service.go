@@ -111,7 +111,7 @@ func (s *Service) List(ctx context.Context, virtualPath string) ([]Entry, error)
 		return entries, nil
 	}
 
-	_, abs, err := s.resolver.ResolveExisting(virtualPath)
+	root, abs, err := s.resolver.ResolveExisting(virtualPath)
 	if err != nil {
 		return nil, err
 	}
@@ -128,9 +128,13 @@ func (s *Service) List(ctx context.Context, virtualPath string) ([]Entry, error)
 		return nil, err
 	}
 	out := make([]Entry, 0, len(dirEntries))
+	excludedNames := makeNameSet(root.ExcludedNames)
 	collationKeys := make(map[string]string, len(dirEntries))
 	for _, de := range dirEntries {
 		if strings.HasPrefix(de.Name(), ".webfile-extract-") {
+			continue
+		}
+		if _, excluded := excludedNames[de.Name()]; excluded {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -159,6 +163,14 @@ func (s *Service) List(ctx context.Context, virtualPath string) ([]Entry, error)
 		return left < right
 	})
 	return out, nil
+}
+
+func makeNameSet(names []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		set[name] = struct{}{}
+	}
+	return set
 }
 
 func (s *Service) ReadText(ctx context.Context, virtualPath string) (FileContent, error) {

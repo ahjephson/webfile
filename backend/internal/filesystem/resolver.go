@@ -15,8 +15,9 @@ var (
 )
 
 type Root struct {
-	Name string
-	Path string
+	Name          string
+	Path          string
+	ExcludedNames []string
 }
 
 type Resolver struct {
