@@ -758,6 +758,65 @@ test('the destination browser also treats a single configured root as Files', as
   await expect(dialog.getByRole('button', { name: 'Parent directory' })).toHaveCount(0)
 })
 
+test('the destination browser uses the main listing visibility preferences', async ({ page }) => {
+  await page.route('**/api/preferences', route => route.fulfill({
+    json: { show_hidden: false, hide_inaccessible: true },
+  }))
+  await page.route('**/api/fs/dir**', async route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? '/Files'
+    await route.fulfill({
+      json: {
+        path,
+        single_root_path: '/Files',
+        entries: [{
+          name: 'visible',
+          path: '/Files/visible',
+          is_dir: true,
+          can_navigate: true,
+          size: 0,
+          modified: '2000-01-01T00:00:00Z',
+          mode: 'drwxr-xr-x',
+        }, {
+          name: '.hidden',
+          path: '/Files/.hidden',
+          is_dir: true,
+          can_navigate: true,
+          size: 0,
+          modified: '2000-01-01T00:00:00Z',
+          mode: 'drwxr-xr-x',
+        }, {
+          name: 'restricted',
+          path: '/Files/restricted',
+          is_dir: true,
+          can_navigate: false,
+          size: 0,
+          modified: '2000-01-01T00:00:00Z',
+          mode: 'd---------',
+        }, {
+          name: 'source.txt',
+          path: '/Files/source.txt',
+          is_dir: false,
+          can_read: true,
+          size: 1,
+          modified: '2000-01-01T00:00:00Z',
+          mode: '-rw-r--r--',
+        }],
+      },
+    })
+  })
+
+  await page.goto('/#path=%2FFiles')
+  await showSelectionControls(page)
+  await page.locator('[data-file-entry]').filter({ hasText: 'source.txt' }).locator('[data-selection-control]').click()
+  await page.getByRole('button', { name: 'Actions' }).click()
+  await page.getByRole('menuitem', { name: 'Copy to…' }).click()
+
+  const dialog = page.getByRole('dialog', { name: 'Copy to…' })
+  await expect(dialog.getByRole('button', { name: 'visible', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '.hidden', exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'restricted', exact: true })).toHaveCount(0)
+})
+
 test('breadcrumb navigation pops directly to a visited ancestor with one popstate', async ({ page }) => {
   await page.route('**/api/fs/dir**', async route => {
     const path = new URL(route.request().url()).searchParams.get('path') ?? '/'

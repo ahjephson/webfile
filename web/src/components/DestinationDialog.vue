@@ -6,12 +6,15 @@ import ProgressSpinner from 'primevue/progressspinner'
 import { api } from '@/api/client'
 import type { FileEntry } from '@/types/files'
 import LevelUpIcon from '@/components/LevelUpIcon.vue'
+import { isEntryVisible } from '@/utils/entryVisibility'
 
 const props = defineProps<{
   visible: boolean
   mode: 'copy' | 'move'
   count: number
   initialPath: string
+  showHidden: boolean
+  hideInaccessible: boolean
 }>()
 
 const emit = defineEmits<{
@@ -26,7 +29,9 @@ const error = ref('')
 const focusedPath = ref('')
 const singleRootPath = ref('')
 
-const folders = computed(() => entries.value.filter(entry => entry.is_dir))
+const folders = computed(() => entries.value.filter(entry => entry.is_dir && isEntryVisible(entry, {
+  showHidden: props.showHidden, hideInaccessible: props.hideInaccessible,
+})))
 const parentPath = computed(() => {
   if (current.value === '/' || current.value === singleRootPath.value) return ''
   const parts = current.value.split('/').filter(Boolean)
@@ -81,6 +86,11 @@ function open(path: string) {
   void load()
 }
 
+function openFolder(folder: FileEntry) {
+  if (folder.can_navigate === false) return
+  open(folder.path)
+}
+
 function submit() {
   emit('submit', current.value)
   emit('update:visible', false)
@@ -130,9 +140,10 @@ function submit() {
             class="flex w-full items-center gap-3 border-b border-zinc-900 px-4 py-3 text-left hover:bg-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-400"
             :title="folder.can_navigate === false ? 'You do not have permission to open this folder' : undefined"
             :class="focusedPath === folder.path ? 'bg-zinc-900' : ''"
+            :aria-disabled="folder.can_navigate === false"
             @click="focusedPath = folder.path"
-            @dblclick="open(folder.path)"
-            @keydown.enter.prevent="open(folder.path)"
+            @dblclick="openFolder(folder)"
+            @keydown.enter.prevent="openFolder(folder)"
           >
             <span class="relative grid place-items-center">
               <i class="pi pi-folder text-lg" :class="folder.can_navigate === false ? 'text-zinc-500' : 'text-amber-400'" aria-hidden="true" />

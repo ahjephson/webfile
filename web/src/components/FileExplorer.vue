@@ -12,6 +12,7 @@ import { api } from '@/api/client'
 import type { FileEntry, FileOperation, VideoThumbnailJob } from '@/types/files'
 import { resolvedTheme, setTheme, themeMode, type ThemeMode } from '@/theme'
 import { defaultPreferences, normalizePreferences, type UserPreferences } from '@/preferences'
+import { isEntryVisible } from '@/utils/entryVisibility'
 import SettingsDialog from '@/components/SettingsDialog.vue'
 import { useRealtime } from '@/composables/useRealtime'
 import { useFilePreview } from '@/composables/useFilePreview'
@@ -199,9 +200,7 @@ function cancelThumbnailJob(id: string) {
 const filteredEntries = computed(() => {
   const q = search.value.trim().toLocaleLowerCase()
   return entries.value.filter(entry => {
-    if (!showHidden.value && entry.name.startsWith('.')) return false
-    if (userPreferences.value.hide_inaccessible
-      && (entry.is_dir ? entry.can_navigate === false : entry.can_read === false)) return false
+    if (!isEntryVisible(entry, { showHidden: showHidden.value, hideInaccessible: userPreferences.value.hide_inaccessible })) return false
     return !q || entry.name.toLocaleLowerCase().includes(q)
   })
 })
@@ -1309,7 +1308,15 @@ function operationLabel(value: string) {
     <FilePreview :visible="previewVisible" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="entries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
     <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTarget?.name ?? ''" :destination="extractDestination" :busy="extractBusy" @extract="prepareExtraction" />
     <ArchivePasswordDialog v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="extractBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @cancel="cancelPasswordPrompt" />
-    <DestinationDialog v-model:visible="destinationVisible" :mode="transferMode" :count="transferEntries.length" :initial-path="currentPath" @submit="submitTransfer" />
+    <DestinationDialog
+      v-model:visible="destinationVisible"
+      :mode="transferMode"
+      :count="transferEntries.length"
+      :initial-path="currentPath"
+      :show-hidden="showHidden"
+      :hide-inaccessible="userPreferences.hide_inaccessible"
+      @submit="submitTransfer"
+    />
     <OperationsPanel v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @cancel="cancelOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" />
   </section>
 </template>
