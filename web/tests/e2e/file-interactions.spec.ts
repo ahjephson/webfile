@@ -2350,11 +2350,14 @@ test('Extract here starts a single-pass task in the archive directory', async ({
 test('Extract defaults to an archive-named folder and prompts when the task requests a password', async ({ page }) => {
   let operationRequest: Record<string, unknown> | null = null
   let submittedPassword: Record<string, unknown> | null = null
+  let releasePasswordRequest = () => {}
+  const passwordRequestHold = new Promise<void>(resolve => { releasePasswordRequest = resolve })
   await page.route('**/api/fs/dir**', route => route.fulfill({
     json: { path: '/folder', entries: [{ name: 'secure.tar.gz', path: '/folder/secure.tar.gz', is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }] },
   }))
   await page.route('**/api/fs/operations/extract-2/password', async route => {
     submittedPassword = route.request().postDataJSON() as Record<string, unknown>
+    await passwordRequestHold
     await route.fulfill({ status: 202, json: { ok: true } })
   })
   await page.route('**/api/fs/operations', async route => {
@@ -2379,9 +2382,11 @@ test('Extract defaults to an archive-named folder and prompts when the task requ
   await expect(passwordDialog).toBeVisible()
   await passwordDialog.getByLabel('Password').fill('secret')
   await passwordDialog.getByRole('button', { name: 'Continue' }).click()
+  await expect(passwordDialog).toBeHidden()
 
   await expect.poll(() => operationRequest).not.toBeNull()
   expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/secure.tar.gz'], destination: '/target' })
   await expect.poll(() => submittedPassword).not.toBeNull()
   expect(submittedPassword).toEqual({ password: 'secret' })
+  releasePasswordRequest()
 })

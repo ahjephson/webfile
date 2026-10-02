@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"webfile/internal/archive"
 	"webfile/internal/filesystem"
 	"webfile/internal/operations"
 )
@@ -173,5 +174,95 @@ func TestDeleteOperationPermanentlyRemovesEntry(t *testing.T) {
 	}
 	if _, err := os.Stat(deleted); !os.IsNotExist(err) {
 		t.Fatalf("deleted entry still exists: %v", err)
+	}
+}
+
+func TestAcceptedArchivePasswordMovesTaskOutOfAwaitingInputWithoutToolProgress(t *testing.T) {
+	target, root := testDownloadServer(t)
+	target.ops = operations.New(10)
+	target.passwords = newPasswordBroker()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := target.ops.Close(ctx); err != nil {
+			t.Errorf("close operations manager: %v", err)
+		}
+	})
+
+	archivePath := filepath.Join(root, "secure.7z")
+	if err := os.WriteFile(archivePath, []byte("archive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := filepath.Join(root, "archive-tool.sh")
+	if err := os.WriteFile(tool, []byte(`#!/bin/sh
+set -eu
+if [ "${1:-}" = inspect ]; then
+  printf 'Encrypted = +\n'
+  exit 0
+fi
+printf 'Enter password (will not be echoed):' >&2
+IFS= read -r password
+sleep 30
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target.extractor = archive.New(archive.Config{
+		Executable:         tool,
+		ExtractArgs:        []string{"extract", "{archive}", "-o{destination}"},
+		InspectArgs:        []string{"inspect", "{archive}"},
+		InspectPasswordArg: "-p",
+	}, target.files.Resolver())
+
+	request := httptest.NewRequest(http.MethodPost, "/api/fs/operations", bytes.NewBufferString(`{"kind":"extract","sources":["/Files/secure.7z"],"destination":"/Files"}`))
+	response := httptest.NewRecorder()
+	target.startOperation(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("got status %d: %s", response.Code, response.Body.String())
+	}
+	var started operations.Operation
+	if err := json.NewDecoder(response.Body).Decode(&started); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		operation := target.ops.List()[0]
+		if operation.State == operations.StateAwaitingInput && operation.Phase == "awaiting_password" {
+			break
+		}
+		if operation.State == operations.StateFailed {
+			t.Fatalf("extract failed before password submission: %s", operation.Error)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("extract did not request a password: %#v", operation)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	passwordRequest := httptest.NewRequest(http.MethodPost, "/api/fs/operations/"+started.ID+"/password", bytes.NewBufferString(`{"password":"secret"}`))
+	passwordRequest.SetPathValue("id", started.ID)
+	passwordResponse := httptest.NewRecorder()
+	target.submitOperationPassword(passwordResponse, passwordRequest)
+	if passwordResponse.Code != http.StatusAccepted {
+		t.Fatalf("got password status %d: %s", passwordResponse.Code, passwordResponse.Body.String())
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		operation := target.ops.List()[0]
+		if operation.State == operations.StateRunning && operation.Phase == "checking_password" {
+			break
+		}
+		if operation.State == operations.StateFailed {
+			t.Fatalf("extract failed after password submission: %s", operation.Error)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("extract remained waiting after password submission: %#v", operation)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if !target.ops.Cancel(started.ID) {
+		t.Fatal("could not cancel password test operation")
 	}
 }

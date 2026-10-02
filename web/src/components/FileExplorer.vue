@@ -118,6 +118,8 @@ const extractPasswordVisible = ref(false)
 const extractPasswordOperationId = ref('')
 const extractPasswordError = ref('')
 const extractDestination = ref('')
+const extractPasswordDialogClosed = ref(true)
+const pendingPasswordTerminal = ref<FileOperation | null>(null)
 const extractBusy = ref(false)
 const destinationVisible = ref(false)
 const transferMode = ref<TransferMode>('copy')
@@ -504,13 +506,29 @@ function navigateBreadcrumb(path: string) {
   if (!goToPathInHistory(path)) navigateTo(path)
 }
 
-function onOperationTerminal(operation: FileOperation) {
+function showOperationTerminalToast(operation: FileOperation) {
   if (operation.state === 'completed') {
     toast.add({ severity: 'success', summary: `${operationLabel(operation.kind)} complete`, detail: operation.message || undefined, life: 2500 })
   } else if (operation.state === 'failed') {
     toast.add({ severity: 'error', summary: `${operationLabel(operation.kind)} failed`, detail: operation.error, life: 6000 })
   }
+}
+
+function onOperationTerminal(operation: FileOperation) {
+  if (operation.id === extractPasswordOperationId.value && !extractPasswordDialogClosed.value) {
+    pendingPasswordTerminal.value = operation
+  } else {
+    showOperationTerminalToast(operation)
+  }
   void refresh(false)
+}
+
+async function onArchivePasswordAfterHide() {
+  await nextTick()
+  extractPasswordDialogClosed.value = true
+  if (!pendingPasswordTerminal.value) return
+  showOperationTerminalToast(pendingPasswordTerminal.value)
+  pendingPasswordTerminal.value = null
 }
 
 function canOpenEntry(entry: FileEntry) {
@@ -824,11 +842,17 @@ async function prepareExtraction(destination: string) {
 }
 
 async function submitExtractionPassword(password: string) {
-  if (!extractPasswordOperationId.value) return
+  const operationId = extractPasswordOperationId.value
+  if (!operationId) return
+  extractPasswordVisible.value = false
+  extractPasswordError.value = ''
   extractBusy.value = true
   try {
-    await api.submitOperationPassword(extractPasswordOperationId.value, password)
+    await api.submitOperationPassword(operationId, password)
   } catch (err) {
+    if (extractPasswordOperationId.value === operationId) {
+      extractPasswordVisible.value = true
+    }
     showError(err, 'Could not submit archive password')
   } finally {
     extractBusy.value = false
@@ -851,6 +875,8 @@ function restorePasswordPrompt() {
 }
 
 function showPasswordPrompt(operation: FileOperation) {
+  extractPasswordDialogClosed.value = false
+  pendingPasswordTerminal.value = null
   extractPasswordOperationId.value = operation.id
   extractPasswordError.value = operation.message?.startsWith('Incorrect') ? operation.message : ''
   extractTarget.value = {
@@ -1307,7 +1333,7 @@ function operationLabel(value: string) {
     <EditorDialog v-if="editorVisible" :visible="editorVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" :preferences="userPreferences" @update:visible="setEditorVisible" @saved="onEditorSaved" />
     <FilePreview :visible="previewVisible" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="entries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
     <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTarget?.name ?? ''" :destination="extractDestination" :busy="extractBusy" @extract="prepareExtraction" />
-    <ArchivePasswordDialog v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="extractBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @cancel="cancelPasswordPrompt" />
+    <ArchivePasswordDialog v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="extractBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @cancel="cancelPasswordPrompt" @after-hide="onArchivePasswordAfterHide" />
     <DestinationDialog
       v-model:visible="destinationVisible"
       :mode="transferMode"

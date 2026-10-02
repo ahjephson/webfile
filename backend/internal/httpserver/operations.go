@@ -94,9 +94,14 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 				if incorrect {
 					message = "Incorrect password — try again"
 				}
-				return s.passwords.Wait(waitCtx, reporter.ID(), func() {
+				value, err := s.passwords.Wait(waitCtx, reporter.ID(), func() {
 					reporter.SetState(operations.StateAwaitingInput, "awaiting_password", message)
 				})
+				if err != nil {
+					return "", err
+				}
+				reporter.SetState(operations.StateRunning, "checking_password", "Checking password")
+				return value, nil
 			}
 			count, err := s.extractor.ExtractInteractive(ctx, source, req.Destination, passwordProvider, func(progress archive.Progress) {
 				if progress.Phase == "extracting" {

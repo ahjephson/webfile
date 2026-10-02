@@ -14,6 +14,7 @@ const emit = defineEmits<{
   'update:visible': [value: boolean]
   submit: [password: string]
   cancel: []
+  'after-hide': []
 }>()
 const password = ref('')
 const passwordInput = ref<any>(null)
@@ -25,7 +26,7 @@ watch(() => props.visible, visible => {
 })
 
 function submit() {
-  if (password.value) emit('submit', password.value)
+  if (password.value && !props.busy) emit('submit', password.value)
 }
 
 function updateVisible(value: boolean) {
@@ -38,7 +39,14 @@ function updateVisible(value: boolean) {
 </script>
 
 <template>
-  <Dialog :visible="visible" modal :header="`Password required — ${archiveName}`" :style="{ width: 'min(30rem, 92vw)' }" @update:visible="updateVisible">
+  <Dialog
+    :visible="visible"
+    modal
+    :header="`Password required — ${archiveName}`"
+    :style="{ width: 'min(30rem, 92vw)' }"
+    @update:visible="updateVisible"
+    @after-hide="emit('after-hide')"
+  >
     <form class="space-y-4" @submit.prevent="submit">
       <p class="text-sm text-zinc-300">This archive is encrypted. Enter its password to continue extraction.</p>
       <p v-if="error" class="text-sm text-red-300" role="alert">{{ error }}</p>
@@ -48,7 +56,7 @@ function updateVisible(value: boolean) {
       </div>
       <div class="flex justify-end gap-2">
         <Button label="Cancel" severity="secondary" text :disabled="busy" @click="emit('cancel')" />
-        <Button label="Continue" type="submit" :loading="busy" :disabled="!password" />
+        <Button label="Continue" type="submit" :loading="busy" :disabled="busy || !password" />
       </div>
     </form>
   </Dialog>
