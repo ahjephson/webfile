@@ -76,7 +76,7 @@ export type OperationState = 'queued' | 'preparing' | 'awaiting_input' | 'runnin
 
 export interface FileOperation {
   id: string
-  kind: 'copy' | 'move' | 'trash' | 'extract' | 'upload' | string
+  kind: 'copy' | 'move' | 'delete' | 'extract' | 'upload' | string
   sources?: string[]
   destination?: string
   state: OperationState
@@ -112,13 +112,4 @@ export interface VideoThumbnailJob {
   started_at?: string
   updated_at: string
   finished_at?: string
-}
-
-export interface TrashItem {
-  id: string
-  name: string
-  original_path: string
-  deleted_at: string
-  is_dir: boolean
-  size: number
 }

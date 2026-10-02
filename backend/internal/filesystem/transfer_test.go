@@ -112,7 +112,7 @@ func TestCopyMoveCopiesDirectoryTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewServiceWithTrash(resolver, 1<<20, filepath.Join(t.TempDir(), "trash"))
+	svc := NewService(resolver, 1<<20)
 
 	if err := os.MkdirAll(filepath.Join(root, "src", "sub"), 0o755); err != nil {
 		t.Fatal(err)
@@ -182,57 +182,5 @@ func TestCopyMoveRefusesExistingDestination(t *testing.T) {
 	err := svc.CopyMove(context.Background(), "copy", []string{"/Files/same.txt"}, "/Files/dest", nil)
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("got %v, want conflict", err)
-	}
-}
-
-func TestTrashRestoreAndPurge(t *testing.T) {
-	root := t.TempDir()
-	resolver, err := NewResolver([]Root{{Name: "Files", Path: root}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	trashDir := filepath.Join(t.TempDir(), "trash")
-	svc := NewServiceWithTrash(resolver, 1<<20, trashDir)
-
-	original := filepath.Join(root, "notes.txt")
-	if err := os.WriteFile(original, []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Trash(context.Background(), []string{"/Files/notes.txt"}, nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(original); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("source still exists: %v", err)
-	}
-
-	items, err := svc.ListTrash(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 1 || items[0].OriginalPath != "/Files/notes.txt" {
-		t.Fatalf("unexpected trash: %#v", items)
-	}
-
-	if err := svc.RestoreTrash(context.Background(), items[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(original)
-	if err != nil || string(data) != "hello" {
-		t.Fatalf("restore failed: %v %q", err, data)
-	}
-
-	if err := svc.Trash(context.Background(), []string{"/Files/notes.txt"}, nil); err != nil {
-		t.Fatal(err)
-	}
-	items, err = svc.ListTrash(context.Background())
-	if err != nil || len(items) != 1 {
-		t.Fatalf("trash list: %v %#v", err, items)
-	}
-	if err := svc.PurgeTrash(context.Background(), items[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	items, err = svc.ListTrash(context.Background())
-	if err != nil || len(items) != 0 {
-		t.Fatalf("purge failed: %v %#v", err, items)
 	}
 }

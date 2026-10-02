@@ -39,7 +39,7 @@ follow that user across browsers and sessions. They do not include per-tab
 
 - Default sort field and direction.
 - Show folders first.
-- Confirm before sending items to the Recycle Bin.
+- Confirm before permanently deleting items.
 - Automatically open the Tasks panel when a background operation starts.
 - Optional persistent start location, distinct from restoring a tab's last folder.
 

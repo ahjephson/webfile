@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"path"
 	"strings"
@@ -54,22 +53,28 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 		})
 		writeJSON(w, http.StatusAccepted, op)
 
-	case "trash":
+	case "delete":
 		if len(req.Sources) == 0 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sources are required"})
 			return
 		}
 		op := s.ops.StartTask(req.Kind, req.Sources, "", operations.TaskOptions{
 			Cancellable:   true,
-			CleanupPolicy: "The incomplete item is restored. Items already placed in the Recycle Bin are retained.",
+			CleanupPolicy: "Deleted items cannot be recovered. Cancellation keeps items not yet deleted.",
 		}, func(ctx context.Context, reporter operations.Reporter) error {
-			return s.files.Trash(ctx, req.Sources, func(p filesystem.TransferProgress) {
-				phase := p.Phase
-				if phase == "" {
-					phase = "moving_to_recycle_bin"
+			total := int64(len(req.Sources))
+			for index, source := range req.Sources {
+				if err := ctx.Err(); err != nil {
+					return err
 				}
-				reporter.UpdatePhase(phase, p.BytesDone, p.BytesTotal, p.ItemsDone, p.ItemsTotal, p.Message)
-			})
+				message := "Deleting " + path.Base(filesystem.CleanVirtual(source))
+				reporter.UpdatePhase("deleting", 0, 0, int64(index), total, message)
+				if err := s.files.Delete(ctx, source); err != nil {
+					return err
+				}
+				reporter.UpdatePhase("deleting", 0, 0, int64(index+1), total, message)
+			}
+			return nil
 		})
 		writeJSON(w, http.StatusAccepted, op)
 
@@ -122,7 +127,7 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, op)
 
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind must be copy, move, trash or extract"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind must be copy, move, delete or extract"})
 	}
 }
 
@@ -187,47 +192,4 @@ func (s *Server) removeOperationHistory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"removed": true})
-}
-
-func (s *Server) listTrash(w http.ResponseWriter, r *http.Request) {
-	items, err := s.files.ListTrash(r.Context())
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-func (s *Server) restoreTrash(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID string `json:"id"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if err := s.files.RestoreTrash(r.Context(), req.ID); err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-func (s *Server) purgeTrash(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID string `json:"id"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if err := s.files.PurgeTrash(r.Context(), req.ID); err != nil {
-		if errors.Is(err, context.Canceled) {
-			writeJSON(w, http.StatusRequestTimeout, map[string]string{"error": err.Error()})
-			return
-		}
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

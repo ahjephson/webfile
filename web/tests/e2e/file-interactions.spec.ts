@@ -465,7 +465,69 @@ test('settings persist appearance, editor defaults, and copy chunk size', async 
   await expect(editor.getByText('18px · Wrap · Minimap', { exact: false })).toBeVisible()
 })
 
+test('delete is permanent and no recycle bin is exposed', async ({ page }) => {
+  let submitted: Record<string, unknown> | undefined
+  await page.route('**/api/fs/dir**', route => route.fulfill({
+    json: {
+      path: '/folder',
+      entries: [{
+        name: 'delete-me.txt',
+        path: '/folder/delete-me.txt',
+        is_dir: false,
+        size: 20,
+        modified: '2000-01-01T00:00:00Z',
+        mode: '-rw-r--r--',
+      }],
+    },
+  }))
+  await page.route('**/api/fs/operations', async route => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: { operations: [] } })
+      return
+    }
+    submitted = route.request().postDataJSON() as Record<string, unknown>
+    await route.fulfill({
+      status: 202,
+      json: {
+        id: 'delete-1',
+        kind: 'delete',
+        sources: ['/folder/delete-me.txt'],
+        state: 'queued',
+        phase: 'queued',
+        message: 'Queued',
+        progress_done: 0,
+        progress_total: 1,
+        progress_unit: 'items',
+        bytes_done: 0,
+        bytes_total: 0,
+        items_done: 0,
+        items_total: 1,
+        cancellable: true,
+        cleanup_policy: 'Deleted items cannot be recovered. Cancellation keeps items not yet deleted.',
+        started_at: '2000-01-01T00:00:00Z',
+        updated_at: '2000-01-01T00:00:00Z',
+      },
+    })
+  })
+
+  await page.goto('/#path=%2Ffolder')
+  await expect(page.getByRole('button', { name: 'Open Recycle Bin' })).toHaveCount(0)
+  await showSelectionControls(page)
+  await selectionButtons(page).first().click()
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+
+  const confirmation = page.getByRole('alertdialog', { name: 'Delete' })
+  await expect(confirmation).toContainText('Permanently delete “delete-me.txt”? This cannot be undone.')
+  await confirmation.getByRole('button', { name: 'Delete permanently' }).click()
+
+  await expect.poll(() => submitted).toEqual({
+    kind: 'delete',
+    sources: ['/folder/delete-me.txt'],
+  })
+})
+
 test('folder navigation updates the hash and browser back restores the previous folder', async ({ page }) => {
+
   await page.route('**/api/fs/dir**', async route => {
     const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
     const child = path === '/' ? '/one' : path === '/one' ? '/one/two' : ''

@@ -6,7 +6,6 @@ import type {
   FileEntry,
   FileOperation,
   Preferences,
-  TrashItem,
   UploadSession,
   VideoThumbnailJob,
 } from '@/types/files'
@@ -208,7 +207,7 @@ export const api = {
     return operation
   },
 
-  startOperation(kind: 'copy' | 'move' | 'trash' | 'extract', sources: string[], destination?: string, copyChunkMiB?: number) {
+  startOperation(kind: 'copy' | 'move' | 'delete' | 'extract', sources: string[], destination?: string, copyChunkMiB?: number) {
     return request<FileOperation>('/api/fs/operations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -250,27 +249,6 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password }),
-    })
-  },
-
-  async trash(): Promise<{ items: TrashItem[] }> {
-    const response = await request<{ items?: TrashItem[] | null }>('/api/fs/trash')
-    return { items: arrayOrEmpty(response.items) }
-  },
-
-  restoreTrash(id: string) {
-    return request<{ ok: boolean }>('/api/fs/trash/restore', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
-    })
-  },
-
-  purgeTrash(id: string) {
-    return request<{ ok: boolean }>('/api/fs/trash/purge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
     })
   },
 

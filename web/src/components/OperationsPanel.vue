@@ -41,8 +41,8 @@ function active(operation: FileOperation) {
 
 function label(operation: FileOperation) {
   const noun = operation.sources?.length === 1 ? operation.sources[0].split('/').pop() : `${operation.sources?.length ?? 0} items`
-  const kind = operation.kind === 'trash' ? 'Delete' : `${operation.kind[0]?.toUpperCase() ?? ''}${operation.kind.slice(1)}`
-  return `${kind} ${noun ?? ''}`.trim()
+  const operationKind = `${operation.kind[0]?.toUpperCase() ?? ''}${operation.kind.slice(1)}`
+  return `${operationKind} ${noun ?? ''}`.trim()
 }
 
 function stateLabel(operation: FileOperation) {

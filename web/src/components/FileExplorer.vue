@@ -9,7 +9,7 @@ import SplitButton from 'primevue/splitbutton'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '@/api/client'
-import type { Favourite, FileEntry, FileOperation, TrashItem, VideoThumbnailJob } from '@/types/files'
+import type { Favourite, FileEntry, FileOperation, VideoThumbnailJob } from '@/types/files'
 import { resolvedTheme, setTheme, themeMode, type ThemeMode } from '@/theme'
 import { defaultPreferences, normalizePreferences, type UserPreferences } from '@/preferences'
 import SettingsDialog from '@/components/SettingsDialog.vue'
@@ -119,9 +119,6 @@ const thumbnailJobs = ref<VideoThumbnailJob[]>([])
 const detailsVisible = ref(restoredExplorerState.detailsVisible)
 const detailsPath = ref(restoredStateMatchesPath ? restoredExplorerState.detailsPath : currentPath.value)
 const favouritesVisible = ref(false)
-const trashMode = ref(false)
-const recycleReturnPath = ref('/')
-const trashItems = ref<TrashItem[]>([])
 const transferEntries = ref<FileEntry[]>([])
 const renameTarget = ref<FileEntry | null>(null)
 const extractTarget = ref<FileEntry | null>(null)
@@ -149,7 +146,6 @@ const {
   cancelOperation: cancelRealtimeOperation,
 } = useRealtime({
   onInvalidate: path => {
-    if (trashMode.value) return
     if (path !== currentPath.value) return
     if (invalidateTimer !== null) window.clearTimeout(invalidateTimer)
     invalidateTimer = window.setTimeout(() => void refresh(false), 120)
@@ -191,30 +187,19 @@ function cancelThumbnailJob(id: string) {
   void api.cancelThumbnailJob(id).catch(err => showError(err, 'Could not cancel thumbnail'))
 }
 
-const trashEntries = computed<FileEntry[]>(() => trashItems.value.map(item => ({
-  name: item.name,
-  path: `recycle:${item.id}`,
-  is_dir: item.is_dir,
-  size: item.size,
-  modified: item.deleted_at,
-  mode: '',
-})))
-
 const filteredEntries = computed(() => {
   const q = search.value.trim().toLocaleLowerCase()
-  const source = trashMode.value ? trashEntries.value : entries.value
-  return source.filter(entry => {
-    if (!trashMode.value && !showHidden.value && entry.name.startsWith('.')) return false
+  return entries.value.filter(entry => {
+    if (!showHidden.value && entry.name.startsWith('.')) return false
     return !q || entry.name.toLocaleLowerCase().includes(q)
   })
 })
 
-const selectedEntries = computed(() => (trashMode.value ? trashEntries.value : entries.value).filter(entry => selectedPaths.value.has(entry.path)))
+const selectedEntries = computed(() => entries.value.filter(entry => selectedPaths.value.has(entry.path)))
 const selectedOne = computed(() => selectedEntries.value.length === 1 ? selectedEntries.value[0] : null)
-const canMutate = computed(() => !trashMode.value && currentPath.value !== '/')
-const selectionContainsConfiguredRoot = computed(() => !trashMode.value && currentPath.value === '/' && selectedEntries.value.length > 0)
+const canMutate = computed(() => currentPath.value !== '/')
+const selectionContainsConfiguredRoot = computed(() => currentPath.value === '/' && selectedEntries.value.length > 0)
 const currentFavourite = computed(() => favourites.value.some(item => item.path === currentPath.value))
-const displayedParentPath = computed(() => trashMode.value ? '' : parentPath.value)
 
 const themeItems = computed(() => (['system', 'dark', 'light'] as ThemeMode[]).map(mode => ({
   mode,
@@ -226,12 +211,6 @@ const contextItems = computed(() => {
   const clicked = contextEntry.value
   const items = clicked && !selectedPaths.value.has(clicked.path) ? [clicked] : selectedEntries.value
   if (items.length === 0) return []
-  if (trashMode.value) {
-    return [
-      { label: `Restore${items.length > 1 ? ` ${items.length} items` : ''}`, icon: 'pi pi-replay', command: () => restoreTrash(items) },
-      { label: 'Delete permanently', icon: 'pi pi-times', command: () => purgeTrash(items) },
-    ]
-  }
   const one = items.length === 1 ? items[0] : null
   const containsConfiguredRoot = currentPath.value === '/' && items.length > 0
   const result: Array<{ label?: string; icon?: string; command?: () => void; separator?: boolean; disabled?: boolean }> = []
@@ -259,7 +238,6 @@ const contextItems = computed(() => {
 })
 
 const breadcrumbs = computed(() => {
-  if (trashMode.value) return [{ name: 'Files', path: '/' }, { name: 'Recycle Bin', path: 'recycle:' }]
   if (currentPath.value === '/') return [{ name: 'Files', path: '/' }]
   const parts = currentPath.value.split('/').filter(Boolean)
   const crumbs = [{ name: 'Files', path: '/' }]
@@ -306,7 +284,7 @@ watch(currentPath, path => {
   void refresh(true)
 }, { flush: 'post' })
 
-watch([currentPath, trashMode], () => { void scrollBreadcrumbToEnd() }, { flush: 'post' })
+watch(currentPath, () => { void scrollBreadcrumbToEnd() }, { flush: 'post' })
 
 watch([viewMode, gridSize], () => {
   if (preferencesLoaded) void savePreferences()
@@ -422,7 +400,6 @@ async function applyHashLocation() {
   const request = ++hashFileRequest
   const path = readHashPath()
   if (path && path !== currentPath.value) {
-    trashMode.value = false
     currentPath.value = path
   }
   const file = readHashFile()
@@ -450,7 +427,7 @@ async function refresh(showSpinner: boolean): Promise<boolean> {
   error.value = ''
   try {
     const result = await api.list(requestedPath)
-    if (requestedPath !== currentPath.value || trashMode.value) return false
+    if (requestedPath !== currentPath.value) return false
     entries.value = result.entries
     const existing = new Set(result.entries.map(entry => entry.path))
     selectedPaths.value = new Set([...selectedPaths.value].filter(path => existing.has(path)))
@@ -459,54 +436,14 @@ async function refresh(showSpinner: boolean): Promise<boolean> {
     storeSessionPath(requestedPath)
     return true
   } catch (err) {
-    if (requestedPath === currentPath.value && !trashMode.value) error.value = messageOf(err)
+    if (requestedPath === currentPath.value) error.value = messageOf(err)
     return false
   } finally {
     if (showSpinner) loading.value = false
   }
 }
 
-async function loadTrash(showSpinner: boolean) {
-  if (showSpinner) loading.value = true
-  error.value = ''
-  try {
-    trashItems.value = (await api.trash()).items
-    const existing = new Set(trashEntries.value.map(entry => entry.path))
-    selectedPaths.value = new Set([...selectedPaths.value].filter(path => existing.has(path)))
-  } catch (err) {
-    error.value = messageOf(err)
-  } finally {
-    if (showSpinner) loading.value = false
-  }
-}
-
-function refreshCurrent(showSpinner: boolean) {
-  return trashMode.value ? loadTrash(showSpinner) : refresh(showSpinner)
-}
-
-async function toggleRecycleBin() {
-  if (trashMode.value) {
-    trashMode.value = false
-    search.value = ''
-    filterVisible.value = false
-    clearSelection()
-    clearFocus(recycleReturnPath.value)
-    if (currentPath.value === recycleReturnPath.value) await refresh(true)
-    else navigateTo(recycleReturnPath.value)
-    return
-  }
-  recycleReturnPath.value = currentPath.value
-  trashMode.value = true
-  search.value = ''
-  filterVisible.value = false
-  detailsVisible.value = false
-  clearSelection()
-  clearFocus(currentPath.value)
-  await loadTrash(true)
-}
-
 function navigateTo(path: string, replaceHistory = false) {
-  trashMode.value = false
   if (path === currentPath.value) return
   currentPath.value = path
   writePathHash(path, replaceHistory)
@@ -514,16 +451,14 @@ function navigateTo(path: string, replaceHistory = false) {
 
 function onOperationTerminal(operation: FileOperation) {
   if (operation.state === 'completed') {
-    if (operation.kind === 'trash' && trashMode.value) void loadTrash(false)
     toast.add({ severity: 'success', summary: `${operationLabel(operation.kind)} complete`, detail: operation.message || undefined, life: 2500 })
   } else if (operation.state === 'failed') {
     toast.add({ severity: 'error', summary: `${operationLabel(operation.kind)} failed`, detail: operation.error, life: 6000 })
   }
-  if (!trashMode.value) void refresh(false)
+  void refresh(false)
 }
 
 async function openEntry(entry: FileEntry) {
-  if (trashMode.value) return
   if (entry.is_dir) {
     navigateTo(entry.path)
     return
@@ -733,63 +668,22 @@ function deleteEntries(items: FileEntry[] = selectedEntries.value) {
   const description = items.length === 1 ? `“${items[0].name}”` : `${items.length} items`
   confirm.require({
     header: 'Delete',
-    message: `Move ${description} to the Recycle Bin?`,
-    icon: 'pi pi-trash',
-    rejectLabel: 'Cancel',
-    acceptLabel: 'Delete',
-    acceptProps: { severity: 'danger' },
-    accept: async () => {
-      await beginOperation('trash', items.map(item => item.path))
-      clearSelection()
-    },
-  })
-}
-
-async function restoreSelectedTrash() {
-  await restoreTrash(selectedEntries.value)
-}
-
-async function restoreTrash(items: FileEntry[]) {
-  const ids = items.map(entry => entry.path.replace(/^recycle:/, ''))
-  try {
-    for (const id of ids) await api.restoreTrash(id)
-    clearSelection()
-    await Promise.all([loadTrash(false), refresh(false)])
-    toast.add({ severity: 'success', summary: ids.length === 1 ? 'Item restored' : `${ids.length} items restored`, life: 2500 })
-  } catch (err) {
-    showError(err, 'Could not restore item')
-  }
-}
-
-function purgeSelectedTrash() {
-  purgeTrash(selectedEntries.value)
-}
-
-function purgeTrash(items: FileEntry[]) {
-  if (!items.length) return
-  const description = items.length === 1 ? `“${items[0].name}”` : `${items.length} items`
-  confirm.require({
-    header: 'Delete permanently',
     message: `Permanently delete ${description}? This cannot be undone.`,
     icon: 'pi pi-exclamation-triangle',
     rejectLabel: 'Cancel',
     acceptLabel: 'Delete permanently',
     acceptProps: { severity: 'danger' },
     accept: async () => {
-      try {
-        for (const item of items) await api.purgeTrash(item.path.replace(/^recycle:/, ''))
-        clearSelection()
-        await loadTrash(false)
-      } catch (err) {
-        showError(err, 'Could not permanently delete item')
-      }
+      await beginOperation('delete', items.map(item => item.path))
+      clearSelection()
     },
   })
 }
 
-async function beginOperation(kind: 'copy' | 'move' | 'trash' | 'extract', sources: string[], destination?: string) {
+async function beginOperation(kind: 'copy' | 'move' | 'delete' | 'extract', sources: string[], destination?: string) {
   try {
-    await startFileOperation(kind, sources, destination, userPreferences.value.copy_chunk_mib)
+    const copyChunkMiB = kind === 'copy' || kind === 'move' ? userPreferences.value.copy_chunk_mib : undefined
+    await startFileOperation(kind, sources, destination, copyChunkMiB)
     operationsVisible.value = true
   } catch (err) {
     showError(err, `Could not start ${kind}`)
@@ -981,10 +875,6 @@ function onBackgroundDrop(event: DragEvent) {
 }
 
 function goUp() {
-  if (trashMode.value) {
-    navigateTo('/')
-    return
-  }
   if (parentPath.value) navigateTo(parentPath.value)
 }
 
@@ -1061,13 +951,11 @@ function onKeyDown(event: KeyboardEvent) {
   if (event.key === 'Delete' || event.key === 'Backspace' && event.metaKey) {
     if (selectedEntries.value.length) {
       event.preventDefault()
-      if (trashMode.value) purgeSelectedTrash()
-      else deleteEntries()
+      deleteEntries()
     }
     return
   }
   if (event.key === 'F2') {
-    if (trashMode.value) return
     event.preventDefault()
     openRename()
     return
@@ -1152,7 +1040,7 @@ function capitalize(value: string) {
 }
 
 function operationLabel(value: string) {
-  return value === 'trash' ? 'Delete' : capitalize(value)
+  return capitalize(value)
 }
 </script>
 
@@ -1168,24 +1056,15 @@ function operationLabel(value: string) {
         <span class="mx-1 h-6 w-px bg-zinc-700" />
         <div class="flex items-center gap-1">
           <Button v-tooltip.bottom="favouritesVisible ? 'Close favourites' : 'Open favourites'" icon="pi pi-star" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': favouritesVisible }" :aria-label="favouritesVisible ? 'Close favourites' : 'Open favourites'" :aria-pressed="favouritesVisible" @click="favouritesVisible = !favouritesVisible" />
-          <Button v-tooltip.bottom="trashMode ? 'Close Recycle Bin' : 'Open Recycle Bin'" icon="pi pi-trash" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': trashMode }" :aria-label="trashMode ? 'Close Recycle Bin' : 'Open Recycle Bin'" :aria-pressed="trashMode" @click="toggleRecycleBin" />
         </div>
 
-        <template v-if="selectedEntries.length || !trashMode || detailsVisible">
-          <span class="mx-1 h-6 w-px bg-zinc-700" />
-          <div class="flex items-center gap-1">
-            <template v-if="trashMode && selectedEntries.length">
-              <Button v-tooltip.bottom="'Restore'" icon="pi pi-replay" size="small" severity="secondary" text aria-label="Restore" @click="restoreSelectedTrash" />
-              <Button v-tooltip.bottom="'Delete permanently'" icon="pi pi-times" size="small" severity="danger" text aria-label="Delete permanently" @click="purgeSelectedTrash" />
-            </template>
-            <template v-else>
-              <Button v-if="selectedEntries.length && !selectionContainsConfiguredRoot" v-tooltip.bottom="'Copy'" icon="pi pi-copy" size="small" text aria-label="Copy" @click="openTransfer('copy')" />
-              <Button v-if="selectedEntries.length && !selectionContainsConfiguredRoot" v-tooltip.bottom="'Move'" icon="pi pi-arrow-right" size="small" text aria-label="Move" @click="openTransfer('move')" />
-              <Button v-if="selectedEntries.length && !selectionContainsConfiguredRoot" v-tooltip.bottom="'Delete'" icon="pi pi-trash" size="small" severity="danger" text aria-label="Delete" @click="deleteEntries()" />
-              <Button v-if="!trashMode" v-tooltip.bottom="detailsVisible ? 'Close details' : 'Open details'" icon="pi pi-info-circle" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': detailsVisible }" :aria-label="detailsVisible ? 'Close details' : 'Open details'" :aria-pressed="detailsVisible" @click="toggleDetailsPanel" />
-            </template>
-          </div>
-        </template>
+        <span class="mx-1 h-6 w-px bg-zinc-700" />
+        <div class="flex items-center gap-1">
+          <Button v-if="selectedEntries.length && !selectionContainsConfiguredRoot" v-tooltip.bottom="'Copy'" icon="pi pi-copy" size="small" text aria-label="Copy" @click="openTransfer('copy')" />
+          <Button v-if="selectedEntries.length && !selectionContainsConfiguredRoot" v-tooltip.bottom="'Move'" icon="pi pi-arrow-right" size="small" text aria-label="Move" @click="openTransfer('move')" />
+          <Button v-if="selectedEntries.length && !selectionContainsConfiguredRoot" v-tooltip.bottom="'Delete'" icon="pi pi-trash" size="small" severity="danger" text aria-label="Delete" @click="deleteEntries()" />
+          <Button v-tooltip.bottom="detailsVisible ? 'Close details' : 'Open details'" icon="pi pi-info-circle" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': detailsVisible }" :aria-label="detailsVisible ? 'Close details' : 'Open details'" :aria-pressed="detailsVisible" @click="toggleDetailsPanel" />
+        </div>
 
         <span class="min-w-2 flex-1" />
         <div class="flex items-center gap-1">
@@ -1219,7 +1098,7 @@ function operationLabel(value: string) {
         <div class="flex min-w-max items-center gap-1 text-sm">
           <template v-for="(crumb, index) in breadcrumbs" :key="crumb.path">
             <i v-if="index" class="pi pi-angle-right text-xs text-zinc-600" />
-            <button class="rounded px-2 py-1 text-zinc-300 hover:bg-zinc-800 hover:text-white" :aria-current="index === breadcrumbs.length - 1 ? 'page' : undefined" @click="crumb.path !== 'recycle:' && navigateTo(crumb.path)">
+            <button class="rounded px-2 py-1 text-zinc-300 hover:bg-zinc-800 hover:text-white" :aria-current="index === breadcrumbs.length - 1 ? 'page' : undefined" @click="navigateTo(crumb.path)">
               {{ crumb.name }}
             </button>
           </template>
@@ -1245,7 +1124,7 @@ function operationLabel(value: string) {
         />
       </div>
       <span class="h-6 w-px bg-zinc-800" />
-      <Button v-tooltip.bottom="'Refresh'" icon="pi pi-refresh" size="small" severity="secondary" text aria-label="Refresh" @click="refreshCurrent(true)" />
+      <Button v-tooltip.bottom="'Refresh'" icon="pi pi-refresh" size="small" severity="secondary" text aria-label="Refresh" @click="refresh(true)" />
       <span class="h-6 w-px bg-zinc-800" />
       <div v-if="filterVisible" class="w-64">
         <InputText ref="filterInput" v-model="search" size="small" fluid placeholder="Filter this folder" aria-label="Filter this folder" @keydown.escape="closeFilter" />
@@ -1268,7 +1147,7 @@ function operationLabel(value: string) {
             @click="viewMode = 'grid'"
           />
         </span>
-        <Button v-if="!trashMode" v-tooltip.bottom="showHidden ? 'Hide dot files' : 'Show dot files'" icon="pi pi-eye" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': showHidden }" :aria-label="showHidden ? 'Hide dot files' : 'Show dot files'" :aria-pressed="showHidden" @click="showHidden = !showHidden" />
+        <Button v-tooltip.bottom="showHidden ? 'Hide dot files' : 'Show dot files'" icon="pi pi-eye" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': showHidden }" :aria-label="showHidden ? 'Hide dot files' : 'Show dot files'" :aria-pressed="showHidden" @click="showHidden = !showHidden" />
       </div>
     </div>
 
@@ -1277,7 +1156,7 @@ function operationLabel(value: string) {
         <header class="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
           <h2 class="font-semibold">Favourites</h2>
           <div class="flex items-center gap-1">
-            <Button v-tooltip.bottom="currentFavourite ? 'Remove current folder' : 'Add current folder'" :icon="currentFavourite ? 'pi pi-star-fill' : 'pi pi-star'" severity="secondary" text rounded :disabled="currentPath === '/' || trashMode" :aria-label="currentFavourite ? 'Remove current folder' : 'Add current folder'" @click="toggleFavourite" />
+            <Button v-tooltip.bottom="currentFavourite ? 'Remove current folder' : 'Add current folder'" :icon="currentFavourite ? 'pi pi-star-fill' : 'pi pi-star'" severity="secondary" text rounded :disabled="currentPath === '/'" :aria-label="currentFavourite ? 'Remove current folder' : 'Add current folder'" @click="toggleFavourite" />
             <Button v-tooltip.bottom="'Close favourites'" icon="pi pi-times" severity="secondary" text rounded aria-label="Close favourites" @click="favouritesVisible = false" />
           </div>
         </header>
@@ -1324,7 +1203,7 @@ function operationLabel(value: string) {
             :selected-paths="[...selectedPaths]"
             :focused-path="focusedPath"
             :selection-controls-visible="selectionControlsVisible"
-            :parent-path="displayedParentPath"
+            :parent-path="parentPath"
             @select="handleSelect"
             @focus="handleFocus"
             @activate="openEntry"
@@ -1341,7 +1220,7 @@ function operationLabel(value: string) {
             :focused-path="focusedPath"
             :selection-controls-visible="selectionControlsVisible"
             :size="gridSize"
-            :parent-path="displayedParentPath"
+            :parent-path="parentPath"
             @select="handleSelect"
             @focus="handleFocus"
             @activate="openEntry"
@@ -1352,7 +1231,7 @@ function operationLabel(value: string) {
           />
         </div>
       </div>
-      <DetailsDialog v-if="!trashMode" v-model:visible="detailsVisible" :path="detailsPath" @error="showError($event, 'Could not load details')" @size-ready="applyCachedFolderSize" />
+      <DetailsDialog v-model:visible="detailsVisible" :path="detailsPath" @error="showError($event, 'Could not load details')" @size-ready="applyCachedFolderSize" />
     </div>
 
     <ContextMenu ref="contextMenu" :model="contextItems" :base-z-index="1100" @hide="onContextMenuHide" />

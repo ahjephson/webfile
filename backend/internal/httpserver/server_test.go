@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -10,8 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"webfile/internal/filesystem"
+	"webfile/internal/operations"
 )
 
 func testDownloadServer(t *testing.T) (*Server, string) {
@@ -63,5 +66,53 @@ func TestInlineDownloadRejectsActiveContent(t *testing.T) {
 
 	if response.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("got status %d", response.Code)
+	}
+}
+
+func TestDeleteOperationPermanentlyRemovesEntry(t *testing.T) {
+	target, root := testDownloadServer(t)
+	target.ops = operations.New(10)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := target.ops.Close(ctx); err != nil {
+			t.Errorf("close operations manager: %v", err)
+		}
+	})
+
+	deleted := filepath.Join(root, "delete-me")
+	if err := os.Mkdir(deleted, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deleted, "file.txt"), []byte("gone"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/fs/operations", bytes.NewBufferString(`{"kind":"delete","sources":["/Files/delete-me"]}`))
+	response := httptest.NewRecorder()
+	target.startOperation(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("got status %d: %s", response.Code, response.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		operation := target.ops.List()[0]
+		if operation.State == operations.StateCompleted {
+			if operation.Kind != "delete" || operation.ProgressDone != 1 || operation.ProgressTotal != 1 {
+				t.Fatalf("unexpected operation: %#v", operation)
+			}
+			break
+		}
+		if operation.State == operations.StateFailed {
+			t.Fatalf("delete failed: %s", operation.Error)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("delete did not complete: %#v", operation)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(deleted); !os.IsNotExist(err) {
+		t.Fatalf("deleted entry still exists: %v", err)
 	}
 }

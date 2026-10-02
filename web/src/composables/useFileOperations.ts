@@ -25,7 +25,7 @@ export function useFileOperations(onTerminal: (operation: FileOperation, previou
     }
   }
 
-  async function start(kind: 'copy' | 'move' | 'trash' | 'extract', sources: string[], destination?: string, copyChunkMiB?: number) {
+  async function start(kind: 'copy' | 'move' | 'delete' | 'extract', sources: string[], destination?: string, copyChunkMiB?: number) {
     const operation = await api.startOperation(kind, sources, destination, copyChunkMiB)
     update(operation)
     return operation

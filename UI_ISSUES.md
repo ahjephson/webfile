@@ -15,9 +15,8 @@ Per-user settings are tracked separately in `SETTINGS_DESIGN.md`.
   grid rapid-double-tap regression recorded above.
 - `go test ./...` and `go vet ./...` passed for the backend, including the folder
   watcher coverage.
-- In-app visual checks confirmed the Recycle Bin toggle state, lack of a parent
-  row, return to the previous folder, compact toggle styling, and Copy/Move
-  destination navigation by focus, double-click, and parent entry.
+- In-app visual checks confirmed compact toggle styling and Copy/Move destination
+  navigation by focus, double-click, and parent entry.
 - The same visual review found the light-theme selection-control issue resolved
   below. The remaining historical resolved sections are still consistent with
   the automated coverage, rendered UI, and implementation review.
@@ -27,13 +26,18 @@ Per-user settings are tracked separately in `SETTINGS_DESIGN.md`.
 - [x] Unchecked file-selection boxes are visibly unfilled in the light theme in
   both list and grid views, while selected boxes retain their blue fill.
 
+## Resolved 2026-10-02 — direct deletion
+
+- [x] Remove the Recycle Bin UI, HTTP endpoints, and storage implementation.
+- [x] Submit Delete as a durable background task that directly removes each item.
+- [x] State clearly in the confirmation that deletion is permanent and cannot be
+  undone.
+
 ## Resolved 2026-09-28 — consistency and toggle behaviour
 
 - [x] Context menus, dialogs, and tooltips use the same compact typography, spacing, and control density as the main interface.
-- [x] Recycle Bin has no `..` row and closes by toggling its toolbar button.
-- [x] Recycle Bin has a clear active/toggled toolbar state.
 - [x] Right-clicking a file or folder focuses that row and opens its context menu without changing checkbox multi-selection.
-- [x] Details is a true toggle with a visible active state, matching Favourites and Recycle Bin.
+- [x] Details is a true toggle with a visible active state, matching Favourites.
 - [x] The same toggle convention applies to toolbar actions that open closable persistent views or panels:
   - activating the action opens the view;
   - its toolbar button visibly indicates the active state;
@@ -59,13 +63,12 @@ Visual references: `codex-clipboard-42f25200-ad50-4af3-b4b6-0d1291c397e3.png` an
 - [x] Destination rows follow the main pane interaction: single click/tap focuses a folder, double-click/double-tap opens it, and Enter provides keyboard activation.
 - [x] Touch/pen interaction in the main file list supports ordinary taps; platform long-press behaviour is provided by the browser's standard `contextmenu` event.
 
-## Resolved 2026-09-28 — touch navigation and Recycle Bin return
+## Resolved 2026-09-28 — touch navigation
 
 - [x] Mouse right-click and platform-provided touch/pen context-menu events use the same context-menu action.
 - [x] Opening a context menu does not alter checkbox selection.
 - [x] PrimeVue dismisses an open context menu on its standard outside-click interaction.
 - [x] A touch/pen tap opens an item or parent folder directly; desktop single-click continues to focus and double-click continues to open.
-- [x] Toggling Recycle Bin off restores the folder that was visible before Recycle Bin was opened.
 
 ## Resolved 2026-09-28 — per-tab folder restoration
 
@@ -92,7 +95,7 @@ Visual references: `codex-clipboard-42f25200-ad50-4af3-b4b6-0d1291c397e3.png` an
 
 - [x] Encode the current folder in the URL fragment (`#`) whenever navigation succeeds, using a reversible and safely encoded path representation.
 - [x] Push folder changes into browser history so Back and Forward navigate through previously visited folders rather than leaving the current explorer state unchanged.
-- [x] Keep URL navigation, `sessionStorage` restoration, direct fragment loading, Recycle Bin state, and unavailable-path fallback behaviour consistent without creating duplicate history entries.
+- [x] Keep URL navigation, `sessionStorage` restoration, direct fragment loading, and unavailable-path fallback behaviour consistent without creating duplicate history entries.
 
 ## Resolved 2026-09-29 — content-aware file previews
 

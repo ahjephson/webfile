@@ -69,9 +69,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/fs/operations/{id}/password", s.submitOperationPassword)
 	s.mux.HandleFunc("DELETE /api/fs/operations/history", s.clearOperationHistory)
 	s.mux.HandleFunc("DELETE /api/fs/operations/{id}", s.removeOperationHistory)
-	s.mux.HandleFunc("GET /api/fs/trash", s.listTrash)
-	s.mux.HandleFunc("POST /api/fs/trash/restore", s.restoreTrash)
-	s.mux.HandleFunc("POST /api/fs/trash/purge", s.purgeTrash)
 	s.mux.HandleFunc("GET /api/fs/ws", s.websocket)
 }
 

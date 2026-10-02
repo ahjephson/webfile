@@ -7,7 +7,7 @@ build before a mount is usable.
 The current code is an alpha implementation of the product brief: Go backend,
 Vue 3/TypeScript frontend, Linux/PAM identity, direct filesystem IO, live
 current-folder updates, Monaco editing, resumable uploads, file operations,
-trash, extraction, durable background tasks and persistent application state.
+extraction, durable background tasks and persistent application state.
 
 ## Implemented
 
@@ -55,8 +55,9 @@ trash, extraction, durable background tasks and persistent application state.
 - Drag/drop local files to upload.
 - Conflict-safe operations: existing destinations are not silently overwritten.
 - Regular file downloads and streamed ZIP downloads for folders.
-- Normal Delete moves to per-user Trash; restore and explicit permanent delete
-  are separate actions.
+- Delete permanently removes files and folders using native filesystem
+  operations after explicit confirmation. Upgrades do not automatically purge
+  files left in the legacy trash directory.
 - The read-only Details pane resolves UID/GID to Linux user/group names. The
   backend has permission-change endpoints, but they are not currently exposed
   as user controls.
@@ -76,7 +77,7 @@ Uploads use an 8 MiB chunked protocol rather than one large multipart request.
 
 ### Background tasks
 
-Copy, move, delete-to-trash, archive extraction and uploads report through a
+Copy, move, permanent delete, archive extraction and uploads report through a
 shared task system. Per-user workers persist task history in
 `~/.local/share/webfile/tasks.db` using SQLite/WAL.
 

@@ -214,7 +214,7 @@ func workerMain(args []string) {
 	}
 	resolver, err := filesystem.NewResolver(roots)
 	fatalIf(err, "filesystem resolver failed")
-	files := filesystem.NewServiceWithThumbnailOptions(resolver, cfg.EditorMaxBytes, "", filesystem.ThumbnailOptions{
+	files := filesystem.NewServiceWithThumbnailOptions(resolver, cfg.EditorMaxBytes, filesystem.ThumbnailOptions{
 		Cache:              thumbnailcache.NewClient(*cacheSocket, *cacheToken),
 		ImageWorkers:       cfg.Thumbnails.ImageWorkers,
 		VideoWorkers:       cfg.Thumbnails.VideoWorkers,

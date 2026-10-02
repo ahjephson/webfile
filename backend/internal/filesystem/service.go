@@ -54,7 +54,6 @@ type FileType struct {
 type Service struct {
 	resolver          *Resolver
 	editorMaxBytes    int64
-	trashDir          string
 	thumbnailCache    thumbnailcache.Cache
 	thumbnailSlots    chan struct{}
 	thumbnailFlightMu sync.Mutex
@@ -68,19 +67,14 @@ type Service struct {
 }
 
 func NewService(resolver *Resolver, editorMaxBytes int64) *Service {
-	return NewServiceWithTrash(resolver, editorMaxBytes, "")
+	return NewServiceWithThumbnailOptions(resolver, editorMaxBytes, ThumbnailOptions{})
 }
 
-func NewServiceWithTrash(resolver *Resolver, editorMaxBytes int64, trashDir string) *Service {
-	return NewServiceWithThumbnailOptions(resolver, editorMaxBytes, trashDir, ThumbnailOptions{})
-}
-
-func NewServiceWithThumbnailOptions(resolver *Resolver, editorMaxBytes int64, trashDir string, options ThumbnailOptions) *Service {
+func NewServiceWithThumbnailOptions(resolver *Resolver, editorMaxBytes int64, options ThumbnailOptions) *Service {
 	options.applyDefaults()
 	service := &Service{
 		resolver:          resolver,
 		editorMaxBytes:    editorMaxBytes,
-		trashDir:          trashDir,
 		thumbnailCache:    options.Cache,
 		thumbnailSlots:    make(chan struct{}, options.ImageWorkers),
 		thumbnailFlights:  make(map[string]*thumbnailFlight),
