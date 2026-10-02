@@ -157,7 +157,7 @@ function restoreCurrentImage() {
 
 async function detectGalleryImages() {
   const request = ++galleryDetection
-  const files = props.entries.filter(entry => !entry.is_dir)
+  const files = props.entries.filter(entry => !entry.is_dir && entry.can_read !== false)
   const paths = new Set(files.filter(entry => previewKindForPath(entry.path) === 'image').map(entry => entry.path))
   paths.add(props.path)
   detectedImagePaths.value = files.filter(entry => paths.has(entry.path)).map(entry => entry.path)

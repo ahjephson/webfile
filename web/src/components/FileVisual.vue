@@ -25,8 +25,9 @@ const visual = computed(() => detectedContentType.value
   ? fileVisualForContentType(detectedContentType.value, props.entry.path)
   : pathVisual.value)
 const lockedDirectory = computed(() => props.entry.is_dir && props.entry.can_navigate === false)
-const showImageThumbnail = computed(() => props.tile && !props.entry.is_dir && visual.value.kind === 'image' && !thumbnailFailed.value)
-const showVideoThumbnail = computed(() => props.tile && !props.entry.is_dir && visual.value.kind === 'video' && !thumbnailFailed.value)
+const lockedFile = computed(() => !props.entry.is_dir && props.entry.can_read === false)
+const showImageThumbnail = computed(() => props.tile && !props.entry.is_dir && !lockedFile.value && visual.value.kind === 'image' && !thumbnailFailed.value)
+const showVideoThumbnail = computed(() => props.tile && !props.entry.is_dir && !lockedFile.value && visual.value.kind === 'video' && !thumbnailFailed.value)
 const tileHeight = computed(() => ({ small: '4rem', medium: '7rem', large: '10rem' })[props.tileSize ?? 'medium'])
 const tileIconSize = computed(() => ({ small: '2.5rem', medium: '4rem', large: '5.5rem' })[props.tileSize ?? 'medium'])
 const videoSpriteStyle = computed(() => ({
@@ -42,7 +43,7 @@ watch(() => props.entry.path, async path => {
   stopVideoAnimation()
   detectedContentType.value = ''
   thumbnailFailed.value = false
-  if (props.entry.is_dir || fileVisualForPath(path).known) return
+  if (props.entry.is_dir || props.entry.can_read === false || fileVisualForPath(path).known) return
   try {
     const result = await api.contentType(path)
     if (props.entry.path === path) detectedContentType.value = result.content_type
@@ -126,9 +127,13 @@ function stopVideoAnimation() {
   </span>
   <span
     v-else
-    class="grid min-h-0 min-w-0 place-items-center"
+    class="relative grid min-h-0 min-w-0 place-items-center"
     :class="tile ? 'relative w-full overflow-hidden' : 'pointer-events-none shrink-0'"
     :style="tile ? { height: tileHeight } : undefined"
+    :role="lockedFile ? 'img' : undefined"
+    :aria-label="lockedFile ? `No permission to read ${entry.name}` : undefined"
+    :aria-hidden="lockedFile ? undefined : 'true'"
+    :title="lockedFile ? 'You do not have permission to read or preview this file' : undefined"
     @mouseenter="startVideoAnimation"
     @mouseleave="stopVideoAnimation"
   >
@@ -155,6 +160,9 @@ function stopVideoAnimation() {
         :data-video-frame="videoFrame"
       />
     </template>
-      <i v-else :class="[visual.icon, visual.color]" :style="{ fontSize: tile ? tileIconSize : '1.125rem' }" aria-hidden="true" data-file-icon />
+    <i v-else :class="[visual.icon, lockedFile ? 'text-zinc-500' : visual.color]" :style="{ fontSize: tile ? tileIconSize : '1.125rem' }" aria-hidden="true" data-file-icon />
+    <span v-if="lockedFile" class="absolute -bottom-1 -right-2 grid place-items-center rounded-full border border-zinc-700 bg-zinc-950 text-red-400 shadow" :class="tile ? 'h-7 w-7 text-sm' : 'h-4 w-4 text-[0.6rem]'" data-file-lock aria-hidden="true">
+      <i class="pi pi-lock" />
+    </span>
   </span>
 </template>

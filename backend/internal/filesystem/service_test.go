@@ -111,6 +111,9 @@ func TestListReportsDirectoryNavigationAccess(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("file"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "restricted.txt"), []byte("file"), 0o000); err != nil {
+		t.Fatal(err)
+	}
 	resolver, err := NewResolver([]Root{{Name: "Files", Path: root}})
 	if err != nil {
 		t.Fatal(err)
@@ -132,8 +135,21 @@ func TestListReportsDirectoryNavigationAccess(t *testing.T) {
 	if value := byName["restricted"].CanNavigate; value == nil || *value {
 		t.Fatalf("restricted directory navigation = %v", value)
 	}
-	if value := byName["file.txt"].CanNavigate; value != nil {
-		t.Fatalf("file navigation = %v, want nil", *value)
+	for _, name := range []string{"file.txt", "restricted.txt"} {
+		if value := byName[name].CanNavigate; value != nil {
+			t.Fatalf("%s navigation = %v, want nil", name, *value)
+		}
+	}
+	if value := byName["file.txt"].CanRead; value == nil || !*value {
+		t.Fatalf("readable file access = %v", value)
+	}
+	if value := byName["restricted.txt"].CanRead; value == nil || *value {
+		t.Fatalf("restricted file access = %v", value)
+	}
+	for _, name := range []string{"accessible", "restricted"} {
+		if value := byName[name].CanRead; value != nil {
+			t.Fatalf("%s read access = %v, want nil", name, *value)
+		}
 	}
 }
 

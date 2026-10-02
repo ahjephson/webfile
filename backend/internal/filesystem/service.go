@@ -38,6 +38,7 @@ type Entry struct {
 	UID         uint32    `json:"uid,omitempty"`
 	GID         uint32    `json:"gid,omitempty"`
 	CanNavigate *bool     `json:"can_navigate,omitempty"`
+	CanRead     *bool     `json:"can_read,omitempty"`
 }
 
 type FileContent struct {
@@ -153,6 +154,9 @@ func (s *Service) List(ctx context.Context, virtualPath string) ([]Entry, error)
 			canNavigate := canNavigateDirectory(entryPath)
 			entry.CanNavigate = &canNavigate
 			s.applyCachedFolderSize(&entry, entryPath)
+		} else {
+			canRead := canReadFile(entryPath)
+			entry.CanRead = &canRead
 		}
 		out = append(out, entry)
 		collationKeys[entry.Name] = hostCollationKey(entry.Name)

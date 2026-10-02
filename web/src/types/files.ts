@@ -9,6 +9,7 @@ export interface FileEntry {
   uid?: number
   gid?: number
   can_navigate?: boolean
+  can_read?: boolean
 }
 
 export interface DirectoryResponse {

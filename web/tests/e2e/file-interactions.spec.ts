@@ -110,7 +110,7 @@ async function showSelectionControls(page: Page) {
   await expect(page.getByRole('button', { name: 'Hide selection controls' })).toHaveAttribute('aria-pressed', 'true')
 }
 
-test('inaccessible directories show a lock indicator in list and grid views', async ({ page }) => {
+test('inaccessible entries show a lock indicator in list and grid views', async ({ page }) => {
   await page.route('**/api/fs/dir**', async route => {
     const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
     const entries = path === '/'
@@ -131,6 +131,14 @@ test('inaccessible directories show a lock indicator in list and grid views', as
           size: 0,
           modified: '2000-01-01T00:00:00Z',
           mode: 'd---------',
+        }, {
+          name: 'DumpStack.log',
+          path: '/Files/DumpStack.log',
+          is_dir: false,
+          can_read: false,
+          size: 4096,
+          modified: '2000-01-01T00:00:00Z',
+          mode: '----------',
         }]
     await route.fulfill({ json: { path, entries } })
   })
@@ -146,6 +154,12 @@ test('inaccessible directories show a lock indicator in list and grid views', as
     await chooseView(page, view)
     await expect(restricted.getByRole('img', { name: 'No permission to open restricted' })).toBeVisible()
     await expect(restricted.locator('[data-directory-lock]')).toBeVisible()
+
+    const restrictedFile = page.locator('[data-file-entry]').filter({ hasText: 'DumpStack.log' })
+    await expect(restrictedFile.getByRole('img', { name: 'No permission to read DumpStack.log' })).toBeVisible()
+    await expect(restrictedFile.locator('[data-file-lock]')).toBeVisible()
+    await restrictedFile.dblclick()
+    await expect(page).not.toHaveURL(/file=/)
   }
 })
 

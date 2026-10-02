@@ -229,16 +229,16 @@ const contextItems = computed(() => {
   const result: Array<{ label?: string; icon?: string; command?: () => void; separator?: boolean; disabled?: boolean }> = []
 
   if (one) {
-    if (one.is_dir && one.can_navigate === false && props.elevationAvailable && !props.elevated) {
+    if (!canOpenEntry(one) && props.elevationAvailable && !props.elevated) {
       result.push({ label: 'Elevate access…', icon: 'pi pi-shield', command: () => emit('requestElevation') })
       result.push({ separator: true })
     }
-    result.push({ label: 'Open', icon: one.is_dir ? 'pi pi-folder-open' : 'pi pi-file-edit', disabled: one.is_dir && one.can_navigate === false, command: () => openEntry(one) })
-    result.push({ label: 'Download', icon: 'pi pi-download', command: () => download(one) })
+    result.push({ label: 'Open', icon: one.is_dir ? 'pi pi-folder-open' : 'pi pi-file-edit', disabled: !canOpenEntry(one), command: () => openEntry(one) })
+    result.push({ label: 'Download', icon: 'pi pi-download', disabled: !one.is_dir && one.can_read === false, command: () => download(one) })
     result.push({ label: 'Details', icon: 'pi pi-info-circle', command: () => toggleDetails(one) })
     if (isArchive(one)) {
-      result.push({ label: 'Extract…', icon: 'pi pi-box', command: () => openExtract(one) })
-      result.push({ label: 'Extract here', icon: 'pi pi-folder-open', command: () => extractHere(one) })
+      result.push({ label: 'Extract…', icon: 'pi pi-box', disabled: one.can_read === false, command: () => openExtract(one) })
+      result.push({ label: 'Extract here', icon: 'pi pi-folder-open', disabled: one.can_read === false, command: () => extractHere(one) })
     }
   }
 
@@ -512,7 +512,12 @@ function onOperationTerminal(operation: FileOperation) {
   void refresh(false)
 }
 
+function canOpenEntry(entry: FileEntry) {
+  return entry.is_dir ? entry.can_navigate !== false : entry.can_read !== false
+}
+
 async function openEntry(entry: FileEntry) {
+  if (!canOpenEntry(entry)) return
   if (entry.is_dir) {
     navigateTo(entry.path)
     return
