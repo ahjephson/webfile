@@ -8,12 +8,14 @@ import Message from 'primevue/message'
 import { api, ApiError } from '@/api/client'
 import MarkdownPreview from '@/components/MarkdownPreview.vue'
 import MonacoEditor from '@/components/MonacoEditor.vue'
+import type { UserPreferences } from '@/preferences'
 
 const props = defineProps<{
   visible: boolean
   path: string
   isNew: boolean
   theme: 'light' | 'dark'
+  preferences: UserPreferences
 }>()
 
 const emit = defineEmits<{
@@ -31,13 +33,13 @@ const conflict = ref(false)
 const saveAsPath = ref('')
 const currentPath = ref('')
 const newDocument = ref(false)
-const wordWrap = ref(false)
-const richToolbar = ref(false)
-const minimap = ref(false)
-const renderWhitespace = ref(false)
-const lineNumbers = ref(true)
-const fontSize = ref(14)
-const markdownPreview = ref(false)
+const wordWrap = ref(props.preferences.editor_word_wrap)
+const richToolbar = ref(props.preferences.editor_toolbar === 'rich')
+const minimap = ref(props.preferences.editor_minimap)
+const renderWhitespace = ref(props.preferences.editor_show_whitespace)
+const lineNumbers = ref(props.preferences.editor_line_numbers)
+const fontSize = ref(props.preferences.editor_font_size)
+const markdownPreview = ref(props.preferences.editor_markdown_preview)
 const language = ref('plaintext')
 const languagePicker = ref(false)
 const languageQuery = ref('')
@@ -108,6 +110,7 @@ watch(() => [props.visible, props.path, props.isNew] as const, async ([visible, 
   if (!visible) return
   currentPath.value = path
   language.value = languageForPath(path)
+  markdownPreview.value = props.preferences.editor_markdown_preview && language.value === 'markdown'
   languagePicker.value = false
   saveAsPath.value = path
   newDocument.value = isNew

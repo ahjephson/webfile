@@ -3,6 +3,7 @@ package persistence
 import (
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -33,7 +34,14 @@ func TestStatePersistsPreferencesFavouritesAndSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetPreferences("alex", Preferences{ViewMode: "grid", GridSize: "large", ShowHidden: true}); err != nil {
+	lineNumbers := false
+	wantPreferences := Preferences{
+		ViewMode: "grid", GridSize: "large", ShowHidden: true, Theme: "dark",
+		EditorWordWrap: true, EditorFontSize: 18, EditorLineNumbers: &lineNumbers,
+		EditorShowWhitespace: true, EditorMinimap: true, EditorToolbar: "rich",
+		EditorMarkdownPreview: true, CopyChunkMiB: 16,
+	}
+	if err := store.SetPreferences("alex", wantPreferences); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.AddFavourite("alex", Favourite{Path: "/Media/Movies", CreatedAt: time.Now().UTC()}); err != nil {
@@ -49,8 +57,8 @@ func TestStatePersistsPreferencesFavouritesAndSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefs := reopened.Preferences("alex")
-	if prefs.ViewMode != "grid" || prefs.GridSize != "large" || !prefs.ShowHidden {
-		t.Fatalf("prefs=%+v", prefs)
+	if prefs.EditorLineNumbers == nil || *prefs.EditorLineNumbers || !reflect.DeepEqual(prefs, wantPreferences) {
+		t.Fatalf("prefs=%+v, want %+v", prefs, wantPreferences)
 	}
 	if favs := reopened.Favourites("alex"); len(favs) != 1 || favs[0].Path != "/Media/Movies" {
 		t.Fatalf("favourites=%+v", favs)

@@ -19,10 +19,18 @@ type SessionRecord struct {
 }
 
 type Preferences struct {
-	ViewMode   string `json:"view_mode,omitempty"`
-	GridSize   string `json:"grid_size,omitempty"`
-	ShowHidden bool   `json:"show_hidden,omitempty"`
-	Theme      string `json:"theme,omitempty"`
+	ViewMode              string `json:"view_mode,omitempty"`
+	GridSize              string `json:"grid_size,omitempty"`
+	ShowHidden            bool   `json:"show_hidden,omitempty"`
+	Theme                 string `json:"theme,omitempty"`
+	EditorWordWrap        bool   `json:"editor_word_wrap,omitempty"`
+	EditorFontSize        int    `json:"editor_font_size,omitempty"`
+	EditorLineNumbers     *bool  `json:"editor_line_numbers,omitempty"`
+	EditorShowWhitespace  bool   `json:"editor_show_whitespace,omitempty"`
+	EditorMinimap         bool   `json:"editor_minimap,omitempty"`
+	EditorToolbar         string `json:"editor_toolbar,omitempty"`
+	EditorMarkdownPreview bool   `json:"editor_markdown_preview,omitempty"`
+	CopyChunkMiB          int    `json:"copy_chunk_mib,omitempty"`
 }
 
 type Favourite struct {

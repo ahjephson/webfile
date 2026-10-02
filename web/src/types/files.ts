@@ -46,6 +46,14 @@ export interface Preferences {
   grid_size?: 'small' | 'medium' | 'large'
   show_hidden?: boolean
   theme?: 'system' | 'dark' | 'light'
+  editor_word_wrap?: boolean
+  editor_font_size?: number
+  editor_line_numbers?: boolean
+  editor_show_whitespace?: boolean
+  editor_minimap?: boolean
+  editor_toolbar?: 'compact' | 'rich'
+  editor_markdown_preview?: boolean
+  copy_chunk_mib?: 1 | 4 | 16 | 64
 }
 
 export interface Favourite {

@@ -374,6 +374,79 @@ test('the grid split button changes and persists tile size', async ({ page }) =>
   await expect(page.locator('[data-grid-size]')).toHaveAttribute('data-grid-size', 'small')
 })
 
+test('settings persist appearance, editor defaults, and copy chunk size', async ({ page }) => {
+  let preferences: Record<string, unknown> = {
+    view_mode: 'list',
+    grid_size: 'medium',
+    show_hidden: false,
+    theme: 'dark',
+  }
+  await page.route('**/api/preferences', async route => {
+    if (route.request().method() === 'PUT') preferences = route.request().postDataJSON() as Record<string, unknown>
+    await route.fulfill({ json: preferences })
+  })
+  await page.route('**/api/fs/dir**', route => route.fulfill({
+    json: {
+      path: '/folder',
+      entries: [{
+        name: 'notes.md',
+        path: '/folder/notes.md',
+        is_dir: false,
+        size: 20,
+        modified: '2000-01-01T00:00:00Z',
+        mode: '-rw-r--r--',
+      }],
+    },
+  }))
+  await page.route('**/api/fs/file?**', route => route.fulfill({
+    json: { path: '/folder/notes.md', content: '# Notes', modified: '2000-01-01T00:00:00Z', etag: 'notes-1' },
+  }))
+
+  await page.goto('/#path=%2Ffolder')
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Settings' })
+  await expect(dialog.getByRole('heading', { name: 'Appearance' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: 'Editor' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: 'Transfers' })).toBeVisible()
+
+  await dialog.getByRole('combobox', { name: 'Default view' }).click()
+  await page.getByRole('option', { name: 'Grid', exact: true }).click()
+  await dialog.getByRole('combobox', { name: 'Grid tile size' }).click()
+  await page.getByRole('option', { name: 'Large', exact: true }).click()
+  await dialog.getByRole('switch', { name: 'Show dotfiles by default' }).click()
+  await dialog.getByRole('switch', { name: 'Word wrap by default' }).click()
+  await dialog.getByRole('spinbutton', { name: 'Editor font size' }).fill('18')
+  await dialog.getByRole('switch', { name: 'Show minimap by default' }).click()
+  await dialog.getByRole('combobox', { name: 'Default editor toolbar' }).click()
+  await page.getByRole('option', { name: 'Rich', exact: true }).click()
+  await dialog.getByRole('switch', { name: 'Markdown preview by default' }).click()
+  await dialog.getByRole('combobox', { name: 'Copy chunk size' }).click()
+  await page.getByRole('option', { name: '16 MiB', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Save settings' }).click()
+
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Grid view' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('[data-grid-size]')).toHaveAttribute('data-grid-size', 'large')
+  await expect.poll(() => preferences).toMatchObject({
+    view_mode: 'grid',
+    grid_size: 'large',
+    show_hidden: true,
+    editor_word_wrap: true,
+    editor_font_size: 18,
+    editor_minimap: true,
+    editor_toolbar: 'rich',
+    editor_markdown_preview: true,
+    copy_chunk_mib: 16,
+  })
+
+  await page.locator('[data-file-entry]').dblclick()
+  const editor = page.getByRole('region', { name: 'Text editor' })
+  await expect(editor).toHaveAttribute('data-toolbar-mode', 'rich')
+  await expect(editor).toHaveAttribute('data-markdown-preview', 'true')
+  await expect(page.getByRole('navigation', { name: 'Rich editor toolbar' })).toBeVisible()
+  await expect(editor.getByText('18px · Wrap · Minimap', { exact: false })).toBeVisible()
+})
+
 test('folder navigation updates the hash and browser back restores the previous folder', async ({ page }) => {
   await page.route('**/api/fs/dir**', async route => {
     const path = new URL(route.request().url()).searchParams.get('path') ?? '/'

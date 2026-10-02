@@ -11,6 +11,8 @@ import { useToast } from 'primevue/usetoast'
 import { api } from '@/api/client'
 import type { Favourite, FileEntry, FileOperation, TrashItem, VideoThumbnailJob } from '@/types/files'
 import { resolvedTheme, setTheme, themeMode, type ThemeMode } from '@/theme'
+import { defaultPreferences, normalizePreferences, type UserPreferences } from '@/preferences'
+import SettingsDialog from '@/components/SettingsDialog.vue'
 import { useRealtime } from '@/composables/useRealtime'
 import { useFilePreview } from '@/composables/useFilePreview'
 import { useExplorerSelection } from '@/composables/useExplorerSelection'
@@ -110,6 +112,9 @@ const extractBusy = ref(false)
 const destinationVisible = ref(false)
 const transferMode = ref<TransferMode>('copy')
 const operationsVisible = ref(false)
+const settingsVisible = ref(false)
+const settingsSaving = ref(false)
+const userPreferences = ref<UserPreferences>({ ...defaultPreferences })
 const thumbnailJobs = ref<VideoThumbnailJob[]>([])
 const detailsVisible = ref(restoredExplorerState.detailsVisible)
 const detailsPath = ref(restoredStateMatchesPath ? restoredExplorerState.detailsPath : currentPath.value)
@@ -125,6 +130,7 @@ const draggingOver = ref(false)
 let invalidateTimer: number | null = null
 let hashFileRequest = 0
 let breadcrumbResizeObserver: ResizeObserver | null = null
+let preferencesLoaded = false
 
 const {
   operations,
@@ -303,11 +309,11 @@ watch(currentPath, path => {
 watch([currentPath, trashMode], () => { void scrollBreadcrumbToEnd() }, { flush: 'post' })
 
 watch([viewMode, gridSize], () => {
-  void savePreferences()
+  if (preferencesLoaded) void savePreferences()
   void nextTick(scrollFocusedIntoView)
 })
 
-watch(showHidden, () => { void savePreferences() })
+watch(showHidden, () => { if (preferencesLoaded) void savePreferences() })
 
 watch([selectedPaths, focusedPath, detailsVisible, detailsPath], storeSessionExplorerState, { flush: 'sync' })
 
@@ -326,21 +332,55 @@ async function scrollBreadcrumbToEnd() {
 
 async function loadPreferences() {
   try {
-    const prefs = await api.preferences()
-    if (prefs.view_mode === 'grid' || prefs.view_mode === 'list') viewMode.value = prefs.view_mode
-    if (prefs.grid_size === 'small' || prefs.grid_size === 'medium' || prefs.grid_size === 'large') gridSize.value = prefs.grid_size
-    showHidden.value = !!prefs.show_hidden
-    if (prefs.theme === 'system' || prefs.theme === 'dark' || prefs.theme === 'light') setTheme(prefs.theme)
+    applyPreferences(normalizePreferences(await api.preferences()))
   } catch {
     // Preferences are non-critical; browsing should still work.
+  } finally {
+    preferencesLoaded = true
   }
 }
 
 async function savePreferences() {
   try {
-    await api.savePreferences({ view_mode: viewMode.value, grid_size: gridSize.value, show_hidden: showHidden.value, theme: themeMode.value })
+    userPreferences.value = currentPreferences()
+    await api.savePreferences(userPreferences.value)
   } catch {
     // Do not interrupt file work for a preference persistence failure.
+  }
+}
+
+function currentPreferences(): UserPreferences {
+  return {
+    ...userPreferences.value,
+    view_mode: viewMode.value,
+    grid_size: gridSize.value,
+    show_hidden: showHidden.value,
+    theme: themeMode.value,
+  }
+}
+
+function applyPreferences(preferences: UserPreferences) {
+  const wasLoaded = preferencesLoaded
+  preferencesLoaded = false
+  userPreferences.value = { ...preferences }
+  viewMode.value = preferences.view_mode
+  gridSize.value = preferences.grid_size
+  showHidden.value = preferences.show_hidden
+  setTheme(preferences.theme)
+  preferencesLoaded = wasLoaded
+}
+
+async function saveSettings(preferences: UserPreferences) {
+  settingsSaving.value = true
+  try {
+    const saved = normalizePreferences(await api.savePreferences(preferences))
+    applyPreferences(saved)
+    settingsVisible.value = false
+    toast.add({ severity: 'success', summary: 'Settings saved', life: 2000 })
+  } catch (err) {
+    showError(err, 'Could not save settings')
+  } finally {
+    settingsSaving.value = false
   }
 }
 
@@ -749,7 +789,7 @@ function purgeTrash(items: FileEntry[]) {
 
 async function beginOperation(kind: 'copy' | 'move' | 'trash' | 'extract', sources: string[], destination?: string) {
   try {
-    await startFileOperation(kind, sources, destination)
+    await startFileOperation(kind, sources, destination, userPreferences.value.copy_chunk_mib)
     operationsVisible.value = true
   } catch (err) {
     showError(err, `Could not start ${kind}`)
@@ -994,16 +1034,13 @@ function onGlobalKeyDown(event: KeyboardEvent) {
 
 function selectTheme(mode: ThemeMode) {
   setTheme(mode)
+  userPreferences.value.theme = mode
   themeMenu.value?.hide()
   void savePreferences()
 }
 
 function showThemeMenu(event: Event) {
   themeMenu.value?.toggle(event)
-}
-
-function showSettingsPlaceholder() {
-  toast.add({ severity: 'info', summary: 'Settings', detail: 'Settings will be available here later.', life: 2500 })
 }
 
 function onKeyDown(event: KeyboardEvent) {
@@ -1153,7 +1190,7 @@ function operationLabel(value: string) {
         <span class="min-w-2 flex-1" />
         <div class="flex items-center gap-1">
           <Button v-tooltip.bottom="operationsVisible ? 'Close tasks' : 'Open tasks'" icon="pi pi-list-check" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': operationsVisible }" :badge="taskBadgeCount ? String(taskBadgeCount) : undefined" :aria-label="operationsVisible ? 'Close tasks' : 'Open tasks'" :aria-pressed="operationsVisible" @click="operationsVisible = !operationsVisible" />
-          <Button v-tooltip.bottom="'Settings'" icon="pi pi-cog" size="small" severity="secondary" text aria-label="Settings" @click="showSettingsPlaceholder" />
+          <Button v-tooltip.bottom="'Settings'" icon="pi pi-cog" size="small" severity="secondary" text aria-label="Settings" @click="settingsVisible = true" />
         </div>
         <span class="mx-1 h-6 w-px bg-zinc-700" />
         <Button v-tooltip.bottom="`Theme: ${themeMode}`" :icon="themeMode === 'system' ? 'pi pi-desktop' : themeMode === 'dark' ? 'pi pi-moon' : 'pi pi-sun'" size="small" severity="secondary" text aria-label="Choose theme" @click="showThemeMenu" />
@@ -1329,7 +1366,8 @@ function operationLabel(value: string) {
       :submit-label="nameDialogMode === 'folder' ? 'Create' : 'Rename'"
       @submit="onNameDialogSubmit"
     />
-    <EditorDialog v-if="editorVisible" :visible="editorVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" @update:visible="setEditorVisible" @saved="onEditorSaved" />
+    <SettingsDialog v-model:visible="settingsVisible" :preferences="currentPreferences()" :saving="settingsSaving" @save="saveSettings" />
+    <EditorDialog v-if="editorVisible" :visible="editorVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" :preferences="userPreferences" @update:visible="setEditorVisible" @saved="onEditorSaved" />
     <FilePreview :visible="previewVisible" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="entries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
     <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTarget?.name ?? ''" :destination="extractDestination" :busy="extractBusy" @extract="prepareExtraction" />
     <ArchivePasswordDialog v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="extractBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @cancel="cancelPasswordPrompt" />

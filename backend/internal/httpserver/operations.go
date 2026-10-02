@@ -13,9 +13,10 @@ import (
 )
 
 type operationRequest struct {
-	Kind        string   `json:"kind"`
-	Sources     []string `json:"sources"`
-	Destination string   `json:"destination,omitempty"`
+	Kind         string   `json:"kind"`
+	Sources      []string `json:"sources"`
+	Destination  string   `json:"destination,omitempty"`
+	CopyChunkMiB int      `json:"copy_chunk_mib,omitempty"`
 }
 
 func (s *Server) listOperations(w http.ResponseWriter, r *http.Request) {
@@ -35,10 +36,18 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sources and destination are required"})
 			return
 		}
+		if req.CopyChunkMiB == 0 {
+			req.CopyChunkMiB = 4
+		}
+		if req.CopyChunkMiB != 1 && req.CopyChunkMiB != 4 && req.CopyChunkMiB != 16 && req.CopyChunkMiB != 64 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "copy_chunk_mib must be 1, 4, 16 or 64"})
+			return
+		}
 		op := s.ops.StartTask(req.Kind, req.Sources, req.Destination, operations.TaskOptions{
 			Cancellable:   true,
 			CleanupPolicy: "The incomplete item is removed. Items completed before cancellation are retained.",
 		}, func(ctx context.Context, reporter operations.Reporter) error {
+			ctx = filesystem.WithCopyChunkSize(ctx, req.CopyChunkMiB*1024*1024)
 			return s.files.CopyMove(ctx, req.Kind, req.Sources, req.Destination, func(p filesystem.TransferProgress) {
 				reporter.UpdatePhase(p.Phase, p.BytesDone, p.BytesTotal, p.ItemsDone, p.ItemsTotal, p.Message)
 			})

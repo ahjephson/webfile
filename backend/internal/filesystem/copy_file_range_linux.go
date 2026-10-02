@@ -11,8 +11,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const copyFileRangeChunk = 4 * 1024 * 1024
-
 // copyFileRangePlatform copies from the files' current offsets and advances
 // both offsets. A false complete result asks the caller to resume with its
 // portable buffered copy path from those same offsets.
@@ -21,7 +19,7 @@ func copyFileRangePlatform(ctx context.Context, source, destination *os.File, pr
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		n, copyErr := unix.CopyFileRange(int(source.Fd()), nil, int(destination.Fd()), nil, copyFileRangeChunk, 0)
+		n, copyErr := unix.CopyFileRange(int(source.Fd()), nil, int(destination.Fd()), nil, copyChunkSize(ctx), 0)
 		if n > 0 && progress != nil {
 			progress(int64(n))
 		}

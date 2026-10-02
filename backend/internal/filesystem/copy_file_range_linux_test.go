@@ -59,7 +59,8 @@ func TestCopyFileRangePlatformHonorsChunkSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantBytes := int64(copyFileRangeChunk + 1)
+	chunkSize := 1024 * 1024
+	wantBytes := int64(chunkSize + 1)
 	if err := sourceWriter.Truncate(wantBytes); err != nil {
 		t.Fatal(err)
 	}
@@ -79,9 +80,10 @@ func TestCopyFileRangePlatformHonorsChunkSize(t *testing.T) {
 
 	var bytesDone int64
 	var updates int
-	complete, err := copyFileRangePlatform(context.Background(), source, destination, func(delta int64) {
-		if delta > int64(copyFileRangeChunk) {
-			t.Fatalf("chunk = %d, maximum = %d", delta, copyFileRangeChunk)
+	ctx := WithCopyChunkSize(context.Background(), chunkSize)
+	complete, err := copyFileRangePlatform(ctx, source, destination, func(delta int64) {
+		if delta > int64(chunkSize) {
+			t.Fatalf("chunk = %d, maximum = %d", delta, chunkSize)
 		}
 		bytesDone += delta
 		updates++

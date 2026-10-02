@@ -208,11 +208,11 @@ export const api = {
     return operation
   },
 
-  startOperation(kind: 'copy' | 'move' | 'trash' | 'extract', sources: string[], destination?: string) {
+  startOperation(kind: 'copy' | 'move' | 'trash' | 'extract', sources: string[], destination?: string, copyChunkMiB?: number) {
     return request<FileOperation>('/api/fs/operations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, sources, destination }),
+      body: JSON.stringify({ kind, sources, destination, copy_chunk_mib: copyChunkMiB }),
     })
   },
 

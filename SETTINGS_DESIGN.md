@@ -1,6 +1,11 @@
 # Per-user settings design
 
-Status: planned; not yet implemented.
+Status: initial delivery implemented.
+
+The current settings page exposes appearance (theme, default view, grid tile
+size, and dotfile visibility), editor defaults, and the transfer copy chunk
+size. The remaining appearance, preview, and file-interaction preferences below
+are planned follow-up work.
 
 Settings are durable preferences controlled by the signed-in user and should
 follow that user across browsers and sessions. They do not include per-tab
@@ -48,9 +53,10 @@ follow that user across browsers and sessions. They do not include per-tab
 
 ## Delivery order and boundaries
 
-The initial delivery should expose the four preferences already supported by
-the backend (theme, view mode, grid size, and dotfile visibility), followed by
-the editor defaults.
+The initial delivery exposes the four preferences already supported by the
+backend (theme, view mode, grid size, and dotfile visibility), the editor
+defaults, and the transfer copy chunk size. Interface density, preview defaults,
+and file-interaction preferences remain planned.
 
 Current folder, filter text, selection, open panels, and scroll position remain
 tab/session state. Roots, authentication, TLS, archive commands, watcher

@@ -188,6 +188,18 @@ func (s *MainServer) putPreferences(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "theme must be system, dark or light"})
 		return
 	}
+	if prefs.EditorFontSize != 0 && (prefs.EditorFontSize < 10 || prefs.EditorFontSize > 28) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "editor_font_size must be between 10 and 28"})
+		return
+	}
+	if prefs.EditorToolbar != "" && prefs.EditorToolbar != "compact" && prefs.EditorToolbar != "rich" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "editor_toolbar must be compact or rich"})
+		return
+	}
+	if prefs.CopyChunkMiB != 0 && prefs.CopyChunkMiB != 1 && prefs.CopyChunkMiB != 4 && prefs.CopyChunkMiB != 16 && prefs.CopyChunkMiB != 64 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "copy_chunk_mib must be 1, 4, 16 or 64"})
+		return
+	}
 	if err := s.opts.State.SetPreferences(id.Username, prefs); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save preferences"})
 		return
