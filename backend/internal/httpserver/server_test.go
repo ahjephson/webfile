@@ -47,6 +47,45 @@ func TestListDirReportsSingleConfiguredRoot(t *testing.T) {
 	}
 }
 
+func TestExcludedAndMissingDirectoriesHaveIdenticalResponses(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "hidden"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := filesystem.NewResolver([]filesystem.Root{{
+		Name:          "Files",
+		Path:          root,
+		ExcludedPaths: []string{"/hidden"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := &Server{files: filesystem.NewService(resolver, 1024*1024)}
+	t.Cleanup(target.files.Close)
+
+	requestPath := func(virtualPath string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, "/api/fs/dir?path="+virtualPath, nil)
+		response := httptest.NewRecorder()
+		target.listDir(response, request)
+		return response
+	}
+	excluded := requestPath("%2FFiles%2Fhidden")
+	missing := requestPath("%2FFiles%2Fmissing")
+	if excluded.Code != http.StatusNotFound || missing.Code != http.StatusNotFound {
+		t.Fatalf("statuses: excluded=%d missing=%d", excluded.Code, missing.Code)
+	}
+	if excluded.Body.String() != missing.Body.String() {
+		t.Fatalf("responses differ: excluded=%s missing=%s", excluded.Body.String(), missing.Body.String())
+	}
+	var payload map[string]string
+	if err := json.NewDecoder(excluded.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["error"] != "path not found" {
+		t.Fatalf("error = %q", payload["error"])
+	}
+}
+
 func TestInlineDownloadAllowsDetectedRasterImageWithSandbox(t *testing.T) {
 	target, root := testDownloadServer(t)
 	var data bytes.Buffer

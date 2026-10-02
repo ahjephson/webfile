@@ -10,9 +10,8 @@ import (
 )
 
 var (
-	ErrInvalidPath  = errors.New("invalid path")
-	ErrOutsideRoot  = errors.New("path escapes configured root")
-	ErrExcludedPath = errors.New("path is excluded")
+	ErrInvalidPath = errors.New("invalid path")
+	ErrOutsideRoot = errors.New("path escapes configured root")
 )
 
 type Root struct {
@@ -97,7 +96,7 @@ func (r *Resolver) ResolveExisting(v string) (Root, string, error) {
 		return Root{}, "", err
 	}
 	if isExcludedPath(root, resolved) {
-		return Root{}, "", ErrExcludedPath
+		return Root{}, "", os.ErrNotExist
 	}
 	return root, resolved, nil
 }
@@ -121,7 +120,7 @@ func (r *Resolver) ResolveEntry(v string) (Root, string, error) {
 	}
 	entry := filepath.Join(resolvedParent, filepath.Base(candidate))
 	if isExcludedPath(root, entry) {
-		return Root{}, "", ErrExcludedPath
+		return Root{}, "", os.ErrNotExist
 	}
 	if _, err := os.Lstat(entry); err != nil {
 		return Root{}, "", err
@@ -144,7 +143,7 @@ func (r *Resolver) ResolveForCreate(v string) (Root, string, error) {
 	}
 	entry := filepath.Join(resolvedParent, filepath.Base(candidate))
 	if isExcludedPath(root, entry) {
-		return Root{}, "", ErrExcludedPath
+		return Root{}, "", os.ErrNotExist
 	}
 	return root, entry, nil
 }
@@ -166,7 +165,7 @@ func (r *Resolver) resolveLexical(v string) (Root, string, error) {
 		return Root{}, "", err
 	}
 	if isExcludedPath(root, candidate) {
-		return Root{}, "", ErrExcludedPath
+		return Root{}, "", os.ErrNotExist
 	}
 	return root, candidate, nil
 }

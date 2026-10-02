@@ -129,11 +129,11 @@ func TestExcludedPathsAreExactAndCannotBeOpenedDirectly(t *testing.T) {
 		t.Fatalf("other entries=%v", entries)
 	}
 	for _, excluded := range []string{"/Files/visible/private", "/Files/visible/private/child"} {
-		if _, _, err := resolver.ResolveExisting(excluded); !errors.Is(err, ErrExcludedPath) {
+		if _, _, err := resolver.ResolveExisting(excluded); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("ResolveExisting(%q) error = %v", excluded, err)
 		}
 	}
-	if _, _, err := resolver.ResolveForCreate("/Files/visible/private/new.txt"); !errors.Is(err, ErrExcludedPath) {
+	if _, _, err := resolver.ResolveForCreate("/Files/visible/private/new.txt"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("ResolveForCreate error = %v", err)
 	}
 }
