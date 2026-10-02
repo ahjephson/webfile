@@ -48,6 +48,7 @@ export interface Preferences {
   view_mode?: 'list' | 'grid'
   grid_size?: 'small' | 'medium' | 'large'
   show_hidden?: boolean
+  hide_inaccessible?: boolean
   theme?: 'system' | 'dark' | 'light'
   editor_word_wrap?: boolean
   editor_font_size?: number

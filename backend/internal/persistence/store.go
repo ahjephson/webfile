@@ -21,6 +21,7 @@ type Preferences struct {
 	ViewMode              string `json:"view_mode,omitempty"`
 	GridSize              string `json:"grid_size,omitempty"`
 	ShowHidden            bool   `json:"show_hidden,omitempty"`
+	HideInaccessible      bool   `json:"hide_inaccessible,omitempty"`
 	Theme                 string `json:"theme,omitempty"`
 	EditorWordWrap        bool   `json:"editor_word_wrap,omitempty"`
 	EditorFontSize        int    `json:"editor_font_size,omitempty"`

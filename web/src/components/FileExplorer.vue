@@ -200,6 +200,8 @@ const filteredEntries = computed(() => {
   const q = search.value.trim().toLocaleLowerCase()
   return entries.value.filter(entry => {
     if (!showHidden.value && entry.name.startsWith('.')) return false
+    if (userPreferences.value.hide_inaccessible
+      && (entry.is_dir ? entry.can_navigate === false : entry.can_read === false)) return false
     return !q || entry.name.toLocaleLowerCase().includes(q)
   })
 })

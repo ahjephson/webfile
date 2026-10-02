@@ -111,6 +111,14 @@ async function showSelectionControls(page: Page) {
 }
 
 test('inaccessible entries show a lock indicator in list and grid views', async ({ page }) => {
+  let preferences: Record<string, unknown> = { hide_inaccessible: false }
+  await page.route('**/api/preferences', async route => {
+    if (route.request().method() === 'PUT') {
+      preferences = route.request().postDataJSON() as Record<string, unknown>
+    }
+    await route.fulfill({ json: preferences })
+  })
+
   await page.route('**/api/fs/dir**', async route => {
     const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
     const entries = path === '/'
@@ -149,18 +157,26 @@ test('inaccessible entries show a lock indicator in list and grid views', async 
   await rootRow.dblclick()
   const restricted = page.locator('[data-file-entry]').filter({ hasText: 'restricted' })
   await expect(restricted).toBeVisible()
+  const restrictedFile = page.locator('[data-file-entry]').filter({ hasText: 'DumpStack.log' })
 
   for (const view of ['grid', 'list'] as const) {
     await chooseView(page, view)
     await expect(restricted.getByRole('img', { name: 'No permission to open restricted' })).toBeVisible()
     await expect(restricted.locator('[data-directory-lock]')).toBeVisible()
 
-    const restrictedFile = page.locator('[data-file-entry]').filter({ hasText: 'DumpStack.log' })
     await expect(restrictedFile.getByRole('img', { name: 'No permission to read DumpStack.log' })).toBeVisible()
     await expect(restrictedFile.locator('[data-file-lock]')).toBeVisible()
     await restrictedFile.dblclick()
     await expect(page).not.toHaveURL(/file=/)
   }
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings.getByRole('switch', { name: 'Hide inaccessible files and folders' }).click()
+  await settings.getByRole('button', { name: 'Save settings' }).click()
+  await expect(restricted).toBeHidden()
+  await expect(restrictedFile).toBeHidden()
+  await expect.poll(() => preferences.hide_inaccessible).toBe(true)
 })
 
 for (const view of ['list', 'grid'] as const) {
@@ -533,6 +549,7 @@ test('settings persist appearance, editor defaults, and copy chunk size', async 
   await dialog.getByRole('combobox', { name: 'Grid tile size' }).click()
   await page.getByRole('option', { name: 'Large', exact: true }).click()
   await dialog.getByRole('switch', { name: 'Show dotfiles by default' }).click()
+  await dialog.getByRole('switch', { name: 'Hide inaccessible files and folders' }).click()
   await dialog.getByRole('switch', { name: 'Word wrap by default' }).click()
   await dialog.getByRole('spinbutton', { name: 'Editor font size' }).fill('18')
   await dialog.getByRole('switch', { name: 'Show minimap by default' }).click()
@@ -550,6 +567,7 @@ test('settings persist appearance, editor defaults, and copy chunk size', async 
     view_mode: 'grid',
     grid_size: 'large',
     show_hidden: true,
+    hide_inaccessible: true,
     editor_word_wrap: true,
     editor_font_size: 18,
     editor_minimap: true,

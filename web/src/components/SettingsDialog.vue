@@ -87,6 +87,10 @@ function save() {
             <span><strong>Show dotfiles</strong><small>Include names beginning with a dot.</small></span>
             <ToggleSwitch v-model="draft.show_hidden" aria-label="Show dotfiles by default" />
           </label>
+          <label class="settings-row">
+            <span><strong>Hide inaccessible files and folders</strong><small>Exclude files you cannot read and folders you cannot open.</small></span>
+            <ToggleSwitch v-model="draft.hide_inaccessible" aria-label="Hide inaccessible files and folders" />
+          </label>
         </div>
       </section>
 

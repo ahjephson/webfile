@@ -17,7 +17,7 @@ func TestStatePersistsPreferencesAndSessions(t *testing.T) {
 	}
 	lineNumbers := false
 	wantPreferences := Preferences{
-		ViewMode: "grid", GridSize: "large", ShowHidden: true, Theme: "dark",
+		ViewMode: "grid", GridSize: "large", ShowHidden: true, HideInaccessible: true, Theme: "dark",
 		EditorWordWrap: true, EditorFontSize: 18, EditorLineNumbers: &lineNumbers,
 		EditorShowWhitespace: true, EditorMinimap: true, EditorToolbar: "rich",
 		EditorMarkdownPreview: true, CopyChunkMiB: 16,
