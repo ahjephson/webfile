@@ -630,6 +630,51 @@ test('folder navigation updates the hash and browser back restores the previous 
   await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(2)
 })
 
+test('breadcrumb navigation pops directly to a visited ancestor with one popstate', async ({ page }) => {
+  await page.route('**/api/fs/dir**', async route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
+    const child = path === '/' ? '/one' : path === '/one' ? '/one/two' : path === '/one/two' ? '/one/two/three' : ''
+    await route.fulfill({
+      json: {
+        path,
+        entries: child ? [{ name: child.split('/').pop(), path: child, is_dir: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' }] : [],
+      },
+    })
+  })
+
+  await page.goto('/')
+  for (const path of ['/one', '/one/two', '/one/two/three']) {
+    await page.locator('[data-file-entry]').dblclick()
+    await expect(page).toHaveURL(new RegExp(`#path=${encodeURIComponent(path)}$`))
+  }
+  await page.evaluate(() => {
+    const target = window as typeof window & { __breadcrumbPopCount?: number }
+    target.__breadcrumbPopCount = 0
+    window.addEventListener('popstate', () => { target.__breadcrumbPopCount = (target.__breadcrumbPopCount ?? 0) + 1 })
+  })
+
+  await page.getByRole('button', { name: 'one', exact: true }).click()
+
+  await expect(page).toHaveURL(/#path=%2Fone$/)
+  await expect.poll(() => page.evaluate(() => (window as typeof window & { __breadcrumbPopCount?: number }).__breadcrumbPopCount)).toBe(1)
+  await page.goForward()
+  await expect(page).toHaveURL(/#path=%2Fone%2Ftwo$/)
+})
+
+test('breadcrumb navigation pushes when a deep-linked ancestor is absent from history', async ({ page }) => {
+  await page.route('**/api/fs/dir**', async route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
+    await route.fulfill({ json: { path, entries: [] } })
+  })
+
+  await page.goto('/#path=%2Fone%2Ftwo')
+  await page.getByRole('button', { name: 'one', exact: true }).click()
+  await expect(page).toHaveURL(/#path=%2Fone$/)
+
+  await page.goBack()
+  await expect(page).toHaveURL(/#path=%2Fone%2Ftwo$/)
+})
+
 test('Alt+Enter toggles details for the focused item', async ({ page }) => {
   await openConfiguredRoot(page)
   const checkbox = selectionButtons(page).first()

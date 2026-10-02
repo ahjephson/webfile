@@ -56,6 +56,7 @@ const {
   readHashPath,
   readHashFile,
   writeHash: writePathHash,
+  goToPathInHistory,
   storePath: storeSessionPath,
   clearPath: clearSessionPath,
   storeState: storeExplorerState,
@@ -442,6 +443,11 @@ function navigateTo(path: string, replaceHistory = false) {
   if (path === currentPath.value) return
   currentPath.value = path
   writePathHash(path, replaceHistory)
+}
+
+function navigateBreadcrumb(path: string) {
+  if (path === currentPath.value) return
+  if (!goToPathInHistory(path)) navigateTo(path)
 }
 
 function onOperationTerminal(operation: FileOperation) {
@@ -1112,7 +1118,7 @@ function operationLabel(value: string) {
         <div class="flex min-w-max items-center gap-1 text-sm">
           <template v-for="(crumb, index) in breadcrumbs" :key="crumb.path">
             <i v-if="index" class="pi pi-angle-right text-xs text-zinc-600" />
-            <button class="rounded px-2 py-1 text-zinc-300 hover:bg-zinc-800 hover:text-white" :aria-current="index === breadcrumbs.length - 1 ? 'page' : undefined" @click="navigateTo(crumb.path)">
+            <button class="rounded px-2 py-1 text-zinc-300 hover:bg-zinc-800 hover:text-white" :aria-current="index === breadcrumbs.length - 1 ? 'page' : undefined" @click="navigateBreadcrumb(crumb.path)">
               {{ crumb.name }}
             </button>
           </template>

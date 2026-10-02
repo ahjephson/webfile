@@ -6,6 +6,20 @@ export type ExplorerSessionState = {
   detailsPath: string
 }
 
+type FolderHistoryEntry = {
+  path: string
+  position: number
+}
+
+type WebFileHistoryState = {
+  webfilePath: string
+  webfileFile: string | null
+  webfilePosition: number
+  webfileFolderTrail: FolderHistoryEntry[]
+}
+
+const maxFolderTrailEntries = 128
+
 export function useExplorerNavigation(username: string) {
   const currentPathStorageKey = `webfile-current-path:${username}`
   const explorerStateStorageKey = `webfile-explorer-state:${username}`
@@ -57,7 +71,47 @@ export function useExplorerNavigation(username: string) {
     const fileName = file?.split('/').at(-1) ?? ''
     const filePart = fileName ? `&file=${encodeURIComponent(fileName)}` : ''
     const url = `${window.location.pathname}${window.location.search}#path=${encodeURIComponent(path)}${filePart}`
-    window.history[replace ? 'replaceState' : 'pushState']({ webfilePath: path, webfileFile: fileName || null }, '', url)
+    const current = readWebFileHistoryState()
+    const position = replace ? (current?.webfilePosition ?? 0) : (current?.webfilePosition ?? 0) + 1
+    let folderTrail = current?.webfileFolderTrail ? [...current.webfileFolderTrail] : []
+    if (!fileName) {
+      folderTrail = folderTrail.filter(entry => entry.position !== position)
+      folderTrail.push({ path, position })
+      folderTrail = folderTrail.slice(-maxFolderTrailEntries)
+    }
+    const state: WebFileHistoryState = {
+      webfilePath: path,
+      webfileFile: fileName || null,
+      webfilePosition: position,
+      webfileFolderTrail: folderTrail,
+    }
+    window.history[replace ? 'replaceState' : 'pushState'](state, '', url)
+  }
+
+  function goToPathInHistory(path: string): boolean {
+    const current = readWebFileHistoryState()
+    if (!current) return false
+    const target = current.webfileFolderTrail
+      .filter(entry => entry.path === path && entry.position < current.webfilePosition)
+      .at(-1)
+    if (!target) return false
+    window.history.go(target.position - current.webfilePosition)
+    return true
+  }
+
+  function readWebFileHistoryState(): WebFileHistoryState | null {
+    const value = window.history.state as Partial<WebFileHistoryState> | null
+    const position = value?.webfilePosition
+    if (!value || typeof position !== 'number' || !Number.isInteger(position) || !Array.isArray(value.webfileFolderTrail)) return null
+    const folderTrail = value.webfileFolderTrail.filter((entry): entry is FolderHistoryEntry => (
+      typeof entry?.path === 'string' && entry.path.startsWith('/') && Number.isInteger(entry.position)
+    ))
+    return {
+      webfilePath: typeof value.webfilePath === 'string' ? value.webfilePath : '',
+      webfileFile: typeof value.webfileFile === 'string' ? value.webfileFile : null,
+      webfilePosition: position,
+      webfileFolderTrail: folderTrail,
+    }
   }
 
   function storePath(path: string) {
@@ -84,5 +138,5 @@ export function useExplorerNavigation(username: string) {
     }
   }
 
-  return { readSessionPath, readSessionState, readHashPath, readHashFile, writeHash, storePath, clearPath, storeState }
+  return { readSessionPath, readSessionState, readHashPath, readHashFile, writeHash, goToPathInHistory, storePath, clearPath, storeState }
 }
