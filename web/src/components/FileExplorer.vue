@@ -144,6 +144,9 @@ let breadcrumbResizeObserver: ResizeObserver | null = null
 let preferencesLoaded = false
 let navigationReady = false
 let thumbnailBatchGeneration = 0
+let parentHistoryNavigationPending = false
+let queuedParentNavigations = 0
+let ignoreTouchNavigationUntil = 0
 
 const {
   operations,
@@ -311,13 +314,15 @@ const breadcrumbs = computed(() => {
   return crumbs
 })
 
-const parentPath = computed(() => {
-  if (currentPath.value === '/' || currentPath.value === singleRootPath.value) return ''
-  const parts = currentPath.value.split('/').filter(Boolean)
+function parentPathFor(path: string): string {
+  if (path === '/' || path === singleRootPath.value) return ''
+  const parts = path.split('/').filter(Boolean)
   parts.pop()
   const parent = parts.length ? `/${parts.join('/')}` : '/'
   return singleRootPath.value && !parent.startsWith(`${singleRootPath.value}/`) && parent !== singleRootPath.value ? '' : parent
-})
+}
+
+const parentPath = computed(() => parentPathFor(currentPath.value))
 
 onMounted(async () => {
   await loadRootLayout()
@@ -481,13 +486,15 @@ async function applyHashLocation() {
   const request = ++hashFileRequest
   const path = readHashPath()
   const internalPath = path ? toInternalPath(path) : null
-  if (internalPath && internalPath !== currentPath.value) {
+  const pathChanged = Boolean(internalPath && internalPath !== currentPath.value)
+  if (pathChanged && internalPath) {
     currentPath.value = internalPath
   }
   const file = readInternalHashFile()
   if (path && internalPath && path !== toVisiblePath(internalPath)) {
     writePathHash(internalPath, true, file)
   }
+  if (pathChanged && parentHistoryNavigationPending) queueMicrotask(finishParentHistoryNavigation)
   if (!file) {
     previewVisible.value = false
     editorVisible.value = false
@@ -535,16 +542,20 @@ async function refresh(showSpinner: boolean): Promise<boolean> {
 
 function navigateTo(path: string, replaceHistory = false) {
   if (path === currentPath.value) return
+  clearParentNavigationQueue()
   currentPath.value = path
   writePathHash(path, replaceHistory)
 }
 
-function navigateHistoryAware(path: string) {
-  if (path === currentPath.value) return
-  if (!goToPathInHistory(path)) navigateTo(path)
+function navigateHistoryAware(path: string): boolean {
+  if (path === currentPath.value) return false
+  if (goToPathInHistory(path)) return true
+  navigateTo(path)
+  return false
 }
 
 function navigateBreadcrumb(path: string) {
+  clearParentNavigationQueue()
   navigateHistoryAware(path)
 }
 
@@ -577,7 +588,11 @@ function canOpenEntry(entry: FileEntry) {
   return entry.is_dir ? entry.can_navigate !== false : entry.can_read !== false
 }
 
-async function openEntry(entry: FileEntry) {
+async function openEntry(entry: FileEntry, input: 'mouse' | 'touch' = 'mouse') {
+  if (input === 'touch') {
+    if (Date.now() < ignoreTouchNavigationUntil) return
+    ignoreTouchNavigationUntil = Date.now() + 600
+  }
   if (!canOpenEntry(entry)) return
   if (entry.is_dir) {
     navigateTo(entry.path)
@@ -1013,8 +1028,39 @@ function onBackgroundDrop(event: DragEvent) {
   }
 }
 
-function goUp() {
-  if (parentPath.value) navigateHistoryAware(parentPath.value)
+function goUp(input: 'mouse' | 'touch' = 'mouse') {
+  if (input === 'touch') {
+    if (Date.now() < ignoreTouchNavigationUntil) return
+    ignoreTouchNavigationUntil = Date.now() + 600
+  }
+  if (!parentPath.value) return
+  queuedParentNavigations++
+  runQueuedParentNavigation()
+}
+
+function finishParentHistoryNavigation() {
+  if (!parentHistoryNavigationPending) return
+  parentHistoryNavigationPending = false
+  runQueuedParentNavigation()
+}
+
+function clearParentNavigationQueue() {
+  parentHistoryNavigationPending = false
+  queuedParentNavigations = 0
+}
+
+function runQueuedParentNavigation() {
+  if (parentHistoryNavigationPending || queuedParentNavigations === 0) return
+  let target = currentPath.value
+  const requestedLevels = queuedParentNavigations
+  queuedParentNavigations = 0
+  for (let level = 0; level < requestedLevels; level++) {
+    const parent = parentPathFor(target)
+    if (!parent) break
+    target = parent
+  }
+  if (target === currentPath.value) return
+  parentHistoryNavigationPending = navigateHistoryAware(target)
 }
 
 function openFilter() {

@@ -979,6 +979,53 @@ test('parent directory navigation pushes when its target is absent from history'
   await expect(page).toHaveURL(/#path=%2Fone%2Ftwo$/)
 })
 
+for (const view of ['list', 'grid'] as const) {
+  test(`rapid stationary mouse clicks navigate successive folders in ${view} view`, async ({ page }) => {
+    await page.route('**/api/fs/dir**', async route => {
+      const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
+      const children: Record<string, string> = {
+        '/one': '/one/two',
+        '/one/two': '/one/two/three',
+        '/one/two/three': '/one/two/three/four',
+        '/one/two/three/four': '/one/two/three/four/five',
+      }
+      const child = children[path]
+      await route.fulfill({
+        json: {
+          path,
+          entries: child ? [{ name: child.split('/').pop(), path: child, is_dir: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' }] : [],
+        },
+      })
+    })
+
+    await page.goto('/#path=%2Fone')
+    await chooseView(page, view)
+    const session = await page.context().newCDPSession(page)
+    const entryBox = await page.locator('[data-file-entry]').boundingBox()
+    expect(entryBox).not.toBeNull()
+    const entryX = entryBox!.x + entryBox!.width / 2
+    const entryY = entryBox!.y + entryBox!.height / 2
+    for (let clickCount = 1; clickCount <= 8; clickCount++) {
+      await session.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: entryX, y: entryY, button: 'left', clickCount })
+      await session.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: entryX, y: entryY, button: 'left', clickCount })
+      if (clickCount % 2 === 0) await page.waitForTimeout(80)
+    }
+    await expect(page).toHaveURL(/#path=%2Fone%2Ftwo%2Fthree%2Ffour%2Ffive$/)
+
+    const parentBox = await page.getByRole('button', { name: 'Parent directory' }).boundingBox()
+    expect(parentBox).not.toBeNull()
+    const parentX = parentBox!.x + parentBox!.width / 2
+    const parentY = parentBox!.y + parentBox!.height / 2
+    for (let clickCount = 1; clickCount <= 6; clickCount++) {
+      await session.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: parentX, y: parentY, button: 'left', clickCount })
+      await session.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: parentX, y: parentY, button: 'left', clickCount })
+      if (clickCount % 2 === 0) await page.waitForTimeout(80)
+    }
+    await session.detach()
+    await expect(page).toHaveURL(/#path=%2Fone%2Ftwo$/)
+  })
+}
+
 test('Alt+Enter toggles details for the focused item', async ({ page }) => {
   await openConfiguredRoot(page)
   const checkbox = selectionButtons(page).first()

@@ -15,10 +15,10 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [entry: FileEntry, event: MouseEvent]
   focus: [entry: FileEntry, event: MouseEvent]
-  activate: [entry: FileEntry]
+  activate: [entry: FileEntry, input: 'mouse' | 'touch']
   context: [entry: FileEntry, event: MouseEvent | PointerEvent]
   dropfiles: [entry: FileEntry, event: DragEvent]
-  parent: []
+  parent: [input: 'mouse' | 'touch']
 }>()
 
 const viewport = ref<HTMLElement | null>(null)
@@ -83,25 +83,23 @@ function onEntryClick(entry: FileEntry, event: MouseEvent | PointerEvent) {
   if (isTouch) {
     if (Date.now() < ignoreTouchActivationUntil) return
     ignoreTouchActivationUntil = Date.now() + 600
-    emit('activate', entry)
+    emit('activate', entry, 'touch')
     return
   }
-  if (Date.now() >= ignoreTouchActivationUntil) emit('focus', entry, event as MouseEvent)
-}
-
-function onEntryDoubleClick(entry: FileEntry) {
-  if (Date.now() >= ignoreTouchActivationUntil) emit('activate', entry)
+  if (Date.now() < ignoreTouchActivationUntil) return
+  if (event.detail > 0 && event.detail % 2 === 0) emit('activate', entry, 'mouse')
+  else emit('focus', entry, event as MouseEvent)
 }
 
 function onParentClick(event: MouseEvent | PointerEvent) {
   const isTouch = 'pointerType' in event && (event.pointerType === 'touch' || event.pointerType === 'pen')
-  if (!isTouch || Date.now() < ignoreTouchActivationUntil) return
-  ignoreTouchActivationUntil = Date.now() + 600
-  emit('parent')
-}
-
-function onParentDoubleClick() {
-  if (Date.now() >= ignoreTouchActivationUntil) emit('parent')
+  if (isTouch) {
+    if (Date.now() < ignoreTouchActivationUntil) return
+    ignoreTouchActivationUntil = Date.now() + 600
+    emit('parent', 'touch')
+    return
+  }
+  if (Date.now() >= ignoreTouchActivationUntil && event.detail > 0 && event.detail % 2 === 0) emit('parent', 'mouse')
 }
 
 function onSelectionClick(entry: FileEntry, event: MouseEvent) {
@@ -142,8 +140,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
       class="grid h-11 shrink-0 grid-cols-[minmax(18rem,1fr)_8rem_13rem_8rem] items-center border-b border-zinc-900 px-3 text-left text-sm hover:bg-zinc-900/70"
       aria-label="Parent directory"
       @click="onParentClick($event)"
-      @dblclick="onParentDoubleClick"
-      @keydown.enter="emit('parent')"
+      @keydown.enter="emit('parent', 'mouse')"
     >
       <span class="flex min-w-0 items-center gap-3"><span class="h-5 w-5 shrink-0" /><i class="pi pi-folder text-amber-400" /><LevelUpIcon class="h-4 w-4 text-zinc-300" /></span>
       <span class="text-zinc-500">—</span><span /><span />
@@ -162,7 +159,6 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
         data-file-entry
         v-longpress="longPressEntry(row.entry)"
         @click="onEntryClick(row.entry, $event)"
-        @dblclick="onEntryDoubleClick(row.entry)"
         @contextmenu="onContextMenu(row.entry, $event)"
         @dragover="onDragOverFolder(row.entry, $event)"
         @drop="onDropFolder(row.entry, $event)"
