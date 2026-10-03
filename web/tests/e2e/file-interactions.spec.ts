@@ -979,50 +979,6 @@ test('parent directory navigation pushes when its target is absent from history'
   await expect(page).toHaveURL(/#path=%2Fone%2Ftwo$/)
 })
 
-test('rapid parent directory navigation coalesces history traversals', async ({ page }) => {
-  await page.route('**/api/fs/dir**', async route => {
-    const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
-    const children: Record<string, string> = {
-      '/': '/one',
-      '/one': '/one/two',
-      '/one/two': '/one/two/three',
-      '/one/two/three': '/one/two/three/four',
-    }
-    const child = children[path] ?? ''
-    await route.fulfill({
-      json: {
-        path,
-        entries: child ? [{ name: child.split('/').pop(), path: child, is_dir: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' }] : [],
-      },
-    })
-  })
-
-  await page.goto('/')
-  for (const path of ['/one', '/one/two', '/one/two/three', '/one/two/three/four']) {
-    await page.locator('[data-file-entry]').dblclick()
-    await expect(page).toHaveURL(new RegExp(`#path=${encodeURIComponent(path)}$`))
-  }
-  await page.evaluate(() => {
-    const target = window as typeof window & { __historyGoDeltas?: number[] }
-    const go = window.history.go.bind(window.history)
-    target.__historyGoDeltas = []
-    window.history.go = delta => {
-      target.__historyGoDeltas?.push(delta)
-      go(delta)
-    }
-  })
-
-  for (const breadcrumb of ['three', 'two', 'one']) {
-    await page.getByRole('button', { name: 'Parent directory' }).dblclick()
-    await expect(page.getByRole('button', { name: breadcrumb, exact: true })).toBeVisible({ timeout: 250 })
-  }
-
-  await expect(page).toHaveURL(/#path=%2Fone$/)
-  await expect.poll(() => page.evaluate(() => (window as typeof window & { __historyGoDeltas?: number[] }).__historyGoDeltas)).toEqual([-3])
-  await page.goForward()
-  await expect(page).toHaveURL(/#path=%2Fone%2Ftwo$/)
-})
-
 test('Alt+Enter toggles details for the focused item', async ({ page }) => {
   await openConfiguredRoot(page)
   const checkbox = selectionButtons(page).first()
