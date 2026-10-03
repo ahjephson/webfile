@@ -32,11 +32,12 @@ type Config struct {
 }
 
 type Progress struct {
-	Phase      string
-	Percent    int
-	ItemsDone  int64
-	ItemsTotal int64
-	Message    string
+	Phase        string
+	Percent      int
+	PercentKnown bool
+	ItemsDone    int64
+	ItemsTotal   int64
+	Message      string
 }
 
 type PasswordProvider func(context.Context, bool) (string, error)
@@ -226,6 +227,9 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	if report != nil {
+		report(Progress{Phase: "extracting", Message: "Extracting archive — files will appear when complete"})
+	}
 	if password != "" {
 		if _, err := io.WriteString(stdin, password+"\n"); err != nil {
 			cancel()
@@ -281,7 +285,7 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 					if percent != lastPercent {
 						lastPercent = percent
 						if report != nil {
-							report(Progress{Phase: "extracting", Percent: percent, Message: "Extracting archive"})
+							report(Progress{Phase: "extracting", Percent: percent, PercentKnown: true, Message: "Extracting archive — files will appear when complete"})
 						}
 					}
 				}
@@ -296,7 +300,7 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 		if percent != lastPercent {
 			lastPercent = percent
 			if report != nil {
-				report(Progress{Phase: "extracting", Percent: percent, Message: "Extracting archive"})
+				report(Progress{Phase: "extracting", Percent: percent, PercentKnown: true, Message: "Extracting archive — files will appear when complete"})
 			}
 		}
 	}
@@ -313,7 +317,7 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 		return fmt.Errorf("archive tool failed: %w: %s", processErr, sanitizeToolError(output.String()))
 	}
 	if report != nil && lastPercent != 100 {
-		report(Progress{Phase: "extracting", Percent: 100, Message: "Archive extracted"})
+		report(Progress{Phase: "extracting", Percent: 100, PercentKnown: true, Message: "Archive extracted"})
 	}
 	return nil
 }
@@ -353,7 +357,7 @@ type recordParser struct {
 func (p *recordParser) Feed(value string) []string {
 	records := make([]string, 0)
 	for _, current := range []byte(value) {
-		if current == '\r' || current == '\n' {
+		if current == '\r' || current == '\n' || current == '\b' {
 			if p.pending.Len() > 0 {
 				records = append(records, p.pending.String())
 				p.pending.Reset()

@@ -104,11 +104,15 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 				return value, nil
 			}
 			count, err := s.extractor.ExtractInteractive(ctx, source, req.Destination, passwordProvider, func(progress archive.Progress) {
-				if progress.Phase == "extracting" {
+				if progress.Phase == "extracting" && progress.PercentKnown {
 					reporter.Report(operations.ProgressUpdate{
 						Phase: progress.Phase, Message: progress.Message,
 						ProgressDone: int64(progress.Percent), ProgressTotal: 100,
 						ProgressUnit: operations.ProgressUnitPercent,
+					})
+				} else if progress.Phase == "extracting" {
+					reporter.Report(operations.ProgressUpdate{
+						Phase: progress.Phase, Message: progress.Message,
 					})
 				} else {
 					reporter.Report(operations.ProgressUpdate{

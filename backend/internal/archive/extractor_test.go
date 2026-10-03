@@ -106,7 +106,7 @@ printf ok > "$out/file.txt"
 	percentages := make([]int, 0)
 
 	count, err := target.ExtractInteractive(context.Background(), "/Files/sample.7z", "/Files/output", provider, func(progress Progress) {
-		if progress.Phase == "extracting" {
+		if progress.Phase == "extracting" && progress.PercentKnown {
 			percentages = append(percentages, progress.Percent)
 		}
 	})
@@ -128,6 +128,20 @@ printf ok > "$out/file.txt"
 		t.Fatalf("password appeared in arguments: %s", argumentText)
 	}
 	assertNoStaging(t, root)
+}
+
+func TestRecordParserTreatsTerminalBackspacesAsProgressBoundaries(t *testing.T) {
+	var parser recordParser
+	records := append(parser.Feed("  8%\b\b"), parser.Feed("\b\b   42%\b")...)
+	records = append(records, parser.Feed("\b\b\b100%\b")...)
+	records = append(records, parser.Flush())
+	percentages := make([]int, 0)
+	for _, record := range records {
+		percentages = append(percentages, progressPercents(record)...)
+	}
+	if !reflect.DeepEqual(percentages, []int{8, 42, 100}) {
+		t.Fatalf("percentages=%v records=%q", percentages, records)
+	}
 }
 
 func TestExtractDoesNotMisreportFailureAfterPasswordPrompt(t *testing.T) {

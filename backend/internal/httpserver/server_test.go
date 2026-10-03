@@ -177,7 +177,7 @@ func TestDeleteOperationPermanentlyRemovesEntry(t *testing.T) {
 	}
 }
 
-func TestAcceptedArchivePasswordMovesTaskOutOfAwaitingInputWithoutToolProgress(t *testing.T) {
+func TestAcceptedArchivePasswordMovesTaskIntoIndeterminateExtraction(t *testing.T) {
 	target, root := testDownloadServer(t)
 	target.ops = operations.New(10)
 	target.passwords = newPasswordBroker()
@@ -250,7 +250,10 @@ sleep 30
 	deadline = time.Now().Add(2 * time.Second)
 	for {
 		operation := target.ops.List()[0]
-		if operation.State == operations.StateRunning && operation.Phase == "checking_password" {
+		if operation.State == operations.StateRunning && operation.Phase == "extracting" {
+			if operation.ProgressTotal != 0 || operation.Message != "Extracting archive — files will appear when complete" {
+				t.Fatalf("unexpected extraction state: %#v", operation)
+			}
 			break
 		}
 		if operation.State == operations.StateFailed {
