@@ -58,6 +58,7 @@ const {
   readHashPath,
   readHashFile,
   writeHash: writeRawPathHash,
+  historyDeltaForPath,
   goToPathInHistory,
   storePath: storeSessionPath,
   clearPath: clearSessionPath,
@@ -147,8 +148,9 @@ let thumbnailBatchGeneration = 0
 let parentHistoryNavigationPending = false
 let queuedParentNavigations = 0
 let parentHistoryNavigationTimer: number | null = null
-let lastParentHistoryNavigationAt = Number.NEGATIVE_INFINITY
-const parentHistoryNavigationIntervalMs = 500
+let parentHistoryTarget = ''
+let deferredNavigation: (() => void) | null = null
+const parentHistorySettleMs = 400
 
 const {
   operations,
@@ -481,11 +483,11 @@ const gridSizeItems = computed(() => ([
   { label: 'Large tiles', icon: gridSize.value === 'large' ? 'pi pi-check' : undefined, command: () => chooseGridSize('large') },
 ]))
 
-function applyHashPath() {
-  void applyHashLocation()
+function applyHashPath(event: Event) {
+  void applyHashLocation(event.type === 'popstate')
 }
 
-async function applyHashLocation() {
+async function applyHashLocation(fromPopState = false) {
   const request = ++hashFileRequest
   const path = readHashPath()
   const internalPath = path ? toInternalPath(path) : null
@@ -497,10 +499,7 @@ async function applyHashLocation() {
   if (path && internalPath && path !== toVisiblePath(internalPath)) {
     writePathHash(internalPath, true, file)
   }
-  if (pathChanged) {
-    if (parentHistoryNavigationPending) queueMicrotask(finishParentHistoryNavigation)
-    else clearQueuedParentNavigation()
-  }
+  if (fromPopState && parentHistoryNavigationPending) queueMicrotask(finishParentHistoryNavigation)
   if (!file) {
     previewVisible.value = false
     editorVisible.value = false
@@ -546,22 +545,35 @@ async function refresh(showSpinner: boolean): Promise<boolean> {
   }
 }
 
-function navigateTo(path: string, replaceHistory = false) {
+function performNavigation(path: string, replaceHistory = false) {
   if (path === currentPath.value) return
-  clearQueuedParentNavigation()
   currentPath.value = path
   writePathHash(path, replaceHistory)
 }
 
+function deferUntilParentHistorySettles(action: () => void): boolean {
+  if (!parentHistoryTarget && !parentHistoryNavigationPending) return false
+  queuedParentNavigations = 0
+  deferredNavigation = action
+  flushParentHistoryNavigation()
+  return true
+}
+
+function navigateTo(path: string, replaceHistory = false) {
+  if (path === currentPath.value) return
+  if (deferUntilParentHistorySettles(() => performNavigation(path, replaceHistory))) return
+  performNavigation(path, replaceHistory)
+}
+
 function navigateHistoryAware(path: string): boolean {
   if (path === currentPath.value) return false
+  if (deferUntilParentHistorySettles(() => navigateHistoryAware(path))) return true
   if (goToPathInHistory(path)) return true
-  navigateTo(path)
+  performNavigation(path)
   return false
 }
 
 function navigateBreadcrumb(path: string) {
-  clearQueuedParentNavigation()
   navigateHistoryAware(path)
 }
 
@@ -1032,52 +1044,49 @@ function onBackgroundDrop(event: DragEvent) {
 
 function goUp() {
   if (!parentPath.value) return
-  queuedParentNavigations++
-  scheduleQueuedParentNavigation()
+  if (parentHistoryNavigationPending) {
+    queuedParentNavigations++
+    return
+  }
+
+  const target = parentPath.value
+  if (historyDeltaForPath(target) === null) {
+    navigateTo(target)
+    return
+  }
+  currentPath.value = target
+  parentHistoryTarget = target
+  if (parentHistoryNavigationTimer !== null) window.clearTimeout(parentHistoryNavigationTimer)
+  parentHistoryNavigationTimer = window.setTimeout(flushParentHistoryNavigation, parentHistorySettleMs)
 }
 
 function finishParentHistoryNavigation() {
   if (!parentHistoryNavigationPending) return
   parentHistoryNavigationPending = false
-  scheduleQueuedParentNavigation()
+  resumeAfterParentHistoryNavigation()
 }
 
-function clearQueuedParentNavigation() {
-  queuedParentNavigations = 0
-  if (parentHistoryNavigationTimer === null) return
-  window.clearTimeout(parentHistoryNavigationTimer)
-  parentHistoryNavigationTimer = null
-}
-
-function scheduleQueuedParentNavigation() {
-  if (parentHistoryNavigationPending || !queuedParentNavigations) return
-  const wait = Math.max(0, lastParentHistoryNavigationAt + parentHistoryNavigationIntervalMs - performance.now())
-  if (wait > 0) {
-    if (parentHistoryNavigationTimer === null) {
-      parentHistoryNavigationTimer = window.setTimeout(() => {
-        parentHistoryNavigationTimer = null
-        runQueuedParentNavigation()
-      }, wait)
-    }
+function resumeAfterParentHistoryNavigation() {
+  const action = deferredNavigation
+  deferredNavigation = null
+  if (action) {
+    queuedParentNavigations = 0
+    action()
     return
   }
-  runQueuedParentNavigation()
+  const queued = queuedParentNavigations
+  queuedParentNavigations = 0
+  for (let index = 0; index < queued; index++) goUp()
 }
 
-function runQueuedParentNavigation() {
-  if (parentHistoryNavigationPending || !queuedParentNavigations) return
-
-  let target = currentPath.value
-  const requestedLevels = queuedParentNavigations
-  queuedParentNavigations = 0
-  for (let level = 0; level < requestedLevels; level++) {
-    const parent = parentPathFor(target)
-    if (!parent) break
-    target = parent
-  }
-  if (target === currentPath.value) return
-  parentHistoryNavigationPending = navigateHistoryAware(target)
-  if (parentHistoryNavigationPending) lastParentHistoryNavigationAt = performance.now()
+function flushParentHistoryNavigation() {
+  if (parentHistoryNavigationPending || !parentHistoryTarget) return
+  if (parentHistoryNavigationTimer !== null) window.clearTimeout(parentHistoryNavigationTimer)
+  parentHistoryNavigationTimer = null
+  const target = parentHistoryTarget
+  parentHistoryTarget = ''
+  parentHistoryNavigationPending = goToPathInHistory(target)
+  if (!parentHistoryNavigationPending) resumeAfterParentHistoryNavigation()
 }
 
 function openFilter() {

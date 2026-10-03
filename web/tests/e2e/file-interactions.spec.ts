@@ -1012,12 +1012,13 @@ test('rapid parent directory navigation coalesces history traversals', async ({ 
     }
   })
 
-  await page.getByRole('button', { name: 'Parent directory' }).evaluate(element => {
-    for (let index = 0; index < 3; index++) element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
-  })
+  for (const breadcrumb of ['three', 'two', 'one']) {
+    await page.getByRole('button', { name: 'Parent directory' }).dblclick()
+    await expect(page.getByRole('button', { name: breadcrumb, exact: true })).toBeVisible({ timeout: 250 })
+  }
 
   await expect(page).toHaveURL(/#path=%2Fone$/)
-  await expect.poll(() => page.evaluate(() => (window as typeof window & { __historyGoDeltas?: number[] }).__historyGoDeltas)).toEqual([-1, -2])
+  await expect.poll(() => page.evaluate(() => (window as typeof window & { __historyGoDeltas?: number[] }).__historyGoDeltas)).toEqual([-3])
   await page.goForward()
   await expect(page).toHaveURL(/#path=%2Fone%2Ftwo$/)
 })

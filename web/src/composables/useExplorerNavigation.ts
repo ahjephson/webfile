@@ -88,14 +88,19 @@ export function useExplorerNavigation(username: string) {
     window.history[replace ? 'replaceState' : 'pushState'](state, '', url)
   }
 
-  function goToPathInHistory(path: string): boolean {
+  function historyDeltaForPath(path: string): number | null {
     const current = readWebFileHistoryState()
-    if (!current) return false
+    if (!current) return null
     const target = current.webfileFolderTrail
       .filter(entry => entry.path === path && entry.position < current.webfilePosition)
       .at(-1)
-    if (!target) return false
-    window.history.go(target.position - current.webfilePosition)
+    return target ? target.position - current.webfilePosition : null
+  }
+
+  function goToPathInHistory(path: string): boolean {
+    const delta = historyDeltaForPath(path)
+    if (delta === null) return false
+    window.history.go(delta)
     return true
   }
 
@@ -138,5 +143,5 @@ export function useExplorerNavigation(username: string) {
     }
   }
 
-  return { readSessionPath, readSessionState, readHashPath, readHashFile, writeHash, goToPathInHistory, storePath, clearPath, storeState }
+  return { readSessionPath, readSessionState, readHashPath, readHashFile, writeHash, historyDeltaForPath, goToPathInHistory, storePath, clearPath, storeState }
 }
