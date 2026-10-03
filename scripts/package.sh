@@ -21,6 +21,7 @@ CGO_ENABLED=1 go vet -tags "production pam" ./...
 CGO_ENABLED=1 go build -tags "production pam" \
   -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE" \
   -o "$STAGE/webfile" ./cmd/webfile
+go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -mode=binary "$STAGE/webfile"
 
 cp "$ROOT/README.md" "$STAGE/"
 cp "$ROOT/webfile.example.json" "$STAGE/"

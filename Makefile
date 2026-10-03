@@ -1,7 +1,8 @@
-.PHONY: test test-production frontend backend build build-dev dev package
+.PHONY: test test-production audit frontend backend build build-dev dev package
 
 NPM ?= npm
 GO ?= go
+GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.8.0
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -14,6 +15,9 @@ test:
 
 test-production:
 	cd backend && CGO_ENABLED=1 $(GO) test -tags "production pam" ./... && CGO_ENABLED=1 $(GO) vet -tags "production pam" ./...
+
+audit:
+	cd backend && $(GOVULNCHECK) ./...
 
 backend:
 	mkdir -p dist
