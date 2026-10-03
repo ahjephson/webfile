@@ -139,6 +139,7 @@ const extractTarget = ref<FileEntry | null>(null)
 const uploadInput = ref<HTMLInputElement | null>(null)
 const draggingOver = ref(false)
 let invalidateTimer: number | null = null
+let directoryRequestGeneration = 0
 let hashFileRequest = 0
 let breadcrumbResizeObserver: ResizeObserver | null = null
 let preferencesLoaded = false
@@ -348,6 +349,7 @@ watch(currentPath, path => {
   if (!navigationReady) return
   clearSelection()
   clearFocus(path)
+  entries.value = []
   search.value = ''
   setRealtimeDirectory(path)
   void refresh(true)
@@ -507,6 +509,7 @@ function storeSessionExplorerState() {
 }
 
 async function refresh(showSpinner: boolean): Promise<boolean> {
+  const requestGeneration = showSpinner ? ++directoryRequestGeneration : 0
   const requestedPath = currentPath.value
   if (showSpinner) loading.value = true
   error.value = ''
@@ -529,7 +532,7 @@ async function refresh(showSpinner: boolean): Promise<boolean> {
     if (requestedPath === currentPath.value) error.value = messageOf(err)
     return false
   } finally {
-    if (showSpinner) loading.value = false
+    if (showSpinner && requestGeneration === directoryRequestGeneration) loading.value = false
   }
 }
 
@@ -1330,8 +1333,17 @@ function operationLabel(value: string) {
           Drop files to upload
         </div>
 
-        <div v-if="loading" class="grid h-full place-items-center"><ProgressSpinner class="h-10 w-10" /></div>
-        <div v-else-if="search && filteredEntries.length === 0" class="grid h-full place-items-center p-8 text-center text-zinc-500">
+        <div
+          v-if="loading"
+          class="pointer-events-none absolute right-4 z-30 flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/90 px-2 py-1 text-xs text-zinc-400 shadow-lg"
+          :class="viewMode === 'list' ? 'top-12' : 'top-3'"
+          role="status"
+          aria-label="Loading directory"
+        >
+          <ProgressSpinner class="h-4 w-4" />
+          <span>Loading</span>
+        </div>
+        <div v-if="!loading && search && filteredEntries.length === 0" class="grid h-full place-items-center p-8 text-center text-zinc-500">
           <div><i class="pi pi-search mb-3 text-4xl" /><p>No matching files</p></div>
         </div>
         <div v-else class="flex h-full min-h-0 flex-col">
@@ -1342,7 +1354,7 @@ function operationLabel(value: string) {
             v-if="viewMode === 'list'"
             ref="listView"
             class="min-h-0 flex-1"
-            :entries="filteredEntries"
+            :entries="loading ? [] : filteredEntries"
             :selected-paths="[...selectedPaths]"
             :focused-path="focusedPath"
             :selection-controls-visible="selectionControlsVisible"
@@ -1358,7 +1370,7 @@ function operationLabel(value: string) {
             v-else
             ref="gridView"
             class="min-h-0 flex-1"
-            :entries="filteredEntries"
+            :entries="loading ? [] : filteredEntries"
             :selected-paths="[...selectedPaths]"
             :focused-path="focusedPath"
             :selection-controls-visible="selectionControlsVisible"

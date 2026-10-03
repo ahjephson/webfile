@@ -979,6 +979,41 @@ test('parent directory navigation pushes when its target is absent from history'
   await expect(page).toHaveURL(/#path=%2Fone%2Ftwo$/)
 })
 
+test('parent directory remains available while successive folders load', async ({ page }) => {
+  let delayDirectoryResponses = false
+  await page.route('**/api/fs/dir**', async route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
+    if (delayDirectoryResponses) await new Promise(resolve => setTimeout(resolve, 1200))
+    const children: Record<string, string> = {
+      '/': '/one',
+      '/one': '/one/two',
+      '/one/two': '/one/two/three',
+      '/one/two/three': '/one/two/three/four',
+    }
+    const child = children[path]
+    await route.fulfill({
+      json: {
+        path,
+        entries: child ? [{ name: child.split('/').pop(), path: child, is_dir: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' }] : [],
+      },
+    })
+  })
+
+  await page.goto('/')
+  for (const path of ['/one', '/one/two', '/one/two/three', '/one/two/three/four']) {
+    await page.locator('[data-file-entry]').dblclick()
+    await expect(page).toHaveURL(new RegExp(`#path=${encodeURIComponent(path)}$`))
+  }
+
+  delayDirectoryResponses = true
+  for (const path of ['/one/two/three', '/one/two', '/one']) {
+    await page.getByRole('button', { name: 'Parent directory' }).dblclick()
+    await expect(page).toHaveURL(new RegExp(`#path=${encodeURIComponent(path)}$`), { timeout: 500 })
+    await expect(page.getByRole('button', { name: 'Parent directory' })).toBeVisible()
+    await expect(page.getByRole('status', { name: 'Loading directory' })).toBeVisible()
+  }
+})
+
 test('Alt+Enter toggles details for the focused item', async ({ page }) => {
   await openConfiguredRoot(page)
   const checkbox = selectionButtons(page).first()
