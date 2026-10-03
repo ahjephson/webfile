@@ -165,6 +165,15 @@ function formatDate(value?: string) {
         <div v-if="thumbnailsExpanded" id="thumbnail-tasks-content" class="space-y-2">
           <article v-for="job in displayedThumbnailJobs" :key="job.id" class="rounded-lg border border-violet-900/70 bg-violet-950/20 p-3" :data-thumbnail-job="job.id">
             <div class="flex items-start gap-3">
+              <span
+                v-if="job.state !== 'failed'"
+                class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center text-violet-400"
+                role="status"
+                :aria-label="`${job.name} thumbnail task ${job.state}`"
+                data-task-spinner
+              >
+                <i class="pi pi-spinner text-xs motion-safe:animate-spin" aria-hidden="true" />
+              </span>
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-medium">{{ job.name }}</div>
                 <div class="mt-1 truncate text-xs text-zinc-500">
@@ -172,9 +181,6 @@ function formatDate(value?: string) {
                 </div>
               </div>
               <Button v-if="job.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel-thumbnail', job.id)" />
-            </div>
-            <div v-if="job.state !== 'failed'" class="mt-3 h-1.5 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${job.name} thumbnail progress`">
-              <div class="webfile-indeterminate h-full w-1/3 bg-violet-500" />
             </div>
             <p v-if="job.error" class="mt-2 text-xs text-red-300">{{ job.error }}</p>
           </article>

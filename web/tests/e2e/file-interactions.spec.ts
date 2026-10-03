@@ -2429,15 +2429,10 @@ test('task drawer surfaces the transient video thumbnail queue separately', asyn
     'queued-1', 'queued-2', 'queued-3', 'queued-4', 'queued-5', 'queued-6', 'queued-7', 'queued-8',
   ])
   await expect(drawer.getByText('and 3 more', { exact: true })).toBeVisible()
-  const progressBars = drawer.locator('[data-thumbnail-job] .webfile-indeterminate')
-  await expect(progressBars).toHaveCount(10)
-  const progressTransforms = await progressBars.evaluateAll(elements => elements.map(element => getComputedStyle(element).transform))
-  expect(new Set(progressTransforms).size).toBe(1)
-  const firstTransform = progressTransforms[0]
-  await page.waitForTimeout(100)
-  const nextTransforms = await progressBars.evaluateAll(elements => elements.map(element => getComputedStyle(element).transform))
-  expect(new Set(nextTransforms).size).toBe(1)
-  expect(nextTransforms[0]).not.toBe(firstTransform)
+  const thumbnailSpinners = drawer.locator('[data-thumbnail-job] [data-task-spinner]')
+  await expect(thumbnailSpinners).toHaveCount(10)
+  await expect(drawer.getByRole('progressbar')).toHaveCount(0)
+  await expect(drawer.getByRole('status', { name: 'processing-1.mp4 thumbnail task probing' })).toBeVisible()
 
   await drawer.getByRole('button', { name: 'Collapse Video thumbnails (13)' }).click()
   await expect(drawer.locator('[data-thumbnail-job]')).toHaveCount(0)
