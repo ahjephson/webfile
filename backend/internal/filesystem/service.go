@@ -377,7 +377,17 @@ func (s *Service) Rename(ctx context.Context, from, to string) error {
 	if fromRoot.Name != toRoot.Name {
 		return errors.New("rename cannot cross configured roots; use the move operation")
 	}
-	return renameNoReplace(fromAbs, toAbs)
+	from = CleanVirtual(from)
+	s.videoQueue.cancelPath(ctx, from)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cached := s.collectCachedThumbnails(ctx, from)
+	if err := renameNoReplace(fromAbs, toAbs); err != nil {
+		return err
+	}
+	s.moveCachedThumbnails(context.WithoutCancel(ctx), cached, CleanVirtual(to))
+	return nil
 }
 
 func (s *Service) Delete(ctx context.Context, virtualPath string) error {
@@ -391,7 +401,17 @@ func (s *Service) Delete(ctx context.Context, virtualPath string) error {
 	if err != nil {
 		return err
 	}
-	return os.RemoveAll(abs)
+	virtualPath = CleanVirtual(virtualPath)
+	s.videoQueue.cancelPath(ctx, virtualPath)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cached := s.collectCachedThumbnails(ctx, virtualPath)
+	if err := os.RemoveAll(abs); err != nil {
+		return err
+	}
+	s.deleteCachedThumbnails(context.WithoutCancel(ctx), cached)
+	return nil
 }
 
 func (s *Service) OpenDownload(ctx context.Context, virtualPath string) (*os.File, os.FileInfo, error) {

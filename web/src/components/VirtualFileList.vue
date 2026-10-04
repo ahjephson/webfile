@@ -7,6 +7,7 @@ import LevelUpIcon from '@/components/LevelUpIcon.vue'
 const props = defineProps<{
   entries: FileEntry[]
   selectedPaths: string[]
+  cutPaths: string[]
   focusedPath: string
   selectionControlsVisible: boolean
   parentPath?: string
@@ -28,8 +29,10 @@ const rowHeight = 44
 const overscan = 10
 let observer: ResizeObserver | null = null
 let ignoreTouchActivationUntil = 0
+let touchPointerUntil = 0
 
 const selected = computed(() => new Set(props.selectedPaths))
+const cut = computed(() => new Set(props.cutPaths))
 const startIndex = computed(() => Math.max(0, Math.floor(scrollTop.value / rowHeight) - overscan))
 const endIndex = computed(() => Math.min(props.entries.length, Math.ceil((scrollTop.value + viewportHeight.value) / rowHeight) + overscan))
 const visible = computed(() => props.entries.slice(startIndex.value, endIndex.value).map((entry, offset) => ({ entry, index: startIndex.value + offset })))
@@ -78,8 +81,20 @@ function onDragOverFolder(entry: FileEntry, event: DragEvent) {
   if (entry.is_dir && [...(event.dataTransfer?.types ?? [])].includes('Files')) event.preventDefault()
 }
 
+function onEntryPointerDown(event: PointerEvent) {
+  if ((event.target as Element).closest('[data-selection-control]')) return
+  if (event.pointerType === 'touch' || event.pointerType === 'pen') touchPointerUntil = Date.now() + 1000
+}
+
+function isTouchActivation(event: MouseEvent | PointerEvent) {
+  const directTouch = 'pointerType' in event && (event.pointerType === 'touch' || event.pointerType === 'pen')
+  const followsTouchPointer = Date.now() < touchPointerUntil
+  if (directTouch || followsTouchPointer) touchPointerUntil = 0
+  return directTouch || followsTouchPointer
+}
+
 function onEntryClick(entry: FileEntry, event: MouseEvent | PointerEvent) {
-  const isTouch = 'pointerType' in event && (event.pointerType === 'touch' || event.pointerType === 'pen')
+  const isTouch = isTouchActivation(event)
   if (isTouch) {
     if (Date.now() < ignoreTouchActivationUntil) return
     ignoreTouchActivationUntil = Date.now() + 600
@@ -91,15 +106,20 @@ function onEntryClick(entry: FileEntry, event: MouseEvent | PointerEvent) {
   else emit('focus', entry, event as MouseEvent)
 }
 
+function onParentPointerDown(event: PointerEvent) {
+  if (event.pointerType === 'touch' || event.pointerType === 'pen') touchPointerUntil = Date.now() + 1000
+}
+
 function onParentClick(event: MouseEvent | PointerEvent) {
-  const isTouch = 'pointerType' in event && (event.pointerType === 'touch' || event.pointerType === 'pen')
+  const isTouch = isTouchActivation(event)
   if (isTouch) {
     if (Date.now() < ignoreTouchActivationUntil) return
     ignoreTouchActivationUntil = Date.now() + 600
     emit('parent', 'touch')
     return
   }
-  if (Date.now() >= ignoreTouchActivationUntil && event.detail > 0 && event.detail % 2 === 0) emit('parent', 'mouse')
+  if (Date.now() < ignoreTouchActivationUntil) return
+  emit('parent', 'mouse')
 }
 
 function onSelectionClick(entry: FileEntry, event: MouseEvent) {
@@ -140,7 +160,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
       class="grid h-11 shrink-0 grid-cols-[minmax(18rem,1fr)_8rem_13rem_8rem] items-center border-b border-zinc-900 px-3 text-left text-sm hover:bg-zinc-900/70"
       aria-label="Parent directory"
       @click="onParentClick($event)"
-      @keydown.enter="emit('parent', 'mouse')"
+      @pointerdown="onParentPointerDown($event)"
     >
       <span class="flex min-w-0 items-center gap-3"><span class="h-5 w-5 shrink-0" /><i class="pi pi-folder text-amber-400" /><LevelUpIcon class="h-4 w-4 text-zinc-300" /></span>
       <span class="text-zinc-500">—</span><span /><span />
@@ -150,15 +170,18 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
       <div
         v-for="row in visible"
         :key="row.entry.path"
-        class="absolute left-0 right-0 grid cursor-default grid-cols-[minmax(18rem,1fr)_8rem_13rem_8rem] items-center border-b border-zinc-900 px-3 text-sm hover:bg-zinc-900/70"
+        class="absolute left-0 right-0 grid cursor-default grid-cols-[minmax(18rem,1fr)_8rem_13rem_8rem] items-center border-b border-zinc-900 px-3 text-sm transition-opacity hover:bg-zinc-900/70"
         :class="[
           focusedPath === row.entry.path && selected.has(row.entry.path) ? 'webfile-focus-tint' : selected.has(row.entry.path) ? 'webfile-selection-tint' : '',
           selected.has(row.entry.path) || focusedPath === row.entry.path ? 'outline outline-1 -outline-offset-1 outline-sky-500/70' : '',
+          cut.has(row.entry.path) ? 'opacity-50' : '',
         ]"
         :style="{ height: `${rowHeight}px`, transform: `translateY(${row.index * rowHeight}px)` }"
+        :data-cut="cut.has(row.entry.path) ? 'true' : undefined"
         data-file-entry
         v-longpress="longPressEntry(row.entry)"
         @click="onEntryClick(row.entry, $event)"
+        @pointerdown="onEntryPointerDown($event)"
         @contextmenu="onContextMenu(row.entry, $event)"
         @dragover="onDragOverFolder(row.entry, $event)"
         @drop="onDropFolder(row.entry, $event)"

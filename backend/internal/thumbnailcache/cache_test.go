@@ -66,6 +66,22 @@ func TestUnixClientRequiresMatchingPeerCapability(t *testing.T) {
 	if _, ok, err := client.Get(context.Background(), key); err != nil || !ok {
 		t.Fatalf("authorized get: ok=%v err=%v", ok, err)
 	}
+	movedKey := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	if err := client.Move(context.Background(), key, movedKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := client.Get(context.Background(), key); err != nil || ok {
+		t.Fatalf("old key after move: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := client.Get(context.Background(), movedKey); err != nil || !ok {
+		t.Fatalf("new key after move: ok=%v err=%v", ok, err)
+	}
+	if err := client.Delete(context.Background(), movedKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := client.Get(context.Background(), movedKey); err != nil || ok {
+		t.Fatalf("key after delete: ok=%v err=%v", ok, err)
+	}
 	if _, _, err := NewClient(socket, "wrong").Get(context.Background(), key); err == nil {
 		t.Fatal("wrong cache capability was accepted")
 	}

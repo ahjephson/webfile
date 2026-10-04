@@ -36,6 +36,10 @@ const EditorDialog = defineAsyncComponent(() => import('@/components/EditorDialo
 type ViewMode = 'list' | 'grid'
 type GridSize = 'small' | 'medium' | 'large'
 type TransferMode = 'copy' | 'move'
+type FileClipboard = {
+  mode: TransferMode
+  paths: string[]
+}
 const props = defineProps<{
   username: string
   showLogout: boolean
@@ -134,6 +138,7 @@ const thumbnailBatchReady = ref(true)
 const detailsVisible = ref(restoredExplorerState.detailsVisible)
 const detailsPath = ref(restoredStateMatchesPath ? restoredExplorerState.detailsPath : currentPath.value)
 const transferEntries = ref<FileEntry[]>([])
+const fileClipboard = ref<FileClipboard | null>(null)
 const renameTarget = ref<FileEntry | null>(null)
 const extractTarget = ref<FileEntry | null>(null)
 const uploadInput = ref<HTMLInputElement | null>(null)
@@ -251,6 +256,8 @@ watch([viewMode, orderedVideoThumbnailPaths], async ([mode, paths]) => {
 const selectedEntries = computed(() => entries.value.filter(entry => selectedPaths.value.has(entry.path)))
 const selectedOne = computed(() => selectedEntries.value.length === 1 ? selectedEntries.value[0] : null)
 const canMutate = computed(() => currentPath.value !== '/')
+const canPaste = computed(() => canMutate.value && Boolean(fileClipboard.value?.paths.length))
+const cutPaths = computed(() => fileClipboard.value?.mode === 'move' ? fileClipboard.value.paths : [])
 const elevationLabel = computed(() => {
   if (!props.elevationExpiresAt) return 'Elevated access active'
   const expires = new Date(props.elevationExpiresAt)
@@ -267,7 +274,9 @@ const themeItems = computed(() => (['system', 'dark', 'light'] as ThemeMode[]).m
 const contextItems = computed(() => {
   const clicked = contextEntry.value
   const items = clicked && !selectedPaths.value.has(clicked.path) ? [clicked] : selectedEntries.value
-  if (items.length === 0) return []
+  if (items.length === 0) {
+    return fileClipboard.value ? [{ label: 'Paste', icon: 'pi pi-clipboard', disabled: !canPaste.value, command: pasteClipboard }] : []
+  }
   const one = items.length === 1 ? items[0] : null
   const containsConfiguredRoot = currentPath.value === '/' && items.length > 0
   const result: Array<{ label?: string; icon?: string; command?: () => void; separator?: boolean; disabled?: boolean }> = []
@@ -289,11 +298,16 @@ const contextItems = computed(() => {
   if (!containsConfiguredRoot) {
     result.push(
       { separator: true },
+      { label: `Copy${items.length > 1 ? ` ${items.length} items` : ''}`, icon: 'pi pi-copy', command: () => setFileClipboard('copy', items) },
+      { label: `Cut${items.length > 1 ? ` ${items.length} items` : ''}`, icon: 'pi pi-file-export', command: () => setFileClipboard('move', items) },
       { label: `Copy${items.length > 1 ? ` ${items.length} items` : ''} to…`, icon: 'pi pi-copy', command: () => openTransfer('copy', items) },
       { label: `Move${items.length > 1 ? ` ${items.length} items` : ''} to…`, icon: 'pi pi-arrow-right', command: () => openTransfer('move', items) },
     )
     if (one) result.push({ label: 'Rename…', icon: 'pi pi-pencil', command: () => openRename(one) })
     result.push({ label: 'Delete', icon: 'pi pi-trash', command: () => deleteEntries(items) })
+  }
+  if (fileClipboard.value) {
+    result.push({ separator: true }, { label: 'Paste', icon: 'pi pi-clipboard', disabled: !canPaste.value, command: pasteClipboard })
   }
   return result
 })
@@ -561,6 +575,7 @@ function navigateBreadcrumb(path: string) {
 
 function showOperationTerminalToast(operation: FileOperation) {
   if (operation.state === 'completed') {
+    if (operation.kind === 'copy' || operation.kind === 'move') return
     toast.add({ severity: 'success', summary: `${operationLabel(operation.kind)} complete`, detail: operation.message || undefined, life: 2500 })
   } else if (operation.state === 'failed') {
     toast.add({ severity: 'error', summary: `${operationLabel(operation.kind)} failed`, detail: operation.error, life: 6000 })
@@ -803,6 +818,19 @@ async function submitTransfer(destination: string) {
   await beginOperation(transferMode.value, transferEntries.value.map(entry => entry.path), destination)
 }
 
+function setFileClipboard(mode: TransferMode, items: FileEntry[] = selectedEntries.value) {
+  if (items.length === 0 || currentPath.value === '/') return
+  fileClipboard.value = { mode, paths: items.map(item => item.path) }
+}
+
+async function pasteClipboard() {
+  const clipboard = fileClipboard.value
+  if (!clipboard || !canPaste.value) return
+  if (await beginOperation(clipboard.mode, clipboard.paths, currentPath.value) && clipboard.mode === 'move') {
+    fileClipboard.value = null
+  }
+}
+
 function deleteEntries(items: FileEntry[] = selectedEntries.value) {
   if (items.length === 0 || currentPath.value === '/') return
   const description = items.length === 1 ? `“${items[0].name}”` : `${items.length} items`
@@ -825,8 +853,10 @@ async function beginOperation(kind: 'copy' | 'move' | 'delete' | 'extract', sour
     const copyChunkMiB = kind === 'copy' || kind === 'move' ? userPreferences.value.copy_chunk_mib : undefined
     await startFileOperation(kind, sources, destination, copyChunkMiB)
     signalTaskAdded()
+    return true
   } catch (err) {
     showError(err, `Could not start ${kind}`)
+    return false
   }
 }
 
@@ -1124,6 +1154,19 @@ function onKeyDown(event: KeyboardEvent) {
     return
   }
   if (event.target instanceof HTMLButtonElement || event.target instanceof HTMLInputElement) return
+  if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+    const key = event.key.toLowerCase()
+    if ((key === 'c' || key === 'x') && selectedEntries.value.length) {
+      event.preventDefault()
+      setFileClipboard(key === 'c' ? 'copy' : 'move')
+      return
+    }
+    if (key === 'v' && canPaste.value) {
+      event.preventDefault()
+      void pasteClipboard()
+      return
+    }
+  }
   if (event.key.toLowerCase() === 'a' && (event.ctrlKey || event.metaKey)) {
     event.preventDefault()
     selectAll()
@@ -1241,7 +1284,7 @@ function operationLabel(value: string) {
         <span class="mx-1 h-6 w-px bg-zinc-700" />
         <div class="flex items-center gap-1">
           <Button v-tooltip.bottom="detailsVisible ? 'Close details' : 'Open details'" icon="pi pi-info-circle" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': detailsVisible }" :aria-label="detailsVisible ? 'Close details' : 'Open details'" :aria-pressed="detailsVisible" @click="toggleDetailsPanel" />
-          <Button v-if="selectedEntries.length" v-tooltip.bottom="'Actions'" icon="pi pi-ellipsis-v" size="small" severity="secondary" text aria-label="Actions" @click="showActionsMenu" />
+          <Button v-if="selectedEntries.length || fileClipboard" v-tooltip.bottom="'Actions'" icon="pi pi-ellipsis-v" size="small" severity="secondary" text aria-label="Actions" @click="showActionsMenu" />
         </div>
 
         <span class="min-w-2 flex-1" />
@@ -1390,6 +1433,7 @@ function operationLabel(value: string) {
             class="min-h-0 flex-1"
             :entries="filteredEntries"
             :selected-paths="[...selectedPaths]"
+            :cut-paths="cutPaths"
             :focused-path="focusedPath"
             :selection-controls-visible="selectionControlsVisible"
             :parent-path="parentPath"
@@ -1406,6 +1450,7 @@ function operationLabel(value: string) {
             class="min-h-0 flex-1"
             :entries="filteredEntries"
             :selected-paths="[...selectedPaths]"
+            :cut-paths="cutPaths"
             :focused-path="focusedPath"
             :selection-controls-visible="selectionControlsVisible"
             :size="gridSize"

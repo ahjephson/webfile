@@ -3,6 +3,7 @@ package thumbnailcache
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -67,6 +68,45 @@ func (c *Client) Put(ctx context.Context, key string, item Item) error {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("thumbnail cache put: %s", response.Status)
+	}
+	return nil
+}
+
+func (c *Client) Move(ctx context.Context, from, to string) error {
+	body, err := json.Marshal(struct {
+		Key string `json:"key"`
+	}{Key: to})
+	if err != nil {
+		return err
+	}
+	req, err := c.request(ctx, http.MethodPost, from+"/move", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	response, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("thumbnail cache move: %s", response.Status)
+	}
+	return nil
+}
+
+func (c *Client) Delete(ctx context.Context, key string) error {
+	req, err := c.request(ctx, http.MethodDelete, key, nil)
+	if err != nil {
+		return err
+	}
+	response, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("thumbnail cache delete: %s", response.Status)
 	}
 	return nil
 }

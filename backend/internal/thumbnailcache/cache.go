@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,8 @@ type Item struct {
 type Cache interface {
 	Get(context.Context, string) (Item, bool, error)
 	Put(context.Context, string, Item) error
+	Move(context.Context, string, string) error
+	Delete(context.Context, string) error
 }
 
 type Store struct {
@@ -96,6 +99,43 @@ func (s *Store) Put(ctx context.Context, key string, item Item) error {
 	return s.pruneLocked()
 }
 
+func (s *Store) Move(ctx context.Context, from, to string) error {
+	if err := validateKey(from); err != nil {
+		return err
+	}
+	if err := validateKey(to); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if from == to {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Rename(s.dataPath(from), s.dataPath(to)); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else {
+		return err
+	}
+}
+
+func (s *Store) Delete(ctx context.Context, key string) error {
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.dataPath(key)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /cache/{key}", func(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +160,28 @@ func (s *Store) Handler() http.Handler {
 			return
 		}
 		if err := s.Put(r.Context(), r.PathValue("key"), Item{Data: data, ContentType: r.Header.Get("Content-Type")}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("POST /cache/{key}/move", func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var request struct {
+			Key string `json:"key"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil {
+			http.Error(w, "invalid move request", http.StatusBadRequest)
+			return
+		}
+		if err := s.Move(r.Context(), r.PathValue("key"), request.Key); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("DELETE /cache/{key}", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.Delete(r.Context(), r.PathValue("key")); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

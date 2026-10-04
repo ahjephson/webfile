@@ -129,11 +129,20 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 		target := filepath.Join(destAbs, filepath.Base(source.Absolute))
 		message := fmt.Sprintf("%s %s", strings.ToUpper(kind[:1])+kind[1:], path.Base(source.VirtualPath))
 
+		var cached []cachedThumbnail
+		if kind == "move" {
+			s.videoQueue.cancelPath(ctx, source.VirtualPath)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			cached = s.collectCachedThumbnails(ctx, source.VirtualPath)
+		}
 		if kind == "move" && source.Root.Name == destRoot.Name {
 			if err := renameNoReplace(source.Absolute, target); err == nil {
 				bytesDone += source.Bytes
 				itemsDone += source.Items
 				emit(transferPhaseCompleted, message)
+				s.finishThumbnailMove(ctx, source.VirtualPath, destinationDir, cached)
 				continue
 			} else if errors.Is(err, ErrConflict) {
 				return err
@@ -157,6 +166,7 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 			if err := os.RemoveAll(source.Absolute); err != nil {
 				return fmt.Errorf("copied but could not remove source %s: %w", source.VirtualPath, err)
 			}
+			s.finishThumbnailMove(ctx, source.VirtualPath, destinationDir, cached)
 		}
 	}
 

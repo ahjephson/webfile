@@ -310,7 +310,19 @@ for (const view of ['list', 'grid'] as const) {
       await expect(page.locator('[aria-pressed="true"][data-selection-control]')).toHaveCount(0)
     })
 
-    test('parent navigation requires a mouse double click', async ({ page }) => {
+    test('Safari compatibility click after a touch pointer opens a folder', async ({ page }) => {
+      const entry = entryFor(selectionButtons(page).first())
+      const breadcrumbBefore = await page.locator('nav[aria-label="Breadcrumb"] button').count()
+
+      await entry.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1, isPrimary: true })
+      await entry.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1, isPrimary: true })
+      await entry.dispatchEvent('click', { detail: 1 })
+
+      await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(breadcrumbBefore + 1)
+      await expect(page.locator('[aria-pressed="true"][data-selection-control]')).toHaveCount(0)
+    })
+
+    test('parent navigation works with a single mouse click', async ({ page }) => {
       await entryFor(selectionButtons(page).first()).dblclick()
       await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(2)
       const parent = page.getByRole('button', { name: 'Parent directory' })
@@ -319,9 +331,6 @@ for (const view of ['list', 'grid'] as const) {
       await expect(parent.locator('[data-level-up-icon]')).toBeVisible()
       await expect(parent).not.toContainText('..')
       await parent.click()
-      await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(breadcrumbBefore)
-      await parent.dblclick()
-
       await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(breadcrumbBefore - 1)
     })
 
@@ -384,6 +393,8 @@ for (const view of ['list', 'grid'] as const) {
       await expect(menu.getByRole('menuitem', { name: 'Open' })).toBeVisible()
       await expect(menu.getByRole('menuitem', { name: 'Download' })).toBeVisible()
       await expect(menu.getByRole('menuitem', { name: 'Details' })).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: 'Copy', exact: true })).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: 'Cut', exact: true })).toBeVisible()
       await expect(menu.getByRole('menuitem', { name: 'Copy to…' })).toBeVisible()
       await expect(menu.getByRole('menuitem', { name: 'Move to…' })).toBeVisible()
       await expect(menu.getByRole('menuitem', { name: 'Rename…' })).toBeVisible()
@@ -461,6 +472,86 @@ for (const view of ['list', 'grid'] as const) {
       await page.getByRole('menuitem', { name: 'Details' }).click()
       await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
     })
+  })
+}
+
+for (const action of ['Copy', 'Cut'] as const) {
+  test(`${action.toLowerCase()} and paste targets the currently open directory`, async ({ page }) => {
+    let submitted: Record<string, unknown> | undefined
+    await page.route('**/api/fs/dir**', async route => {
+      const path = new URL(route.request().url()).searchParams.get('path') ?? '/Files'
+      const entries = path === '/Files'
+        ? [
+            { name: 'source', path: '/Files/source', is_dir: true, can_navigate: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' },
+            { name: 'destination', path: '/Files/destination', is_dir: true, can_navigate: true, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' },
+          ]
+        : path === '/Files/source'
+          ? [{ name: 'item.txt', path: '/Files/source/item.txt', is_dir: false, can_read: true, size: 1, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }]
+          : []
+      await route.fulfill({ json: { path, entries, single_root_path: '/Files' } })
+    })
+    await page.route('**/api/fs/operations', async route => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({ json: { operations: [] } })
+        return
+      }
+      submitted = route.request().postDataJSON() as Record<string, unknown>
+      await route.fulfill({
+        status: 202,
+        json: {
+          id: `${action.toLowerCase()}-paste`,
+          kind: action === 'Copy' ? 'copy' : 'move',
+          sources: ['/Files/source/item.txt'],
+          destination: '/Files/destination',
+          state: 'queued',
+          phase: 'queued',
+          message: 'Queued',
+          progress_done: 0,
+          progress_total: 1,
+          progress_unit: 'items',
+          bytes_done: 0,
+          bytes_total: 1,
+          items_done: 0,
+          items_total: 1,
+          cancellable: true,
+          cleanup_policy: 'Incomplete output is removed.',
+          started_at: '2000-01-01T00:00:00Z',
+          updated_at: '2000-01-01T00:00:00Z',
+        },
+      })
+    })
+
+    await page.goto('/#path=%2Fsource')
+    await showSelectionControls(page)
+    await page.getByRole('button', { name: 'Select item.txt' }).click()
+    await page.getByRole('button', { name: 'Actions' }).click()
+    await page.getByRole('menu').filter({ visible: true }).getByRole('menuitem', { name: action, exact: true }).click()
+
+    const sourceEntry = page.locator('[data-file-entry]').filter({ hasText: 'item.txt' })
+    if (action === 'Cut') {
+      await expect(sourceEntry).toHaveAttribute('data-cut', 'true')
+    } else {
+      await expect(sourceEntry).not.toHaveAttribute('data-cut', 'true')
+    }
+    await expect(page.getByText(`${action === 'Copy' ? 'Copied' : 'Cut'} 1 item`, { exact: false })).toHaveCount(0)
+    await expect(page.getByText('Navigate to the destination and choose Paste.', { exact: true })).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Files', exact: true }).click()
+    await page.locator('[data-file-entry]').filter({ hasText: 'destination' }).dblclick()
+    await expect(page).toHaveURL(/#path=%2Fdestination$/)
+    await expect(page.getByRole('button', { name: 'Actions' })).toBeVisible()
+    await page.getByRole('button', { name: 'Actions' }).click()
+    await page.getByRole('menu').filter({ visible: true }).getByRole('menuitem', { name: 'Paste', exact: true }).click()
+
+    await expect(page.getByText(/^(Copy|Move) complete$/)).toHaveCount(0)
+
+    await expect.poll(() => submitted).toMatchObject({
+      kind: action === 'Copy' ? 'copy' : 'move',
+      sources: ['/Files/source/item.txt'],
+      destination: '/Files/destination',
+    })
+    if (action === 'Copy') await expect(page.getByRole('button', { name: 'Actions' })).toBeVisible()
+    else await expect(page.getByRole('button', { name: 'Actions' })).toHaveCount(0)
   })
 }
 
@@ -830,6 +921,49 @@ test('destination folders select on one click or tap and open on a double action
   await expect.poll(() => requestedPaths).toContain('/Files/folder')
 })
 
+for (const mode of ['Copy', 'Move'] as const) {
+  test(`${mode.toLowerCase()} destination can create and select a new folder`, async ({ page }) => {
+    const entries = [
+      { name: 'source.txt', path: '/Files/source.txt', is_dir: false, can_read: true, size: 1, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' },
+    ]
+    const createdPaths: string[] = []
+    await page.route('**/api/fs/dir**', route => route.fulfill({
+      json: { path: '/Files', entries, single_root_path: '/Files' },
+    }))
+    await page.route('**/api/fs/mkdir', async route => {
+      const { path } = route.request().postDataJSON() as { path: string }
+      createdPaths.push(path)
+      entries.push({
+        name: path.split('/').pop()!,
+        path,
+        is_dir: true,
+        can_read: true,
+        size: 0,
+        modified: '2000-01-01T00:00:00Z',
+        mode: 'drwxr-xr-x',
+      })
+      await route.fulfill({ json: { ok: true } })
+    })
+
+    await page.goto('/#path=%2FFiles')
+    await showSelectionControls(page)
+    await page.locator('[data-file-entry]').filter({ hasText: 'source.txt' }).locator('[data-selection-control]').click()
+    await page.getByRole('button', { name: 'Actions' }).click()
+    await page.getByRole('menuitem', { name: `${mode} to…` }).click()
+
+    const destinationDialog = page.getByRole('dialog', { name: `${mode} to…` })
+    await destinationDialog.getByRole('button', { name: 'New folder' }).click()
+    const nameDialog = page.getByRole('dialog', { name: 'New folder' })
+    await nameDialog.locator('input').fill(`${mode.toLowerCase()}-destination`)
+    await nameDialog.getByRole('button', { name: 'Create', exact: true }).click()
+
+    const createdPath = `/Files/${mode.toLowerCase()}-destination`
+    await expect.poll(() => createdPaths).toEqual([createdPath])
+    await expect(destinationDialog.getByRole('button', { name: `${mode.toLowerCase()}-destination`, exact: true })).toBeVisible()
+    await expect(destinationDialog).toContainText(`Destination: ${createdPath}`)
+  })
+}
+
 test('the destination browser uses the main listing visibility preferences', async ({ page }) => {
   await page.route('**/api/preferences', route => route.fulfill({
     json: { show_hidden: false, hide_inaccessible: true },
@@ -957,7 +1091,7 @@ test('parent directory navigation pops to its existing history entry', async ({ 
     window.addEventListener('popstate', () => { target.__parentPopCount = (target.__parentPopCount ?? 0) + 1 })
   })
 
-  await page.getByRole('button', { name: 'Parent directory' }).dblclick()
+  await page.getByRole('button', { name: 'Parent directory' }).click()
 
   await expect(page).toHaveURL(/#path=%2Fone%2Ftwo$/)
   await expect.poll(() => page.evaluate(() => (window as typeof window & { __parentPopCount?: number }).__parentPopCount)).toBe(1)
@@ -972,7 +1106,7 @@ test('parent directory navigation pushes when its target is absent from history'
   })
 
   await page.goto('/#path=%2Fone%2Ftwo')
-  await page.getByRole('button', { name: 'Parent directory' }).dblclick()
+  await page.getByRole('button', { name: 'Parent directory' }).click()
   await expect(page).toHaveURL(/#path=%2Fone$/)
 
   await page.goBack()
@@ -1016,10 +1150,10 @@ for (const view of ['list', 'grid'] as const) {
     expect(parentBox).not.toBeNull()
     const parentX = parentBox!.x + parentBox!.width / 2
     const parentY = parentBox!.y + parentBox!.height / 2
-    for (let clickCount = 1; clickCount <= 6; clickCount++) {
+    for (let clickCount = 1; clickCount <= 3; clickCount++) {
       await session.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: parentX, y: parentY, button: 'left', clickCount })
       await session.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: parentX, y: parentY, button: 'left', clickCount })
-      if (clickCount % 2 === 0) await page.waitForTimeout(80)
+      await page.waitForTimeout(80)
     }
     await session.detach()
     await expect(page).toHaveURL(/#path=%2Fone%2Ftwo$/)
@@ -1602,7 +1736,7 @@ test('details follows row focus and falls back to the current folder during navi
   await rows.nth(1).click()
   await expect(detailsPane.getByText('/root/second.txt', { exact: true })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Parent directory' }).dblclick()
+  await page.getByRole('button', { name: 'Parent directory' }).click()
   await expect(detailsPane.getByText('/', { exact: true })).toBeVisible()
 })
 
@@ -1927,6 +2061,14 @@ test('image gallery preloads neighbours and supports swipe, pinch, and explicit 
     touchPoints: [{ x: centerX - 20, y: centerY, radiusX: 2, radiusY: 2, force: 1 }],
   })
   await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  const galleryTrack = page.locator('[data-gallery-track]')
+  await expect(galleryTrack).toHaveAttribute('data-gallery-animating', 'true')
+  await expect(preview.getByRole('img', { name: 'image-06.svg', exact: true })).toBeVisible()
+  await galleryTrack.evaluate(element => {
+    element.dispatchEvent(new TransitionEvent('transitionend', { propertyName: 'transform' }))
+  })
+  await expect(preview.getByRole('img', { name: 'image-07.svg', exact: true })).toBeVisible({ timeout: 100 })
+
   await expect(preview.getByRole('img', { name: 'image-07.svg', exact: true })).toBeVisible()
   await expect.poll(() => [...requestedImages].sort()).toEqual(Array.from({ length: 12 }, (_, index) => `/image-${String(index + 1).padStart(2, '0')}.svg`))
 

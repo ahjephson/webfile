@@ -406,3 +406,20 @@ func (c *memoryThumbnailCache) Put(_ context.Context, key string, item thumbnail
 	c.mu.Unlock()
 	return nil
 }
+
+func (c *memoryThumbnailCache) Move(_ context.Context, from, to string) error {
+	c.mu.Lock()
+	if item, ok := c.items[from]; ok {
+		c.items[to] = item
+		delete(c.items, from)
+	}
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *memoryThumbnailCache) Delete(_ context.Context, key string) error {
+	c.mu.Lock()
+	delete(c.items, key)
+	c.mu.Unlock()
+	return nil
+}

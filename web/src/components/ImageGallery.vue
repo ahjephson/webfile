@@ -519,6 +519,23 @@ function snapBack() {
   setTimeout(() => { trackAnimating.value = false }, reducedMotion.value ? 0 : 220)
 }
 
+function finishAnimatedNavigation() {
+  const path = transitionTargetPath.value
+  if (!path) return
+  if (navigationTimer !== null) clearTimeout(navigationTimer)
+  navigationTimer = null
+  emit('navigate', path)
+}
+
+function onTrackTransitionEnd(event: TransitionEvent) {
+  if (event.target !== track.value || event.propertyName !== 'transform' || !trackAnimating.value) return
+  finishAnimatedNavigation()
+}
+
+function nextAnimationFrame() {
+  return new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+}
+
 async function animateNavigate(direction: -1 | 1) {
   if (trackAnimating.value || navigationPending || (direction < 0 && !canPrevious.value) || (direction > 0 && !canNext.value)) return
   const entry = direction > 0 ? nextEntry.value : previousEntry.value
@@ -530,13 +547,21 @@ async function animateNavigate(direction: -1 | 1) {
   const width = viewport.value?.clientWidth ?? 1
   transitionTargetPath.value = entry.path
   syncActiveThumbnail()
+  if (reducedMotion.value) {
+    swipeOffset.value = direction > 0 ? -width : width
+    finishAnimatedNavigation()
+    return
+  }
   trackAnimating.value = true
+  await nextTick()
+  track.value?.getBoundingClientRect()
+  await nextAnimationFrame()
+  if (transitionTargetPath.value !== entry.path) return
   swipeOffset.value = direction > 0 ? -width : width
   if (navigationTimer !== null) clearTimeout(navigationTimer)
   navigationTimer = setTimeout(() => {
-    if (entry) emit('navigate', entry.path)
-    navigationTimer = null
-  }, reducedMotion.value ? 0 : 220)
+    finishAnimatedNavigation()
+  }, 350)
 }
 
 function navigateTo(path: string) {
@@ -673,7 +698,14 @@ function onKeyDown(event: KeyboardEvent) {
     </div>
 
     <div class="relative min-h-0 flex-1 overflow-hidden bg-black">
-      <div ref="track" class="absolute inset-0 flex h-full min-h-0 max-h-full w-full will-change-transform" :style="trackStyle" data-gallery-track>
+      <div
+        ref="track"
+        class="absolute inset-0 flex h-full min-h-0 max-h-full w-full will-change-transform"
+        :style="trackStyle"
+        :data-gallery-animating="trackAnimating"
+        data-gallery-track
+        @transitionend="onTrackTransitionEnd"
+      >
         <div class="grid h-full min-h-0 max-h-full min-w-full place-items-center overflow-hidden p-4" aria-hidden="true">
           <img v-if="previousEntry" :src="api.previewUrl(previousEntry.path)" :style="carouselImageStyle(previousEntry.path)" alt="" class="max-h-none max-w-none select-none object-contain" draggable="false" data-gallery-adjacent="previous" @load="onCarouselImageLoad(previousEntry.path, $event)" />
         </div>

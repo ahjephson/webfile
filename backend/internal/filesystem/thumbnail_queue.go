@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -255,6 +256,29 @@ func (q *videoThumbnailQueue) cancelJob(id string) bool {
 		return true
 	}
 	return false
+}
+
+func (q *videoThumbnailQueue) cancelPath(ctx context.Context, virtualPath string) {
+	virtualPath = CleanVirtual(virtualPath)
+	prefix := virtualPath + "/"
+	q.mu.Lock()
+	jobs := make([]*videoThumbnailJob, 0)
+	for _, job := range q.ids {
+		if job.view.Path == virtualPath || strings.HasPrefix(job.view.Path, prefix) {
+			jobs = append(jobs, job)
+		}
+	}
+	q.mu.Unlock()
+	for _, job := range jobs {
+		q.cancelJob(job.view.ID)
+	}
+	for _, job := range jobs {
+		select {
+		case <-job.done:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (q *videoThumbnailQueue) snapshot() []VideoThumbnailJob {

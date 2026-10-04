@@ -5,6 +5,7 @@ import Dialog from 'primevue/dialog'
 import ProgressSpinner from 'primevue/progressspinner'
 import { api } from '@/api/client'
 import type { FileEntry } from '@/types/files'
+import NameDialog from '@/components/NameDialog.vue'
 import LevelUpIcon from '@/components/LevelUpIcon.vue'
 import { isEntryVisible } from '@/utils/entryVisibility'
 
@@ -28,6 +29,8 @@ const loading = ref(false)
 const error = ref('')
 const focusedPath = ref('')
 const singleRootPath = ref('')
+const newFolderVisible = ref(false)
+const createError = ref('')
 
 const folders = computed(() => entries.value.filter(entry => entry.is_dir && isEntryVisible(entry, {
   showHidden: props.showHidden, hideInaccessible: props.hideInaccessible,
@@ -58,6 +61,7 @@ const destinationPath = computed(() => focusedPath.value || current.value)
 watch(() => props.visible, visible => {
   if (!visible) return
   current.value = props.initialPath || '/'
+  createError.value = ''
   void load()
 })
 
@@ -97,6 +101,22 @@ function selectFolder(folder: FileEntry) {
   focusedPath.value = folder.path
 }
 
+function joinPath(base: string, name: string) {
+  return `${base === '/' ? '' : base}/${name}`.replace(/\/+/g, '/') || '/'
+}
+
+async function createFolder(name: string) {
+  const path = joinPath(current.value, name)
+  createError.value = ''
+  try {
+    await api.mkdir(path)
+    await load()
+    focusedPath.value = path
+  } catch (err) {
+    createError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
 function submit() {
   emit('submit', destinationPath.value)
   emit('update:visible', false)
@@ -112,9 +132,11 @@ function submit() {
     @update:visible="emit('update:visible', $event)"
   >
     <div class="space-y-4">
-      <div class="flex items-center gap-3">
+      <div class="flex items-center justify-between gap-3">
         <p class="text-sm text-zinc-300">{{ count }} item{{ count === 1 ? '' : 's' }}</p>
+        <Button label="New folder" icon="pi pi-folder-plus" severity="secondary" text :disabled="loading" @click="newFolderVisible = true" />
       </div>
+      <p v-if="createError" class="text-sm text-red-400">{{ createError }}</p>
 
       <nav class="flex min-h-9 flex-wrap items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-sm">
         <template v-for="(crumb, index) in crumbs" :key="crumb.path">
@@ -172,4 +194,11 @@ function submit() {
       </div>
     </div>
   </Dialog>
+  <NameDialog
+    v-model:visible="newFolderVisible"
+    title="New folder"
+    label="Folder name"
+    submit-label="Create"
+    @submit="createFolder"
+  />
 </template>
