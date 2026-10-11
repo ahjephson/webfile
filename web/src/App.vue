@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import Button from 'primevue/button'
 import ConfirmDialog from 'primevue/confirmdialog'
 import ProgressSpinner from 'primevue/progressspinner'
 import Toast from 'primevue/toast'
@@ -63,9 +64,16 @@ async function login(username: string, password: string) {
 }
 
 async function logout() {
+  const logoutURL = session.value?.logout_url
   await api.logout()
+  if (logoutURL) {
+    window.location.assign(logoutURL)
+    return
+  }
   session.value = await api.session()
 }
+
+function retryExternalAuthentication() { window.location.reload() }
 
 async function elevate(password: string) {
   elevationBusy.value = true
@@ -103,6 +111,14 @@ function requestElevation() {
     <div v-if="checking" class="grid h-full place-items-center">
       <ProgressSpinner class="h-10 w-10" />
     </div>
+    <section v-else-if="!session?.authenticated && session?.mode === 'proxy'" class="grid h-full place-items-center p-6 text-center">
+      <div class="max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-8 shadow-2xl">
+        <i class="pi pi-shield mb-4 text-4xl text-sky-400" />
+        <h1 class="text-xl font-semibold">External authentication required</h1>
+        <p class="mt-2 text-sm text-zinc-400">Sign in through the configured authentication proxy, then try again.</p>
+        <Button class="mt-6" label="Try again" icon="pi pi-refresh" @click="retryExternalAuthentication" />
+      </div>
+    </section>
     <LoginView
       v-else-if="!session?.authenticated"
       :busy="loginBusy"
@@ -113,7 +129,7 @@ function requestElevation() {
       v-else
       :key="explorerVersion"
       :username="session.user?.username ?? ''"
-      :show-logout="session.mode === 'pam'"
+      :show-logout="session.mode === 'pam' || Boolean(session.logout_url)"
       :elevation-available="session.elevation_available === true"
       :elevated="session.elevated === true"
       :elevation-expires-at="session.elevation_expires_at"

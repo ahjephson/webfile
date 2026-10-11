@@ -81,3 +81,49 @@ func TestValidateRejectsDuplicateNormalizedExcludedPaths(t *testing.T) {
 		t.Fatal("duplicate excluded paths were accepted")
 	}
 }
+
+func TestValidateProxyAuthentication(t *testing.T) {
+	target := Default()
+	target.Roots = []Root{{Name: "Root", Path: "/"}}
+	target.Auth.Mode = "proxy"
+	target.Auth.TrustedProxies = []string{"127.0.0.1/32", "2001:db8::1/64"}
+	target.Auth.LogoutURL = "/_auth/logout?return=/"
+	if err := target.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if target.Auth.UserHeader != "X-Authenticated-User" {
+		t.Fatalf("user header = %q", target.Auth.UserHeader)
+	}
+	if target.Auth.TrustedProxies[1] != "2001:db8::/64" {
+		t.Fatalf("normalized trusted proxy = %q", target.Auth.TrustedProxies[1])
+	}
+}
+
+func TestValidateProxyAuthenticationRequiresTrustedProxy(t *testing.T) {
+	target := Default()
+	target.Roots = []Root{{Name: "Root", Path: "/"}}
+	target.Auth.Mode = "proxy"
+	if err := target.Validate(); err == nil {
+		t.Fatal("proxy authentication without a trusted proxy was accepted")
+	}
+}
+
+func TestValidateRejectsUnsafeProxyAuthenticationValues(t *testing.T) {
+	for name, configure := range map[string]func(*Config){
+		"header":     func(target *Config) { target.Auth.UserHeader = "Bad Header" },
+		"header-del": func(target *Config) { target.Auth.UserHeader = "Bad\x7fHeader" },
+		"proxy":      func(target *Config) { target.Auth.TrustedProxies = []string{"not-a-cidr"} },
+		"logout":     func(target *Config) { target.Auth.LogoutURL = "http://example.com/logout" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			target := Default()
+			target.Roots = []Root{{Name: "Root", Path: "/"}}
+			target.Auth.Mode = "proxy"
+			target.Auth.TrustedProxies = []string{"127.0.0.1/32"}
+			configure(&target)
+			if err := target.Validate(); err == nil {
+				t.Fatal("unsafe proxy authentication configuration was accepted")
+			}
+		})
+	}
+}

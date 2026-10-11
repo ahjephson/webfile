@@ -4,6 +4,9 @@
   "auth": {
     "mode": "pam",
     "pam_service": "webfile",
+    "user_header": "X-Authenticated-User",
+    "trusted_proxies": [],
+    "logout_url": "",
     "session_ttl": "12h",
     "elevation_ttl": "5m",
     "cookie_secure": true,

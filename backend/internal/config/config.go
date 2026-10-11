@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -30,14 +32,17 @@ type TLS struct {
 }
 
 type Auth struct {
-	Mode             string `json:"mode"`
-	PAMService       string `json:"pam_service"`
-	SessionTTL       string `json:"session_ttl"`
-	ElevationTTL     string `json:"elevation_ttl"`
-	CookieSecure     bool   `json:"cookie_secure"`
-	LoginMaxAttempts int    `json:"login_max_attempts"`
-	LoginWindow      string `json:"login_window"`
-	LoginBlock       string `json:"login_block"`
+	Mode             string   `json:"mode"`
+	PAMService       string   `json:"pam_service"`
+	UserHeader       string   `json:"user_header"`
+	TrustedProxies   []string `json:"trusted_proxies"`
+	LogoutURL        string   `json:"logout_url"`
+	SessionTTL       string   `json:"session_ttl"`
+	ElevationTTL     string   `json:"elevation_ttl"`
+	CookieSecure     bool     `json:"cookie_secure"`
+	LoginMaxAttempts int      `json:"login_max_attempts"`
+	LoginWindow      string   `json:"login_window"`
+	LoginBlock       string   `json:"login_block"`
 }
 
 type Runtime struct {
@@ -89,6 +94,7 @@ func Default() Config {
 		Auth: Auth{
 			Mode:             "none",
 			PAMService:       "webfile",
+			UserHeader:       "X-Authenticated-User",
 			SessionTTL:       "12h",
 			ElevationTTL:     "5m",
 			LoginMaxAttempts: 5,
@@ -205,11 +211,42 @@ func (c *Config) Validate() error {
 	if (strings.TrimSpace(c.TLS.CertificateFile) == "") != (strings.TrimSpace(c.TLS.PrivateKeyFile) == "") {
 		return errors.New("tls.certificate_file and tls.private_key_file must be configured together")
 	}
-	if c.Auth.Mode != "none" && c.Auth.Mode != "pam" {
+	if c.Auth.Mode != "none" && c.Auth.Mode != "pam" && c.Auth.Mode != "proxy" {
 		return fmt.Errorf("unsupported auth.mode %q", c.Auth.Mode)
 	}
 	if c.Auth.PAMService == "" {
 		c.Auth.PAMService = "webfile"
+	}
+	c.Auth.UserHeader = strings.TrimSpace(c.Auth.UserHeader)
+	if c.Auth.UserHeader == "" {
+		c.Auth.UserHeader = "X-Authenticated-User"
+	}
+	if !validHTTPHeaderName(c.Auth.UserHeader) {
+		return fmt.Errorf("auth.user_header %q is not a valid HTTP header name", c.Auth.UserHeader)
+	}
+	for index, value := range c.Auth.TrustedProxies {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			return fmt.Errorf("auth.trusted_proxies contains invalid CIDR %q", value)
+		}
+		c.Auth.TrustedProxies[index] = prefix.Masked().String()
+	}
+	if c.Auth.Mode == "proxy" && len(c.Auth.TrustedProxies) == 0 {
+		return errors.New("auth.trusted_proxies is required when auth.mode is proxy")
+	}
+	c.Auth.LogoutURL = strings.TrimSpace(c.Auth.LogoutURL)
+	if c.Auth.LogoutURL != "" {
+		logoutURL, err := url.Parse(c.Auth.LogoutURL)
+		if err != nil || logoutURL.User != nil {
+			return errors.New("auth.logout_url must be a same-origin path or an absolute HTTPS URL")
+		}
+		if logoutURL.IsAbs() {
+			if !strings.EqualFold(logoutURL.Scheme, "https") || logoutURL.Host == "" {
+				return errors.New("auth.logout_url must be a same-origin path or an absolute HTTPS URL")
+			}
+		} else if !strings.HasPrefix(c.Auth.LogoutURL, "/") || strings.HasPrefix(c.Auth.LogoutURL, "//") {
+			return errors.New("auth.logout_url must be a same-origin path or an absolute HTTPS URL")
+		}
 	}
 	if c.Auth.SessionTTL == "" {
 		c.Auth.SessionTTL = "12h"
@@ -271,6 +308,18 @@ func (c *Config) Validate() error {
 		return errors.New("thumbnails.max_queued must be greater than zero")
 	}
 	return nil
+}
+
+func validHTTPHeaderName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char >= 127 || char <= 32 || strings.ContainsRune(`()<>@,;:\"/[]?={} `, char) {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeExcludedPath(value string) (string, error) {

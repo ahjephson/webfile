@@ -31,6 +31,8 @@ extraction, durable background tasks and persistent application state.
 ### Linux identity and security
 
 - PAM login using the machine's local users.
+- Optional trusted reverse-proxy authentication maps an asserted username to a
+  local Linux account.
 - Filesystem IO happens in a persistent worker process running as the logged-in
   user's real UID/GID/supplementary groups. Linux permissions remain the access
   control boundary.
@@ -43,7 +45,8 @@ extraction, durable background tasks and persistent application state.
 - SameSite=Strict/HttpOnly cookies, configurable Secure cookies, per-session
   CSRF tokens, same-origin mutation checks, login rate limiting and baseline
   security headers.
-- Production binaries require direct TLS and PAM. Development binaries require
+- Production binaries require PAM with direct TLS, or trusted reverse-proxy
+  authentication with a secure cookie. Development binaries require
   plain HTTP and no authentication, so an unsafe production combination cannot
   be selected only by changing configuration.
 
@@ -251,8 +254,9 @@ make package VERSION=0.1.0
 
 The release binary embeds the compiled Vue frontend. Node is a build-time
 dependency only. The production build is compiled with the `production` and
-`pam` tags and refuses to start unless PAM, secure cookies, and a TLS
-certificate/private-key pair are configured.
+`pam` tags. PAM mode requires secure cookies and a TLS certificate/private-key
+pair. Trusted proxy mode also requires secure cookies; without direct TLS its
+listener must be bound to a loopback IP address.
 
 ### Install
 
@@ -299,12 +303,71 @@ generation are performed only by UID-dropped workers.
 users because UID-dropped workers load it after launch. TLS private-key material
 remains separately protected under `/etc/webfile/tls` for the broker only.
 
-Production always serves HTTPS directly and requires `auth.cookie_secure: true`.
-If a reverse proxy is added, it must preserve the original `Host` header and
+Production always requires `auth.cookie_secure: true`. PAM mode serves HTTPS
+directly. If a reverse proxy is added, it must preserve the original `Host`
+header and
 support WebSocket upgrades on `/api/fs/ws`, because WebFile's same-origin
 mutation check deliberately compares the browser `Origin` with the request
 host. Login limiting uses the direct peer address and does not trust forwarded
 client-address headers.
+
+### Trusted reverse-proxy authentication
+
+Set `auth.mode` to `proxy` when nginx or another trusted reverse proxy performs
+authentication. WebFile accepts the identity header only from direct peer CIDRs
+in `auth.trusted_proxies`, rejects duplicate identity headers, resolves the value
+as a local Linux account, and requires the same external identity on every
+request even after creating its own CSRF session.
+
+```json
+{
+  "listen": "127.0.0.1:8080",
+  "auth": {
+    "mode": "proxy",
+    "pam_service": "webfile",
+    "user_header": "X-Authenticated-User",
+    "trusted_proxies": ["127.0.0.1/32", "::1/128"],
+    "logout_url": "/_auth/logout",
+    "session_ttl": "12h",
+    "elevation_ttl": "5m",
+    "cookie_secure": true,
+    "login_max_attempts": 5,
+    "login_window": "1m",
+    "login_block": "5m"
+  },
+  "tls": {
+    "certificate_file": "",
+    "private_key_file": ""
+  }
+}
+```
+
+The proxy must overwrite, rather than append to, the identity header. Apply the
+authentication check to every WebFile request, including the WebSocket
+handshake. A typical nginx location contains:
+
+```nginx
+auth_request /_auth/check;
+auth_request_set $authenticated_user $upstream_http_x_authenticated_user;
+
+proxy_set_header X-Authenticated-User $authenticated_user;
+proxy_set_header Host $host;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection $connection_upgrade;
+proxy_pass http://127.0.0.1:8080;
+```
+
+The `/_auth/check` location should be `internal` and return
+`X-Authenticated-User` only after successful authentication. Keep WebFile's
+listener inaccessible except through the configured proxy. The external
+username must match a permitted local Linux account because filesystem workers
+still run using that account's real UID, GID, and supplementary groups.
+
+WebFile keeps its own session only for CSRF state and temporary elevation. The
+Sign out action first removes that local session and any elevated worker, then
+navigates to `auth.logout_url`. A same-origin path routed by nginx is preferred;
+an absolute HTTPS URL is also accepted. PAM remains available for the explicit
+temporary-elevation prompt in proxy mode.
 
 ### Updates
 

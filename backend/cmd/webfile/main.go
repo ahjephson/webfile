@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -69,6 +70,13 @@ func serve(args []string) {
 	fatalIf(err, "configuration failed")
 	fatalIf(validateBuildConfig(cfg), "configuration is incompatible with this "+buildMode+" build")
 
+	trustedProxies := make([]netip.Prefix, 0, len(cfg.Auth.TrustedProxies))
+	for _, value := range cfg.Auth.TrustedProxies {
+		prefix, err := netip.ParsePrefix(value)
+		fatalIf(err, "invalid auth.trusted_proxies")
+		trustedProxies = append(trustedProxies, prefix)
+	}
+
 	ttl, err := time.ParseDuration(cfg.Auth.SessionTTL)
 	fatalIf(err, "invalid auth.session_ttl")
 	if ttl <= 0 {
@@ -121,6 +129,9 @@ func serve(args []string) {
 			return launcher.ClientAuthenticate(ctx, cfg.Runtime.LauncherSocket, username, password)
 		},
 		Sessions:         sessions,
+		ProxyUserHeader:  cfg.Auth.UserHeader,
+		TrustedProxies:   trustedProxies,
+		LogoutURL:        cfg.Auth.LogoutURL,
 		State:            state,
 		Workers:          workerManager,
 		CurrentUser:      currentIdentity,

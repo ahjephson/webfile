@@ -68,12 +68,13 @@ export interface SessionUser {
 
 export interface SessionStatus {
   authenticated: boolean
-  mode: 'none' | 'pam'
+  mode: 'none' | 'pam' | 'proxy'
   user?: SessionUser
   csrf_token?: string
   elevation_available?: boolean
   elevated?: boolean
   elevation_expires_at?: string
+  logout_url?: string
 }
 
 interface UploadInitResponse {

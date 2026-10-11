@@ -3,7 +3,9 @@ package httpserver
 import (
 	"context"
 	"crypto/subtle"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -20,6 +22,9 @@ type MainOptions struct {
 	AuthMode         string
 	Authenticate     func(context.Context, string, string) error
 	Sessions         *session.Store
+	ProxyUserHeader  string
+	TrustedProxies   []netip.Prefix
+	LogoutURL        string
 	State            *persistence.Store
 	Workers          *worker.Manager
 	CurrentUser      identity.Identity
@@ -31,11 +36,12 @@ type MainOptions struct {
 }
 
 type MainServer struct {
-	opts        MainOptions
-	mux         *http.ServeMux
-	limiter     *loginLimiter
-	elevationMu sync.Mutex
-	elevations  map[string]elevationState
+	opts           MainOptions
+	mux            *http.ServeMux
+	limiter        *loginLimiter
+	elevationMu    sync.Mutex
+	elevations     map[string]elevationState
+	trustedProxies []netip.Prefix
 }
 
 type elevationState struct {
@@ -46,10 +52,11 @@ type elevationState struct {
 
 func NewMain(opts MainOptions) *MainServer {
 	s := &MainServer{
-		opts:       opts,
-		mux:        http.NewServeMux(),
-		limiter:    newLoginLimiter(opts.LoginMaxAttempts, opts.LoginWindow, opts.LoginBlock),
-		elevations: make(map[string]elevationState),
+		opts:           opts,
+		mux:            http.NewServeMux(),
+		limiter:        newLoginLimiter(opts.LoginMaxAttempts, opts.LoginWindow, opts.LoginBlock),
+		elevations:     make(map[string]elevationState),
+		trustedProxies: append([]netip.Prefix(nil), opts.TrustedProxies...),
 	}
 	if s.opts.ElevationTTL <= 0 {
 		s.opts.ElevationTTL = 5 * time.Minute
@@ -78,14 +85,38 @@ func (s *MainServer) routes() {
 }
 
 func (s *MainServer) getSession(w http.ResponseWriter, r *http.Request) {
-	id, csrf, ok := s.identityForRequest(r)
+	var id identity.Identity
+	var csrf string
+	var ok bool
+	if s.opts.AuthMode == "proxy" {
+		externalID, externalOK := s.proxyIdentity(r)
+		if externalOK {
+			sessionID, sessionCSRF, sessionOK := s.opts.Sessions.Get(r)
+			if sessionOK && sessionID.Username == externalID.Username {
+				id, csrf, ok = externalID, sessionCSRF, true
+			} else {
+				if sessionOK {
+					s.dropElevationForRequest(r)
+					s.opts.Sessions.Delete(w, r)
+				}
+				createdCSRF, err := s.opts.Sessions.Create(w, externalID)
+				if err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create session"})
+					return
+				}
+				id, csrf, ok = externalID, createdCSRF, true
+			}
+		}
+	} else {
+		id, csrf, ok = s.identityForRequest(r)
+	}
 	response := map[string]any{
 		"authenticated": ok,
 		"mode":          s.opts.AuthMode,
 	}
 	if ok {
 		response["user"] = id
-		if s.opts.AuthMode == "pam" {
+		if s.opts.AuthMode == "pam" || s.opts.AuthMode == "proxy" {
 			response["csrf_token"] = csrf
 			response["elevation_available"] = true
 			if state, elevated := s.elevationForRequest(r); elevated {
@@ -94,6 +125,9 @@ func (s *MainServer) getSession(w http.ResponseWriter, r *http.Request) {
 			} else {
 				response["elevated"] = false
 			}
+		}
+		if s.opts.AuthMode == "proxy" && s.opts.LogoutURL != "" {
+			response["logout_url"] = s.opts.LogoutURL
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -151,7 +185,7 @@ func (s *MainServer) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *MainServer) logout(w http.ResponseWriter, r *http.Request) {
-	if s.opts.AuthMode == "pam" {
+	if s.opts.AuthMode == "pam" || s.opts.AuthMode == "proxy" {
 		s.dropElevationForRequest(r)
 		s.opts.Sessions.Delete(w, r)
 	}
@@ -180,7 +214,7 @@ func (s *MainServer) proxyFilesystem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *MainServer) elevate(w http.ResponseWriter, r *http.Request) {
-	if s.opts.AuthMode != "pam" {
+	if s.opts.AuthMode != "pam" && s.opts.AuthMode != "proxy" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "filesystem elevation is unavailable"})
 		return
 	}
@@ -226,7 +260,7 @@ func (s *MainServer) elevate(w http.ResponseWriter, r *http.Request) {
 	s.elevationMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated":        true,
-		"mode":                 "pam",
+		"mode":                 s.opts.AuthMode,
 		"user":                 id,
 		"csrf_token":           csrf,
 		"elevation_available":  true,
@@ -245,7 +279,7 @@ func (s *MainServer) dropElevation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *MainServer) elevationForRequest(r *http.Request) (elevationState, bool) {
-	if s.opts.AuthMode != "pam" {
+	if s.opts.AuthMode != "pam" && s.opts.AuthMode != "proxy" {
 		return elevationState{}, false
 	}
 	key, ok := s.opts.Sessions.Key(r)
@@ -288,7 +322,52 @@ func (s *MainServer) identityForRequest(r *http.Request) (identity.Identity, str
 	if s.opts.AuthMode == "none" {
 		return s.opts.CurrentUser, "", true
 	}
-	return s.opts.Sessions.Get(r)
+	id, csrf, ok := s.opts.Sessions.Get(r)
+	if !ok || s.opts.AuthMode != "proxy" {
+		return id, csrf, ok
+	}
+	externalID, externalOK := s.proxyIdentity(r)
+	if !externalOK || externalID.Username != id.Username {
+		return identity.Identity{}, "", false
+	}
+	return externalID, csrf, true
+}
+
+func (s *MainServer) proxyIdentity(r *http.Request) (identity.Identity, bool) {
+	if s.opts.AuthMode != "proxy" || !s.isTrustedProxy(r.RemoteAddr) {
+		return identity.Identity{}, false
+	}
+	values := r.Header.Values(s.opts.ProxyUserHeader)
+	if len(values) != 1 {
+		return identity.Identity{}, false
+	}
+	username := strings.TrimSpace(values[0])
+	if username == "" || username != values[0] || strings.ContainsAny(username, "\r\n,") {
+		return identity.Identity{}, false
+	}
+	id, err := identity.Lookup(username)
+	if err != nil {
+		return identity.Identity{}, false
+	}
+	return id, true
+}
+
+func (s *MainServer) isTrustedProxy(remoteAddress string) bool {
+	host, _, err := net.SplitHostPort(remoteAddress)
+	if err != nil {
+		host = remoteAddress
+	}
+	address, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	if err != nil {
+		return false
+	}
+	address = address.Unmap()
+	for _, prefix := range s.trustedProxies {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *MainServer) getPreferences(w http.ResponseWriter, r *http.Request) {
@@ -349,7 +428,7 @@ func (s *MainServer) csrfGuard(next http.Handler) http.Handler {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
 				return
 			}
-			if s.opts.AuthMode == "pam" && r.URL.Path != "/api/login" && !s.opts.Sessions.VerifyCSRF(r) {
+			if s.opts.AuthMode != "none" && r.URL.Path != "/api/login" && !s.opts.Sessions.VerifyCSRF(r) {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "invalid csrf token"})
 				return
 			}
