@@ -183,7 +183,8 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: columns })
       @click="onParentClick($event)"
       @pointerdown="onParentPointerDown($event)"
     >
-      <span class="h-5 w-5 shrink-0" /><i class="pi pi-folder text-amber-400" /><LevelUpIcon class="h-4 w-4 text-zinc-300" />
+      <span class="h-5 w-5 shrink-0" />
+      <LevelUpIcon class="h-5 w-5 text-zinc-300" />
     </button>
     <div ref="viewport" class="min-h-0 flex-1 overflow-auto overscroll-contain p-2" data-file-viewport @scroll="onScroll">
     <div class="relative select-none" :style="{ height: `${totalHeight}px` }">

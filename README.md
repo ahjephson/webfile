@@ -365,9 +365,11 @@ still run using that account's real UID, GID, and supplementary groups.
 
 WebFile keeps its own session only for CSRF state and temporary elevation. The
 Sign out action first removes that local session and any elevated worker, then
-navigates to `auth.logout_url`. A same-origin path routed by nginx is preferred;
-an absolute HTTPS URL is also accepted. PAM remains available for the explicit
-temporary-elevation prompt in proxy mode.
+issues a same-origin POST to `auth.logout_url`, including the `Origin` header
+expected by SWAD's logout endpoint, and navigates to the resulting redirect. A
+same-origin path routed by nginx is preferred; an absolute HTTPS URL is also
+accepted for providers that support cross-origin form POST logout. PAM remains
+available for the explicit temporary-elevation prompt in proxy mode.
 
 ### Updates
 

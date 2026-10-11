@@ -329,6 +329,7 @@ for (const view of ['list', 'grid'] as const) {
       const breadcrumbBefore = await page.locator('nav[aria-label="Breadcrumb"] button').count()
 
       await expect(parent.locator('[data-level-up-icon]')).toBeVisible()
+      await expect(parent.locator('.pi-folder')).toHaveCount(0)
       await expect(parent).not.toContainText('..')
       await parent.click()
       await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(breadcrumbBefore - 1)

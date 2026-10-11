@@ -158,8 +158,7 @@ function submit() {
             @dblclick="open(parentPath)"
             @keydown.enter.prevent="open(parentPath)"
           >
-            <i class="pi pi-folder text-lg text-amber-400" />
-            <LevelUpIcon class="h-4 w-4 text-zinc-300" />
+            <LevelUpIcon class="h-5 w-5 text-zinc-300" />
             <span class="min-w-0 flex-1" />
           </button>
           <button

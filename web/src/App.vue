@@ -67,10 +67,31 @@ async function logout() {
   const logoutURL = session.value?.logout_url
   await api.logout()
   if (logoutURL) {
-    window.location.assign(logoutURL)
+    await postExternalLogout(logoutURL)
     return
   }
   session.value = await api.session()
+}
+
+async function postExternalLogout(url: string) {
+  const target = new URL(url, window.location.href)
+  if (target.origin === window.location.origin) {
+    const response = await fetch(target, {
+      method: 'POST',
+      credentials: 'include',
+      redirect: 'follow',
+    })
+    if (!response.ok) throw new Error(`External logout failed with status ${response.status}`)
+    window.location.assign(response.redirected ? response.url : '/')
+    return
+  }
+
+  const form = document.createElement('form')
+  form.method = 'post'
+  form.action = target.href
+  form.hidden = true
+  document.body.appendChild(form)
+  form.submit()
 }
 
 function retryExternalAuthentication() { window.location.reload() }
