@@ -7,13 +7,14 @@ import Toast from 'primevue/toast'
 import FileExplorer from '@/components/FileExplorer.vue'
 import LoginView from '@/components/LoginView.vue'
 import ElevationDialog from '@/components/ElevationDialog.vue'
-import { api, type SessionStatus } from '@/api/client'
+import { api, ApiError, type SessionStatus } from '@/api/client'
 import { appPath } from '@/base'
 
 const session = ref<SessionStatus | null>(null)
 const checking = ref(true)
 const loginBusy = ref(false)
 const loginError = ref('')
+const sessionError = ref('')
 const elevationVisible = ref(false)
 const elevationBusy = ref(false)
 const elevationError = ref('')
@@ -40,13 +41,15 @@ function scheduleElevationExpiry() {
 
 async function refreshSession() {
   checking.value = true
+  sessionError.value = ''
   loginError.value = ''
   try {
     session.value = await api.session()
     scheduleElevationExpiry()
   } catch (err) {
-    session.value = null
-    loginError.value = err instanceof Error ? err.message : String(err)
+    sessionError.value = err instanceof ApiError
+      ? `WebFile could not check your session: ${err.message}`
+      : 'WebFile could not be reached. Check your connection and try again.'
   } finally {
     checking.value = false
   }
@@ -133,6 +136,14 @@ function requestElevation() {
     <div v-if="checking" class="grid h-full place-items-center">
       <ProgressSpinner class="h-10 w-10" />
     </div>
+    <section v-else-if="sessionError && !session" class="grid h-full place-items-center p-6 text-center">
+      <div class="max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-8 shadow-2xl">
+        <i class="pi pi-wifi mb-4 text-4xl text-amber-400" />
+        <h1 class="text-xl font-semibold">Unable to connect to WebFile</h1>
+        <p class="mt-2 text-sm text-zinc-400">{{ sessionError }}</p>
+        <Button class="mt-6" label="Try again" icon="pi pi-refresh" @click="refreshSession" />
+      </div>
+    </section>
     <section v-else-if="!session?.authenticated && session?.mode === 'proxy'" class="grid h-full place-items-center p-6 text-center">
       <div class="max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-8 shadow-2xl">
         <i class="pi pi-shield mb-4 text-4xl text-sky-400" />

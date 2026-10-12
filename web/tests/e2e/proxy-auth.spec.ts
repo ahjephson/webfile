@@ -31,13 +31,14 @@ test('proxy-authenticated sessions use the configured external logout URL', asyn
   }))
 
   await page.goto('/')
+  const applicationOrigin = new URL(page.url()).origin
   await page.getByRole('button', { name: 'Sign out' }).click()
 
   await expect.poll(() => logoutRequests).toBe(1)
   await expect(page).toHaveURL(/\/_auth\/signed-out$/)
   await expect(page.getByRole('heading', { name: 'Signed out' })).toBeVisible()
   expect(externalLogoutMethod).toBe('POST')
-  expect(externalLogoutOrigin).toBe('http://127.0.0.1:8080')
+  expect(externalLogoutOrigin).toBe(applicationOrigin)
 })
 
 test('proxy mode does not offer the WebFile password form when identity is missing', async ({ page }) => {
@@ -48,6 +49,45 @@ test('proxy mode does not offer the WebFile password form when identity is missi
   await page.goto('/')
 
   await expect(page.getByRole('heading', { name: 'External authentication required' })).toBeVisible()
+  await expect(page.getByLabel('Username')).toHaveCount(0)
+  await expect(page.getByLabel('Password')).toHaveCount(0)
+})
+
+test('session network errors do not show the WebFile password form', async ({ page }) => {
+  await page.route('**/api/session', route => route.abort('connectionfailed'))
+
+  await page.goto('/')
+
+  await expect(page.getByRole('heading', { name: 'Unable to connect to WebFile' })).toBeVisible()
+  await expect(page.getByText('WebFile could not be reached. Check your connection and try again.')).toBeVisible()
+  await expect(page.getByLabel('Username')).toHaveCount(0)
+  await expect(page.getByLabel('Password')).toHaveCount(0)
+})
+
+test('a transient session refresh failure retains an established proxy session', async ({ page }) => {
+  let sessionRequests = 0
+  await page.route('**/api/session', route => {
+    sessionRequests++
+    if (sessionRequests > 1) return route.abort('connectionfailed')
+    return route.fulfill({
+      json: {
+        authenticated: true,
+        mode: 'proxy',
+        user: { username: 'proxy-user', uid: 1000, gid: 1000, home: '/home/proxy-user' },
+        csrf_token: 'csrf-token',
+        elevation_available: true,
+        elevated: true,
+        elevation_expires_at: new Date(Date.now() + 50).toISOString(),
+      },
+    })
+  })
+
+  await page.goto('/')
+
+  await expect(page.getByText('proxy-user', { exact: true })).toBeVisible()
+  await expect.poll(() => sessionRequests).toBeGreaterThan(1)
+  await expect(page.getByText('proxy-user', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Unable to connect to WebFile' })).toHaveCount(0)
   await expect(page.getByLabel('Username')).toHaveCount(0)
   await expect(page.getByLabel('Password')).toHaveCount(0)
 })
