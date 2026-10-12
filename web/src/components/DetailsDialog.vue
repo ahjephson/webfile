@@ -82,7 +82,7 @@ function formatBytes(value: number) {
         <span class="text-zinc-500">Type</span><span>{{ details.is_symlink ? 'Symbolic link' : details.is_dir ? 'Folder' : 'File' }}</span>
         <span class="text-zinc-500">Size</span>
         <span v-if="details.size_status === 'calculating'" class="inline-flex items-center gap-2 text-zinc-400"><i class="pi pi-spinner pi-spin" /> Calculating</span>
-        <span v-else-if="details.size_status === 'error'" class="text-red-300" :title="details.size_error">Unavailable</span>
+        <span v-else-if="details.size_status === 'error'" class="webfile-text-error" :title="details.size_error">Unavailable</span>
         <span v-else>{{ formatBytes(details.size) }}</span>
         <span class="text-zinc-500">Modified</span><span>{{ new Date(details.modified).toLocaleString() }}</span>
         <span v-if="details.link_target" class="text-zinc-500">Target</span><span v-if="details.link_target" class="break-all font-mono text-xs">{{ details.link_target }}</span>
@@ -108,9 +108,9 @@ function formatBytes(value: number) {
           <span class="text-center text-zinc-500">Execute</span>
           <template v-for="row in permissionRows" :key="row.label">
             <span>{{ row.label }}</span>
-            <span class="text-center" :class="checked(row.read) ? 'text-emerald-400' : 'text-zinc-700'">{{ checked(row.read) ? 'Yes' : '—' }}</span>
-            <span class="text-center" :class="checked(row.write) ? 'text-emerald-400' : 'text-zinc-700'">{{ checked(row.write) ? 'Yes' : '—' }}</span>
-            <span class="text-center" :class="checked(row.execute) ? 'text-emerald-400' : 'text-zinc-700'">{{ checked(row.execute) ? 'Yes' : '—' }}</span>
+            <span class="text-center" :class="checked(row.read) ? 'webfile-text-success' : 'text-zinc-700'">{{ checked(row.read) ? 'Yes' : '—' }}</span>
+            <span class="text-center" :class="checked(row.write) ? 'webfile-text-success' : 'text-zinc-700'">{{ checked(row.write) ? 'Yes' : '—' }}</span>
+            <span class="text-center" :class="checked(row.execute) ? 'webfile-text-success' : 'text-zinc-700'">{{ checked(row.execute) ? 'Yes' : '—' }}</span>
           </template>
         </div>
       </section>

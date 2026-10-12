@@ -28,9 +28,9 @@ function submit() {
     <div class="w-full max-w-sm rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
       <div class="mb-6">
         <div class="mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-zinc-800">
-          <i class="pi pi-folder-open text-xl text-amber-400" />
+          <i class="webfile-accent-warning pi pi-folder-open text-xl" />
         </div>
-        <h1 class="text-xl font-semibold text-white">WebFile</h1>
+        <h1 class="text-xl font-semibold text-zinc-100">WebFile</h1>
         <p class="mt-1 text-sm text-zinc-400">Sign in with your Linux account.</p>
       </div>
 

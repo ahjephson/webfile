@@ -261,7 +261,7 @@ function messageOf(err: unknown): string {
         <Button v-tooltip.bottom="'Find'" icon="pi pi-search" severity="secondary" text aria-label="Find" @click="editorRef?.find()" />
         <Button v-tooltip.bottom="'Replace'" icon="pi pi-pencil" severity="secondary" text aria-label="Replace" @click="editorRef?.replace()" />
         <Button v-tooltip.bottom="wordWrap ? 'Disable word wrap' : 'Enable word wrap'" icon="pi pi-align-left" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': wordWrap }" :aria-label="wordWrap ? 'Disable word wrap' : 'Enable word wrap'" :aria-pressed="wordWrap" @click="wordWrap = !wordWrap" />
-        <span class="mx-2 h-6 w-px bg-zinc-700" />
+        <span class="webfile-divider mx-2 h-6 w-px" />
         <Button v-tooltip.bottom="richToolbar ? 'Hide rich toolbar' : 'Show rich toolbar'" icon="pi pi-sliders-h" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': richToolbar }" :aria-label="richToolbar ? 'Hide rich toolbar' : 'Show rich toolbar'" :aria-pressed="richToolbar" @click="richToolbar = !richToolbar" />
         <Button v-tooltip.bottom="'Save'" icon="pi pi-save" :loading="saving" :disabled="loading || !dirty && !newDocument" aria-label="Save" @click="save()" />
       </div>
@@ -273,11 +273,11 @@ function messageOf(err: unknown): string {
       <Button v-tooltip.bottom="lineNumbers ? 'Hide line numbers' : 'Show line numbers'" icon="pi pi-list" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': lineNumbers }" :aria-label="lineNumbers ? 'Hide line numbers' : 'Show line numbers'" :aria-pressed="lineNumbers" @click="lineNumbers = !lineNumbers" />
       <Button v-if="canFormat" v-tooltip.bottom="'Format document'" icon="pi pi-code" severity="secondary" text aria-label="Format document" @click="editorRef?.formatDocument()" />
       <Button v-if="canPreviewMarkdown" v-tooltip.bottom="markdownPreview ? 'Hide Markdown preview' : 'Show Markdown preview'" icon="pi pi-book" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': markdownPreview }" :aria-label="markdownPreview ? 'Hide Markdown preview' : 'Show Markdown preview'" :aria-pressed="markdownPreview" @click="markdownPreview = !markdownPreview" />
-      <span class="mx-2 h-6 w-px bg-zinc-700" />
+      <span class="webfile-divider mx-2 h-6 w-px" />
       <Button v-tooltip.bottom="'Decrease font size'" icon="pi pi-minus" severity="secondary" text aria-label="Decrease font size" :disabled="fontSize <= 10" @click="fontSize--" />
       <Button v-tooltip.bottom="'Reset font size'" icon="pi pi-refresh" severity="secondary" text aria-label="Reset font size" :disabled="fontSize === 14" @click="fontSize = 14" />
       <Button v-tooltip.bottom="'Increase font size'" icon="pi pi-plus" severity="secondary" text aria-label="Increase font size" :disabled="fontSize >= 28" @click="fontSize++" />
-      <span class="mx-2 h-6 w-px bg-zinc-700" />
+      <span class="webfile-divider mx-2 h-6 w-px" />
       <Button v-tooltip.bottom="'Enter Zen mode'" icon="pi pi-window-minimize" severity="secondary" text aria-label="Enter Zen mode" @click="zenMode = true" />
       <Button v-tooltip.bottom="fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'" :icon="fullscreen ? 'pi pi-window-minimize' : 'pi pi-window-maximize'" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': fullscreen }" :aria-label="fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'" :aria-pressed="fullscreen" @click="toggleFullscreen" />
     </nav>
@@ -296,7 +296,7 @@ function messageOf(err: unknown): string {
         <input ref="languageSearch" v-model="languageQuery" class="h-9 w-full rounded border border-zinc-600 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none focus:border-sky-500" aria-label="Search languages" placeholder="Search languages" @keydown.enter="filteredLanguages[0] && selectLanguage(filteredLanguages[0].id)" />
       </div>
       <div ref="languageList" class="min-h-0 overflow-auto py-1" role="listbox" aria-label="Language modes">
-        <button v-for="option in filteredLanguages" :key="option.id" type="button" role="option" :aria-selected="option.id === language" class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none" :class="{ 'bg-zinc-800 text-sky-300': option.id === language }" @click="selectLanguage(option.id)">
+        <button v-for="option in filteredLanguages" :key="option.id" type="button" role="option" :aria-selected="option.id === language" class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none" :class="{ 'bg-zinc-800 webfile-text-info': option.id === language }" @click="selectLanguage(option.id)">
           <span>{{ option.label }}</span>
           <i v-if="option.id === language" class="pi pi-check text-xs" />
         </button>

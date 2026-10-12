@@ -263,7 +263,13 @@ for (const view of ['list', 'grid'] as const) {
 
       await checkbox.click()
       await expect(checkbox).toHaveAttribute('aria-pressed', 'true')
-      await expect(box).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(box).toHaveCSS('background-color', 'rgb(2, 132, 199)')
+      await expect(box).toHaveCSS('color', 'rgb(255, 255, 255)')
+      await expect(entryFor(checkbox)).toHaveCSS('background-color', 'rgba(224, 242, 254, 0.82)')
+
+      const activeView = page.getByRole('button', { name: view === 'list' ? 'List view' : 'Grid view' })
+      await expect(activeView).toHaveCSS('background-color', 'rgb(224, 242, 254)')
+      await expect(activeView).toHaveCSS('color', 'rgb(7, 89, 133)')
     })
 
     test('control-clicking the only selected item removes its selection background', async ({ page }) => {
@@ -2867,6 +2873,7 @@ test('folder download starts an archive task without opening the task drawer', a
 })
 
 test('downloaded folder archive history shows that its artifact is no longer available', async ({ page }) => {
+  await page.route('**/api/preferences', route => route.fulfill({ json: { theme: 'light' } }))
   await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries: [] } }))
   await page.route('**/api/fs/thumbnails/jobs**', route => route.fulfill({ json: { jobs: [] } }))
   await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [{
@@ -2908,6 +2915,8 @@ test('downloaded folder archive history shows that its artifact is no longer ava
   expect(Math.abs(readyStatus!.x + readyStatus!.width - readyClose!.x - readyClose!.width)).toBeLessThanOrEqual(1)
   expect(readyStatus!.y).toBeGreaterThan(readyClose!.y + readyClose!.height)
   expect(Math.abs(readyDownload!.y - readyClose!.y)).toBeLessThanOrEqual(1)
+  await expect(downloadedCard.locator('[data-task-status]')).toHaveCSS('background-color', 'rgb(209, 250, 229)')
+  await expect(downloadedCard.locator('[data-task-status]')).toHaveCSS('color', 'rgb(6, 95, 70)')
 
   await downloadedCard.locator('summary', { hasText: 'Details' }).click()
   const expandedStatus = await downloadedCard.locator('[data-task-status]').boundingBox()
@@ -2930,6 +2939,7 @@ test('task drawer surfaces the transient video thumbnail queue separately', asyn
     updated_at: `2000-01-01T00:00:${String(index).padStart(2, '0')}Z`,
   }))
   const jobs = [
+    { id: 'settling-hidden', path: '/media/settling-hidden.mp4', name: 'settling-hidden.mp4', state: 'settling', cancellable: true, updated_at: '2000-01-01T00:00:00Z' },
     queuedJobs[1],
     { id: 'processing-2', path: '/media/processing-2.mp4', name: 'processing-2.mp4', state: 'generating', cancellable: true, started_at: '2000-01-01T00:00:01Z', updated_at: '2000-01-01T00:00:01Z' },
     queuedJobs[0],
@@ -2952,6 +2962,7 @@ test('task drawer surfaces the transient video thumbnail queue separately', asyn
 
   const drawer = page.getByRole('complementary')
   await expect(drawer.getByText('Video thumbnails', { exact: true })).toBeVisible()
+  await expect(drawer.getByText('settling-hidden.mp4', { exact: true })).toHaveCount(0)
   await expect(drawer.getByText('2 generating, 11 queued', { exact: true })).toBeVisible()
   await expect(drawer.getByRole('button', { name: 'Collapse Video thumbnails (13)' })).toBeVisible()
   const visibleJobIDs = await drawer.locator('[data-thumbnail-job]').evaluateAll(elements => elements.map(element => element.getAttribute('data-thumbnail-job')))
@@ -2963,9 +2974,9 @@ test('task drawer surfaces the transient video thumbnail queue separately', asyn
   const processingThumbnail = drawer.locator('[data-thumbnail-job="processing-1"]')
   const queuedThumbnail = drawer.locator('[data-thumbnail-job="queued-1"]')
   await expect(processingThumbnail).toHaveAttribute('data-thumbnail-processing', 'true')
-  await expect(processingThumbnail).toHaveClass(/border-sky-700/)
+  await expect(processingThumbnail).toHaveClass(/webfile-task-processing/)
   await expect(queuedThumbnail).not.toHaveAttribute('data-thumbnail-processing', 'true')
-  await expect(queuedThumbnail).toHaveClass(/border-violet-900/)
+  await expect(queuedThumbnail).toHaveClass(/webfile-task-queued/)
   const thumbnailSpinners = drawer.locator('[data-thumbnail-job] [data-task-spinner]')
   await expect(thumbnailSpinners).toHaveCount(10)
   await expect(drawer.getByRole('progressbar')).toHaveCount(0)

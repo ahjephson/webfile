@@ -78,7 +78,7 @@ function save() {
       <section aria-labelledby="appearance-settings-heading">
         <h2 id="appearance-settings-heading" class="mb-1 text-sm font-semibold text-zinc-100">Appearance</h2>
         <p class="mb-3 text-xs text-zinc-500">Defaults used when WebFile opens.</p>
-        <div class="divide-y divide-zinc-800 rounded-lg border border-zinc-800">
+        <div class="webfile-section-list rounded-lg border border-zinc-800">
           <label class="settings-row">
             <span><strong>Theme</strong><small>Follow the device or choose a fixed theme.</small></span>
             <Select v-model="draft.theme" :options="themeOptions" option-label="label" option-value="value" aria-label="Theme" />
@@ -105,7 +105,7 @@ function save() {
       <section aria-labelledby="editor-settings-heading">
         <h2 id="editor-settings-heading" class="mb-1 text-sm font-semibold text-zinc-100">Editor</h2>
         <p class="mb-3 text-xs text-zinc-500">Defaults applied each time an editor is opened.</p>
-        <div class="divide-y divide-zinc-800 rounded-lg border border-zinc-800">
+        <div class="webfile-section-list rounded-lg border border-zinc-800">
           <label class="settings-row">
             <span><strong>Word wrap</strong><small>Wrap long lines to the editor width.</small></span>
             <ToggleSwitch v-model="draft.editor_word_wrap" aria-label="Word wrap by default" />
@@ -140,7 +140,7 @@ function save() {
       <section aria-labelledby="transfer-settings-heading">
         <h2 id="transfer-settings-heading" class="mb-1 text-sm font-semibold text-zinc-100">Transfers</h2>
         <p class="mb-3 text-xs text-zinc-500">Advanced copy behaviour for this user.</p>
-        <div class="divide-y divide-zinc-800 rounded-lg border border-zinc-800">
+        <div class="webfile-section-list rounded-lg border border-zinc-800">
           <label class="settings-row">
             <span><strong>Copy chunk size</strong><small>Smaller chunks update progress and cancellation more frequently.</small></span>
             <Select v-model="draft.copy_chunk_mib" :options="chunkOptions" option-label="label" option-value="value" aria-label="Copy chunk size" />
@@ -151,7 +151,7 @@ function save() {
       <section aria-labelledby="archive-settings-heading">
         <h2 id="archive-settings-heading" class="mb-1 text-sm font-semibold text-zinc-100">Archives</h2>
         <p class="mb-3 text-xs text-zinc-500">Defaults used when extracting archives.</p>
-        <div class="divide-y divide-zinc-800 rounded-lg border border-zinc-800">
+        <div class="webfile-section-list rounded-lg border border-zinc-800">
           <label class="settings-row">
             <span><strong>Existing files when extracting</strong><small>Skip existing files by default, or replace regular files with extracted versions.</small></span>
             <Select v-model="draft.extract_existing_files" :options="extractExistingOptions" option-label="label" option-value="value" aria-label="Existing files when extracting" />

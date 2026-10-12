@@ -337,9 +337,33 @@ func (g videoThumbnailGenerator) generate(ctx context.Context, path string, widt
 	if err != nil || duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
 		return nil, errors.New("probe video duration: invalid duration")
 	}
+	output, detail, err := g.run(ctx, path, width, height, duration, false)
+	if err != nil && ctx.Err() == nil && strings.Contains(strings.ToLower(detail), "invalid color space") {
+		output, detail, err = g.run(ctx, path, width, height, duration, true)
+	}
+	if err != nil {
+		if len(detail) > 1024 {
+			detail = detail[:1024]
+		}
+		if detail != "" {
+			return nil, fmt.Errorf("generate video thumbnail: %w: %s", err, detail)
+		}
+		return nil, fmt.Errorf("generate video thumbnail: %w", err)
+	}
+	if len(output) == 0 {
+		return nil, errors.New("generate video thumbnail: ffmpeg produced no image")
+	}
+	return output, nil
+}
+
+func (g videoThumbnailGenerator) run(ctx context.Context, path string, width, height int, duration float64, assumeBT709 bool) ([]byte, string, error) {
 	args := []string{"-hide_banner", "-loglevel", "error"}
 	for _, timestamp := range videoThumbnailTimestamps(duration) {
-		args = append(args, "-threads", "1", "-ss", strconv.FormatFloat(timestamp, 'f', 6, 64), "-i", path)
+		args = append(args, "-threads", "1", "-ss", strconv.FormatFloat(timestamp, 'f', 6, 64))
+		if assumeBT709 {
+			args = append(args, "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709")
+		}
+		args = append(args, "-i", path)
 	}
 	args = append(args,
 		"-filter_complex", videoSpriteFilter(width, height), "-map", "[sprite]", "-an", "-frames:v", "1",
@@ -349,19 +373,9 @@ func (g videoThumbnailGenerator) generate(ctx context.Context, path string, widt
 	var output, errorOutput bytes.Buffer
 	command.Stdout, command.Stderr = &output, &errorOutput
 	if err := command.Run(); err != nil {
-		detail := strings.TrimSpace(errorOutput.String())
-		if len(detail) > 1024 {
-			detail = detail[:1024]
-		}
-		if detail != "" {
-			return nil, fmt.Errorf("generate video thumbnail: %w: %s", err, detail)
-		}
-		return nil, fmt.Errorf("generate video thumbnail: %w", err)
+		return nil, strings.TrimSpace(errorOutput.String()), err
 	}
-	if output.Len() == 0 {
-		return nil, errors.New("generate video thumbnail: ffmpeg produced no image")
-	}
-	return output.Bytes(), nil
+	return output.Bytes(), strings.TrimSpace(errorOutput.String()), nil
 }
 
 func videoThumbnailTimestamps(duration float64) []float64 {

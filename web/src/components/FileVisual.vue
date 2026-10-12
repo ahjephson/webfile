@@ -120,8 +120,8 @@ function stopVideoAnimation() {
     :title="lockedDirectory ? 'You do not have permission to open this folder' : undefined"
   >
     <span class="relative grid place-items-center">
-      <i class="pi pi-folder" :class="lockedDirectory ? 'text-zinc-500' : 'text-amber-400'" :style="{ fontSize: tile ? tileIconSize : '1.125rem' }" aria-hidden="true" />
-      <span v-if="lockedDirectory" class="absolute -bottom-1 -right-2 grid place-items-center rounded-full border border-zinc-700 bg-zinc-950 text-red-400 shadow" :class="tile ? 'h-7 w-7 text-sm' : 'h-4 w-4 text-[0.6rem]'" data-directory-lock aria-hidden="true">
+      <i class="pi pi-folder" :class="lockedDirectory ? 'text-zinc-500' : 'webfile-accent-warning'" :style="{ fontSize: tile ? tileIconSize : '1.125rem' }" aria-hidden="true" />
+      <span v-if="lockedDirectory" class="webfile-accent-danger absolute -bottom-1 -right-2 grid place-items-center rounded-full border border-zinc-700 bg-zinc-950 shadow" :class="tile ? 'h-7 w-7 text-sm' : 'h-4 w-4 text-[0.6rem]'" data-directory-lock aria-hidden="true">
         <i class="pi pi-lock" />
       </span>
     </span>
@@ -162,7 +162,7 @@ function stopVideoAnimation() {
       />
     </template>
     <i v-else :class="[visual.icon, lockedFile ? 'text-zinc-500' : visual.color]" :style="{ fontSize: tile ? tileIconSize : '1.125rem' }" aria-hidden="true" data-file-icon />
-    <span v-if="lockedFile" class="absolute -bottom-1 -right-2 grid place-items-center rounded-full border border-zinc-700 bg-zinc-950 text-red-400 shadow" :class="tile ? 'h-7 w-7 text-sm' : 'h-4 w-4 text-[0.6rem]'" data-file-lock aria-hidden="true">
+    <span v-if="lockedFile" class="webfile-accent-danger absolute -bottom-1 -right-2 grid place-items-center rounded-full border border-zinc-700 bg-zinc-950 shadow" :class="tile ? 'h-7 w-7 text-sm' : 'h-4 w-4 text-[0.6rem]'" data-file-lock aria-hidden="true">
       <i class="pi pi-lock" />
     </span>
   </span>

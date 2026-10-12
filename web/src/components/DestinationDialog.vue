@@ -136,7 +136,7 @@ function submit() {
         <p class="text-sm text-zinc-300">{{ count }} item{{ count === 1 ? '' : 's' }}</p>
         <Button label="New folder" icon="pi pi-folder-plus" severity="secondary" text :disabled="loading" @click="newFolderVisible = true" />
       </div>
-      <p v-if="createError" class="text-sm text-red-400">{{ createError }}</p>
+      <p v-if="createError" class="webfile-text-error text-sm">{{ createError }}</p>
 
       <nav class="flex min-h-9 flex-wrap items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-sm">
         <template v-for="(crumb, index) in crumbs" :key="crumb.path">
@@ -147,7 +147,7 @@ function submit() {
 
       <div class="h-[22rem] overflow-auto rounded-xl border border-zinc-800 bg-zinc-950">
         <div v-if="loading" class="grid h-full place-items-center"><ProgressSpinner class="h-8 w-8" /></div>
-        <div v-else-if="error" class="p-4 text-sm text-red-400">{{ error }}</div>
+        <div v-else-if="error" class="webfile-text-error p-4 text-sm">{{ error }}</div>
         <template v-else>
           <button
             v-if="parentPath"
@@ -173,8 +173,8 @@ function submit() {
             @keydown.enter.prevent="openFolder(folder)"
           >
             <span class="relative grid place-items-center">
-              <i class="pi pi-folder text-lg" :class="folder.can_navigate === false ? 'text-zinc-500' : 'text-amber-400'" aria-hidden="true" />
-              <i v-if="folder.can_navigate === false" class="pi pi-lock absolute -bottom-1 -right-2 text-[0.65rem] text-red-400" :aria-label="`No permission to open ${folder.name}`" data-directory-lock />
+              <i class="pi pi-folder text-lg" :class="folder.can_navigate === false ? 'text-zinc-500' : 'webfile-accent-warning'" aria-hidden="true" />
+              <i v-if="folder.can_navigate === false" class="webfile-accent-danger pi pi-lock absolute -bottom-1 -right-2 text-[0.65rem]" :aria-label="`No permission to open ${folder.name}`" data-directory-lock />
             </span>
             <span class="min-w-0 flex-1 truncate">{{ folder.name }}</span>
           </button>

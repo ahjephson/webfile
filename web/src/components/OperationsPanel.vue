@@ -31,11 +31,11 @@ const history = computed(() => ordered.value.filter(operation => !active(operati
 const maxQueuePosition = computed(() => Math.max(0, ...activeTasks.value.map(operation => operation.queue_position ?? 0)))
 const processingThumbnailStates = ['probing', 'generating', 'publishing']
 const visibleThumbnailJobs = computed(() => props.thumbnailJobs
-  .filter(job => job.state !== 'ready' && job.state !== 'cancelled')
+  .filter(job => !['settling', 'ready', 'cancelled'].includes(job.state))
   .sort((a, b) => {
     const stateDifference = thumbnailStateRank(a) - thumbnailStateRank(b)
     if (stateDifference !== 0) return stateDifference
-    if (['settling', 'queued'].includes(a.state) && ['settling', 'queued'].includes(b.state)) {
+    if (a.state === 'queued' && b.state === 'queued') {
       const positionDifference = (a.queue_position ?? Number.MAX_SAFE_INTEGER) - (b.queue_position ?? Number.MAX_SAFE_INTEGER)
       if (positionDifference !== 0) return positionDifference
     }
@@ -48,8 +48,7 @@ const remainingThumbnailJobs = computed(() => Math.max(0, visibleThumbnailJobs.v
 const thumbnailSummary = computed(() => {
   const generating = visibleThumbnailJobs.value.filter(job => processingThumbnailStates.includes(job.state)).length
   const queued = visibleThumbnailJobs.value.filter(job => job.state === 'queued').length
-  const settling = visibleThumbnailJobs.value.filter(job => job.state === 'settling').length
-  return [generating ? `${generating} generating` : '', settling ? `${settling} waiting` : '', queued ? `${queued} queued` : ''].filter(Boolean).join(', ')
+  return [generating ? `${generating} generating` : '', queued ? `${queued} queued` : ''].filter(Boolean).join(', ')
 })
 const thumbnailsExpanded = ref(true)
 const activeExpanded = ref(true)
@@ -66,10 +65,9 @@ onBeforeUnmount(stopIndeterminateProgress)
 
 function thumbnailStateRank(job: VideoThumbnailJob): number {
   if (processingThumbnailStates.includes(job.state)) return 0
-  if (job.state === 'settling') return 1
-  if (job.state === 'queued') return 2
-  if (job.state === 'failed') return 3
-  return 4
+  if (job.state === 'queued') return 1
+  if (job.state === 'failed') return 2
+  return 3
 }
 
 function startIndeterminateProgress() {
@@ -158,7 +156,7 @@ function formatDate(value?: string) {
         <div class="mb-2 flex items-center justify-between gap-3">
           <h3 id="thumbnail-tasks-heading">
             <button
-              class="flex items-center gap-2 rounded px-1 py-1 text-xs font-semibold uppercase tracking-wide text-violet-400 hover:bg-zinc-800"
+              class="webfile-text-queued flex items-center gap-2 rounded px-1 py-1 text-xs font-semibold uppercase tracking-wide hover:bg-zinc-800"
               :aria-expanded="thumbnailsExpanded"
               aria-controls="thumbnail-tasks-content"
               :aria-label="`${thumbnailsExpanded ? 'Collapse' : 'Expand'} Video thumbnails (${visibleThumbnailJobs.length})`"
@@ -166,7 +164,7 @@ function formatDate(value?: string) {
             >
               <i class="pi text-[0.65rem]" :class="thumbnailsExpanded ? 'pi-chevron-down' : 'pi-chevron-right'" />
               <span>Video thumbnails</span>
-              <span class="rounded-full bg-violet-950 px-1.5 py-0.5 text-[0.65rem] tabular-nums text-violet-300">{{ visibleThumbnailJobs.length }}</span>
+              <span class="webfile-status-queued rounded-full px-1.5 py-0.5 text-[0.65rem] tabular-nums">{{ visibleThumbnailJobs.length }}</span>
             </button>
           </h3>
           <span class="text-xs text-zinc-500">{{ thumbnailSummary }}</span>
@@ -174,14 +172,14 @@ function formatDate(value?: string) {
         <div v-if="thumbnailsExpanded" id="thumbnail-tasks-content" class="space-y-2">
           <article
             v-for="job in displayedThumbnailJobs" :key="job.id" class="rounded-lg border p-3"
-            :class="processingThumbnailStates.includes(job.state) ? 'border-sky-700/80 bg-sky-950/35' : 'border-violet-900/70 bg-violet-950/20'"
+            :class="processingThumbnailStates.includes(job.state) ? 'webfile-task-processing' : 'webfile-task-queued'"
             :data-thumbnail-job="job.id"
             :data-thumbnail-processing="processingThumbnailStates.includes(job.state) ? 'true' : undefined"
           >
             <div class="flex items-start gap-3">
               <span
                 v-if="job.state !== 'failed'"
-                class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center" :class="processingThumbnailStates.includes(job.state) ? 'text-sky-300' : 'text-violet-400'"
+                class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center" :class="processingThumbnailStates.includes(job.state) ? 'webfile-text-info' : 'webfile-text-queued'"
                 role="status"
                 :aria-label="`${job.name} thumbnail task ${job.state}`"
                 data-task-spinner
@@ -197,7 +195,7 @@ function formatDate(value?: string) {
               <Button v-if="job.state === 'failed'" label="Dismiss" size="small" severity="secondary" text @click="emit('cancel-thumbnail', job.id)" />
               <Button v-else-if="job.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel-thumbnail', job.id)" />
             </div>
-            <p v-if="job.error" class="mt-2 text-xs text-red-300">{{ job.error }}</p>
+            <p v-if="job.error" class="webfile-text-error mt-2 text-xs">{{ job.error }}</p>
           </article>
           <p v-if="remainingThumbnailJobs" class="rounded-lg border border-dashed border-violet-900/70 px-3 py-2 text-center text-xs text-zinc-500">and {{ remainingThumbnailJobs }} more</p>
         </div>
@@ -218,13 +216,13 @@ function formatDate(value?: string) {
           </button>
         </h3>
         <div v-if="activeExpanded" id="active-tasks-content" class="space-y-3">
-          <article v-for="operation in activeTasks" :key="operation.id" class="rounded-lg border p-3" :class="operation.state === 'running' ? 'border-sky-800/80 bg-sky-950/25' : 'border-zinc-800 bg-zinc-900/60'" :data-task-state="operation.state">
+          <article v-for="operation in activeTasks" :key="operation.id" class="rounded-lg border p-3" :class="operation.state === 'running' ? 'webfile-task-processing' : 'border-zinc-800 bg-zinc-900/60'" :data-task-state="operation.state">
             <div class="flex items-start gap-3">
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-medium">{{ label(operation) }}</div>
                 <div class="mt-1 truncate text-xs capitalize text-zinc-500">{{ operation.message || phaseLabel(operation) }}</div>
               </div>
-              <span class="rounded bg-sky-950 px-2 py-0.5 text-xs capitalize text-sky-300">{{ stateLabel(operation) }}</span>
+              <span class="webfile-status-processing rounded px-2 py-0.5 text-xs capitalize">{{ stateLabel(operation) }}</span>
             </div>
             <div class="mt-3">
               <div v-if="operation.state === 'queued'" class="flex items-center justify-between gap-3 text-xs text-zinc-500">
@@ -281,8 +279,8 @@ function formatDate(value?: string) {
               <div class="min-w-0">
                 <div class="truncate text-sm font-medium">{{ label(operation) }}</div>
                 <div class="mt-1 text-xs text-zinc-500">{{ formatDate(operation.finished_at || operation.updated_at) }}</div>
-                <p v-if="operation.error" class="text-xs text-red-300">{{ operation.error }}</p>
-                <p v-if="operation.cleanup_error" class="text-xs text-red-300">Cleanup: {{ operation.cleanup_error }}</p>
+                <p v-if="operation.error" class="webfile-text-error text-xs">{{ operation.error }}</p>
+                <p v-if="operation.cleanup_error" class="webfile-text-error text-xs">Cleanup: {{ operation.cleanup_error }}</p>
                 <details v-if="operation.message || operation.destination" class="text-xs text-zinc-500">
                   <summary class="cursor-pointer select-none">Details</summary>
                   <dl class="mt-2 space-y-1">
@@ -297,10 +295,10 @@ function formatDate(value?: string) {
                   <Button v-tooltip.left="'Remove from history'" icon="pi pi-times" size="small" severity="secondary" text :aria-label="`Remove ${label(operation)} from history`" @click="emit('remove-history', operation)" />
                 </div>
                 <span class="self-end rounded px-2 py-0.5 text-xs capitalize" data-task-status :class="{
-                    'bg-emerald-950 text-emerald-300': operation.state === 'completed',
-                    'bg-red-950 text-red-300': operation.state === 'failed',
-                    'bg-amber-950 text-amber-300': operation.state === 'interrupted',
-                    'bg-zinc-800 text-zinc-400': operation.state === 'cancelled',
+                    'webfile-status-success': operation.state === 'completed',
+                    'webfile-status-error': operation.state === 'failed',
+                    'webfile-status-warning': operation.state === 'interrupted',
+                    'webfile-status-neutral': operation.state === 'cancelled',
                   }">{{ stateLabel(operation) }}</span>
               </div>
             </div>

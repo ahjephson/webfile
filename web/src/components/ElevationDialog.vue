@@ -43,9 +43,9 @@ function submit() {
     @update:visible="emit('update:visible', $event)"
   >
     <form class="space-y-4" @submit.prevent="submit">
-      <div class="rounded-lg border border-amber-900/70 bg-amber-950/30 p-3 text-sm text-amber-100">
+      <div class="webfile-alert-warning rounded-lg border p-3 text-sm">
         <div class="flex gap-3">
-          <i class="pi pi-shield mt-0.5 text-amber-400" />
+          <i class="webfile-accent-warning pi pi-shield mt-0.5" />
           <p>Temporarily run file operations with root permissions. Access expires automatically and can be dropped at any time.</p>
         </div>
       </div>

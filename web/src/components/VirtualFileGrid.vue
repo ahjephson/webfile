@@ -231,7 +231,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: columns })
           >
             <span
               class="webfile-selection-box grid h-6 w-6 place-items-center rounded border border-zinc-500 shadow-sm"
-              :class="selected.has(cell.entry.path) ? 'border-sky-500 bg-sky-600 text-white' : 'bg-zinc-800 text-transparent'"
+              :class="selected.has(cell.entry.path) ? 'webfile-check-active' : 'bg-zinc-800 text-transparent'"
             >
               <i class="pi pi-check text-xs" />
             </span>

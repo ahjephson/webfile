@@ -186,7 +186,7 @@ const {
   },
 })
 
-const activeThumbnailJobs = computed(() => thumbnailJobs.value.filter(job => ['settling', 'queued', 'probing', 'generating', 'publishing'].includes(job.state)))
+const activeThumbnailJobs = computed(() => thumbnailJobs.value.filter(job => ['queued', 'probing', 'generating', 'publishing'].includes(job.state)))
 const taskBadgeCount = computed(() => activeOperations.value.length + activeThumbnailJobs.value.length)
 
 watch(operationsVisible, visible => {
@@ -1365,7 +1365,7 @@ function operationLabel(value: string) {
           <Button v-tooltip.bottom="'New file'" icon="pi pi-file-plus" size="small" severity="secondary" text :disabled="!canMutate" aria-label="New file" @click="newDocumentVisible = true" />
           <Button v-tooltip.bottom="'Upload'" icon="pi pi-upload" size="small" severity="secondary" text :disabled="!canMutate" aria-label="Upload" @click="chooseUpload" />
         </div>
-        <span class="mx-1 h-6 w-px bg-zinc-700" />
+        <span class="webfile-divider mx-1 h-6 w-px" />
         <div class="flex items-center gap-1">
           <Button v-tooltip.bottom="detailsVisible ? 'Close details' : 'Open details'" icon="pi pi-info-circle" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': detailsVisible }" :aria-label="detailsVisible ? 'Close details' : 'Open details'" :aria-pressed="detailsVisible" @click="toggleDetailsPanel" />
           <Button v-if="selectedEntries.length || fileClipboard" v-tooltip.bottom="'Actions'" icon="pi pi-ellipsis-v" size="small" severity="secondary" text aria-label="Actions" @click="showActionsMenu" />
@@ -1388,7 +1388,7 @@ function operationLabel(value: string) {
           />
           <Button v-tooltip.bottom="'Settings'" icon="pi pi-cog" size="small" severity="secondary" text aria-label="Settings" @click="settingsVisible = true" />
         </div>
-        <span class="mx-1 h-6 w-px bg-zinc-700" />
+        <span class="webfile-divider mx-1 h-6 w-px" />
         <Button v-tooltip.bottom="`Theme: ${themeMode}`" :icon="themeMode === 'system' ? 'pi pi-palette' : themeMode === 'dark' ? 'pi pi-moon' : 'pi pi-sun'" size="small" severity="secondary" text aria-label="Choose theme" @click="showThemeMenu" />
         <Menu ref="themeMenu" popup :model="themeItems">
           <template #item="{ item, props }">
@@ -1398,7 +1398,7 @@ function operationLabel(value: string) {
             </a>
           </template>
         </Menu>
-        <span v-if="props.username || props.showLogout" class="mx-1 h-6 w-px bg-zinc-700" />
+        <span v-if="props.username || props.showLogout" class="webfile-divider mx-1 h-6 w-px" />
         <Button
           v-if="props.elevationAvailable && !props.elevated"
           v-tooltip.bottom="'Elevate access'"
@@ -1421,7 +1421,7 @@ function operationLabel(value: string) {
           @click="emit('dropElevation')"
         />
         <span class="hidden items-center gap-1 text-xs text-zinc-500 sm:flex">
-          <i class="pi pi-circle-fill text-[0.45rem]" :class="watchConnected ? 'text-emerald-500' : 'text-zinc-600'" /> live
+          <i class="pi pi-circle-fill text-[0.45rem]" :class="watchConnected ? 'webfile-accent-success' : 'text-zinc-600'" /> live
         </span>
         <span v-if="props.username" class="hidden text-xs text-zinc-400 sm:inline">{{ props.username }}</span>
         <Button v-if="props.showLogout" v-tooltip.bottom="'Sign out'" icon="pi pi-sign-out" severity="secondary" text rounded aria-label="Sign out" @click="emit('logout')" />
@@ -1429,14 +1429,14 @@ function operationLabel(value: string) {
       </div>
     </header>
 
-    <div v-if="error" class="border-b border-red-950 bg-red-950/50 px-4 py-3 text-sm text-red-200">{{ error }}</div>
+    <div v-if="error" class="webfile-alert-error border-b px-4 py-3 text-sm">{{ error }}</div>
 
     <div class="flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950 px-3 py-2">
       <nav ref="breadcrumbScroll" class="min-w-0 flex-1 overflow-x-auto" aria-label="Breadcrumb" data-breadcrumb-scroll :data-single-root="singleRootPath ? 'true' : 'false'">
         <div class="flex min-w-max items-center gap-1 text-sm">
           <template v-for="(crumb, index) in breadcrumbs" :key="crumb.path">
             <i v-if="index" class="pi pi-angle-right text-xs text-zinc-600" />
-            <button class="rounded px-2 py-1 text-zinc-300 hover:bg-zinc-800 hover:text-white" :aria-current="index === breadcrumbs.length - 1 ? 'page' : undefined" @click="navigateBreadcrumb(crumb.path)">
+            <button class="rounded px-2 py-1 text-zinc-300 hover:bg-zinc-800" :aria-current="index === breadcrumbs.length - 1 ? 'page' : undefined" @click="navigateBreadcrumb(crumb.path)">
               {{ crumb.name }}
             </button>
           </template>
@@ -1472,7 +1472,7 @@ function operationLabel(value: string) {
       <div class="flex items-center gap-1">
         <Button v-tooltip.bottom="showHidden ? 'Hide dot files' : 'Show dot files'" icon="pi pi-eye" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': showHidden }" :aria-label="showHidden ? 'Hide dot files' : 'Show dot files'" :aria-pressed="showHidden" @click="showHidden = !showHidden" />
         <span class="inline-flex overflow-hidden rounded-md border border-zinc-700">
-          <button v-tooltip.bottom="'List view'" class="px-2.5 py-1.5" :class="viewMode === 'list' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" aria-label="List view" @click="viewMode = 'list'"><i class="pi pi-list" /></button>
+          <button v-tooltip.bottom="'List view'" class="px-2.5 py-1.5" :class="viewMode === 'list' ? 'webfile-view-active' : 'text-zinc-400'" aria-label="List view" @click="viewMode = 'list'"><i class="pi pi-list" /></button>
           <SplitButton
             v-tooltip.bottom="'Grid view and tile size'"
             :model="gridSizeItems"
@@ -1500,7 +1500,7 @@ function operationLabel(value: string) {
         @dragleave="onViewDragLeave"
         @drop="onBackgroundDrop"
       >
-        <div v-if="draggingOver" class="pointer-events-none absolute inset-3 z-30 grid place-items-center rounded-xl border-2 border-dashed border-sky-500 bg-sky-950/40 text-sm font-medium text-sky-200">
+        <div v-if="draggingOver" class="webfile-drop-overlay pointer-events-none absolute inset-3 z-30 grid place-items-center rounded-xl border-2 border-dashed text-sm font-medium">
           Drop files to upload
         </div>
 

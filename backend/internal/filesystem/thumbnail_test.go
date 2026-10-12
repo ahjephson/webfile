@@ -100,6 +100,9 @@ func TestThumbnailCreatesAndCachesRepresentativeVideoSprite(t *testing.T) {
 	if strings.Count(argumentText, "-ss\n") != videoThumbnailFrames || strings.Count(argumentText, "-i\n") != videoThumbnailFrames {
 		t.Fatalf("fast seeks were not used for every sprite frame: %q", argumentText)
 	}
+	if strings.Contains(argumentText, "-colorspace\n") {
+		t.Fatalf("normal thumbnail generation unexpectedly overrode color metadata: %q", argumentText)
+	}
 	if !strings.Contains(argumentText, "5.000000") || !strings.Contains(argumentText, "95.000000") {
 		t.Fatalf("sprite timestamps do not span the video: %q", argumentText)
 	}
@@ -111,26 +114,163 @@ func TestThumbnailCreatesAndCachesRepresentativeVideoSprite(t *testing.T) {
 	}
 }
 
-func TestVideoThumbnailBatchPreservesSourceOrderBeforeWorkersStart(t *testing.T) {
-	queue := newVideoThumbnailQueue(&Service{}, ThumbnailOptions{MaxQueued: 10, VideoTimeout: time.Minute})
-	queue.settleDelay = 0
+func TestVideoThumbnailRetriesInvalidColorSpaceWithBT709(t *testing.T) {
+	target, root := testService(t)
+	videoPath := filepath.Join(root, "reserved-color.mp4")
+	if err := os.WriteFile(videoPath, []byte{0, 1, 2, 3}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tools := t.TempDir()
+	argsPath := filepath.Join(tools, "ffmpeg-args")
+	probePath := filepath.Join(tools, "ffprobe")
+	ffmpegPath := filepath.Join(tools, "ffmpeg")
+	if err := os.WriteFile(probePath, []byte("#!/bin/sh\nprintf '20\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ffmpegScript := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" >> \"$WEBFILE_TEST_FFMPEG_ARGS\"\n" +
+		"for argument in \"$@\"; do\n" +
+		"  if [ \"$argument\" = '-colorspace' ]; then\n" +
+		"    printf 'fallback-sprite'\n" +
+		"    exit 0\n" +
+		"  fi\n" +
+		"done\n" +
+		"printf 'Invalid color space\\nError reinitializing filters!\\n' >&2\n" +
+		"exit 234\n"
+	if err := os.WriteFile(ffmpegPath, []byte(ffmpegScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WEBFILE_TEST_FFMPEG_ARGS", argsPath)
+	target.videoThumbnails = videoThumbnailGenerator{ffmpeg: ffmpegPath, ffprobe: probePath, threads: 1}
+
+	thumbnail, err := target.Thumbnail(context.Background(), "/Files/reserved-color.mp4", 320, 180)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(thumbnail.Data) != "fallback-sprite" {
+		t.Fatalf("unexpected fallback sprite: %q", thumbnail.Data)
+	}
+	arguments, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argumentText := string(arguments)
+	if strings.Count(argumentText, "-hide_banner\n") != 2 {
+		t.Fatalf("ffmpeg did not run exactly twice: %q", argumentText)
+	}
+	for _, option := range []string{"-colorspace\n", "-color_primaries\n", "-color_trc\n"} {
+		if strings.Count(argumentText, option) != videoThumbnailFrames {
+			t.Fatalf("fallback option %q was not applied to every input: %q", option, argumentText)
+		}
+	}
+}
+
+func TestVideoThumbnailDoesNotRetryOtherFailures(t *testing.T) {
+	tools := t.TempDir()
+	argsPath := filepath.Join(tools, "ffmpeg-args")
+	probePath := filepath.Join(tools, "ffprobe")
+	ffmpegPath := filepath.Join(tools, "ffmpeg")
+	if err := os.WriteFile(probePath, []byte("#!/bin/sh\nprintf '20\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ffmpegScript := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" >> \"$WEBFILE_TEST_FFMPEG_ARGS\"\n" +
+		"printf 'decoder failed\\n' >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(ffmpegPath, []byte(ffmpegScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WEBFILE_TEST_FFMPEG_ARGS", argsPath)
+	generator := videoThumbnailGenerator{ffmpeg: ffmpegPath, ffprobe: probePath, threads: 1}
+
+	_, err := generator.generate(context.Background(), "/unused.mp4", 320, 180)
+	if err == nil {
+		t.Fatal("expected ffmpeg failure")
+	}
+	if !strings.Contains(err.Error(), "decoder failed") {
+		t.Fatalf("ffmpeg stderr was not preserved: %v", err)
+	}
+	arguments, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(arguments), "-hide_banner\n") != 1 {
+		t.Fatalf("non-color failure unexpectedly retried: %q", arguments)
+	}
+}
+
+func TestVideoThumbnailBatchStaysHiddenUntilSettledAndAppendsInOrder(t *testing.T) {
+	target, root := testService(t)
+	queue := newVideoThumbnailQueue(target, ThumbnailOptions{MaxQueued: 10, VideoTimeout: time.Minute})
+	queue.settleDelay = time.Minute
 	t.Cleanup(queue.close)
-	sources := []thumbnailSource{
-		{virtualPath: "/Files/first.mp4", key: "11111111111111111111111111111111"},
-		{virtualPath: "/Files/second.mp4", key: "22222222222222222222222222222222"},
-		{virtualPath: "/Files/third.mp4", key: "33333333333333333333333333333333"},
+	existing := &videoThumbnailJob{
+		view:       VideoThumbnailJob{ID: "existing", Path: "/Files/existing.mp4", Name: "existing.mp4", State: "queued", Cancellable: true, UpdatedAt: time.Now().UTC()},
+		source:     thumbnailSource{virtualPath: "/Files/existing.mp4"},
+		logicalKey: "existing",
+		done:       make(chan struct{}),
+	}
+	queue.mu.Lock()
+	queue.jobs[existing.logicalKey], queue.ids[existing.view.ID] = existing, existing
+	queue.queued = append(queue.queued, existing)
+	queue.mu.Unlock()
+	paths := []string{"/Files/first.mp4", "/Files/second.mp4", "/Files/third.mp4"}
+	sources := make([]thumbnailSource, 0, len(paths))
+	for index, virtualPath := range paths {
+		if err := os.WriteFile(filepath.Join(root, filepath.Base(virtualPath)), []byte{byte(index)}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		source, file, err := target.inspectThumbnailSource(context.Background(), virtualPath, 320, 180)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = file.Close()
+		sources = append(sources, source)
 	}
 	jobs := queue.scheduleBatch(sources)
 	if len(jobs) != len(sources) {
-		t.Fatalf("queued %d jobs, want %d", len(jobs), len(sources))
+		t.Fatalf("captured %d jobs, want %d", len(jobs), len(sources))
 	}
 	for index, source := range sources {
-		if jobs[index].Path != source.virtualPath || jobs[index].QueuePosition != index+1 {
-			t.Fatalf("job %d = %#v, want path %q at position %d", index, jobs[index], source.virtualPath, index+1)
+		if jobs[index].Path != source.virtualPath || jobs[index].State != "settling" || jobs[index].QueuePosition != 0 {
+			t.Fatalf("job %d = %#v, want hidden settling path %q", index, jobs[index], source.virtualPath)
 		}
-		if queue.queued[index].source.virtualPath != source.virtualPath {
-			t.Fatalf("queue item %d = %q, want %q", index, queue.queued[index].source.virtualPath, source.virtualPath)
+	}
+	if got := queue.snapshot(); len(got) != 1 || got[0].ID != existing.view.ID {
+		t.Fatalf("settling jobs leaked into the visible snapshot: %#v", got)
+	}
+	queue.mu.Lock()
+	if len(queue.queued) != 1 || queue.queued[0] != existing || len(queue.settling) != len(sources) {
+		queuedCount, settlingCount := len(queue.queued), len(queue.settling)
+		queue.mu.Unlock()
+		t.Fatalf("jobs entered the queue before settling: queued=%d settling=%d", queuedCount, settlingCount)
+	}
+	for _, job := range queue.settling {
+		job.eligibleAt = time.Now().Add(-time.Second)
+	}
+	queue.mu.Unlock()
+	queue.signalSettler()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		queue.mu.Lock()
+		queued := append([]*videoThumbnailJob(nil), queue.queued...)
+		queue.mu.Unlock()
+		if len(queued) == len(sources)+1 {
+			if queued[0] != existing {
+				t.Fatalf("settled jobs did not append behind existing queued work: first=%q", queued[0].view.ID)
+			}
+			for index, source := range sources {
+				if queued[index+1].source.virtualPath != source.virtualPath {
+					t.Fatalf("queue item %d = %q, want %q", index+1, queued[index+1].source.virtualPath, source.virtualPath)
+				}
+			}
+			break
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("settled jobs were not appended to the queue: got %d, want %d", len(queued), len(sources)+1)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -149,15 +289,15 @@ func TestVideoThumbnailQueueCoalescesChangedSourceAndDismissesFailure(t *testing
 	if initial[0].ID != updated[0].ID {
 		t.Fatalf("changed source created a second job: %q != %q", initial[0].ID, updated[0].ID)
 	}
-	if len(queue.queued) != 1 || len(queue.jobs) != 1 || queue.queued[0].source.key != changed.key {
-		t.Fatalf("changed source was not coalesced: queued=%d jobs=%d source=%q", len(queue.queued), len(queue.jobs), queue.queued[0].source.key)
+	if len(queue.settling) != 1 || len(queue.queued) != 0 || len(queue.jobs) != 1 || queue.settling[0].source.key != changed.key {
+		t.Fatalf("changed source was not coalesced: settling=%d queued=%d jobs=%d", len(queue.settling), len(queue.queued), len(queue.jobs))
 	}
 	if updated[0].State != "settling" {
 		t.Fatalf("updated job state = %q, want settling", updated[0].State)
 	}
 
-	job := queue.queued[0]
-	queue.queued = nil
+	job := queue.settling[0]
+	queue.settling = nil
 	job.view.State = "failed"
 	job.view.Cancellable = false
 	close(job.done)
@@ -167,11 +307,11 @@ func TestVideoThumbnailQueueCoalescesChangedSourceAndDismissesFailure(t *testing
 	if len(retried) != 1 || retried[0].ID != initial[0].ID || retried[0].State != "settling" {
 		t.Fatalf("changed failed job was not retried in place: %#v", retried)
 	}
-	if len(queue.queued) != 1 || len(queue.jobs) != 1 || queue.queued[0] != job {
-		t.Fatalf("retry created duplicate queue state: queued=%d jobs=%d", len(queue.queued), len(queue.jobs))
+	if len(queue.settling) != 1 || len(queue.queued) != 0 || len(queue.jobs) != 1 || queue.settling[0] != job {
+		t.Fatalf("retry created duplicate staging state: settling=%d queued=%d jobs=%d", len(queue.settling), len(queue.queued), len(queue.jobs))
 	}
 
-	queue.queued = nil
+	queue.settling = nil
 	job.view.State = "failed"
 	job.view.Cancellable = false
 	close(job.done)

@@ -662,12 +662,12 @@ function onKeyDown(event: KeyboardEvent) {
         <Button v-tooltip.bottom="'Zoom in'" icon="pi pi-search-plus" severity="secondary" text :disabled="scale >= 8" aria-label="Zoom in" @click="zoomBy(0.25)" />
         <Button v-tooltip.bottom="'Actual size'" icon="pi pi-stop" severity="secondary" text aria-label="Actual size" @click="actualSize" />
         <Button v-tooltip.bottom="'Fit to window'" icon="pi pi-expand" severity="secondary" text aria-label="Fit to window" @click="fitImage" />
-        <span class="mx-2 h-6 w-px bg-zinc-700" />
+        <span class="webfile-divider mx-2 h-6 w-px" />
         <Button v-tooltip.bottom="'Previous image'" icon="pi pi-chevron-left" severity="secondary" text :disabled="!canPrevious" aria-label="Previous image" @click="animateNavigate(-1)" />
         <span class="min-w-16 text-center text-xs text-zinc-400" aria-live="polite">{{ activeThumbnailIndex + 1 }} / {{ images.length }}</span>
         <Button v-tooltip.bottom="'Next image'" icon="pi pi-chevron-right" severity="secondary" text :disabled="!canNext" aria-label="Next image" @click="animateNavigate(1)" />
         <Button v-tooltip.bottom="thumbnailsVisible ? 'Hide thumbnails' : 'Show thumbnails'" icon="pi pi-images" severity="secondary" text :aria-label="thumbnailsVisible ? 'Hide thumbnails' : 'Show thumbnails'" @click="toggleThumbnails" />
-        <span class="mx-2 h-6 w-px bg-zinc-700" />
+        <span class="webfile-divider mx-2 h-6 w-px" />
         <Button v-tooltip.bottom="'Fullscreen'" icon="pi pi-window-maximize" severity="secondary" text aria-label="Enter fullscreen" @click="toggleFullscreen" />
       </div>
     </header>
@@ -686,7 +686,7 @@ function onKeyDown(event: KeyboardEvent) {
       <Button v-tooltip.bottom="'Zoom in'" icon="pi pi-search-plus" severity="secondary" text :disabled="scale >= 8" aria-label="Zoom in" @click.stop="zoomBy(0.25)" />
       <Button v-tooltip.bottom="'Actual size'" icon="pi pi-stop" severity="secondary" text aria-label="Actual size" @click.stop="actualSize" />
       <Button v-tooltip.bottom="'Fit to window'" icon="pi pi-expand" severity="secondary" text aria-label="Fit to window" @click.stop="fitImage" />
-      <span class="mx-2 h-6 w-px shrink-0 bg-zinc-700" />
+      <span class="webfile-divider mx-2 h-6 w-px shrink-0" />
       <Button v-tooltip.bottom="'Previous image'" icon="pi pi-chevron-left" severity="secondary" text :disabled="!canPrevious" aria-label="Previous image" @click.stop="animateNavigate(-1)" />
       <span class="min-w-16 text-center text-xs text-zinc-300" aria-live="polite">{{ activeThumbnailIndex + 1 }} / {{ images.length }}</span>
       <Button v-tooltip.bottom="'Next image'" icon="pi pi-chevron-right" severity="secondary" text :disabled="!canNext" aria-label="Next image" @click.stop="animateNavigate(1)" />
@@ -744,7 +744,7 @@ function onKeyDown(event: KeyboardEvent) {
       </div>
     </div>
 
-    <footer v-show="thumbnailsVisible" class="shrink-0 overflow-hidden border-t border-zinc-800 bg-zinc-900/95 px-2 py-2" data-thumbnail-strip>
+    <footer v-show="thumbnailsVisible" class="webfile-gallery-footer shrink-0 overflow-hidden border-t border-zinc-800 px-2 py-2" data-thumbnail-strip>
       <div class="mb-1 flex items-center justify-between px-1 text-[11px] text-zinc-500">
         <span>Gallery</span>
         <span>{{ thumbnailsLoaded }} / {{ images.length }} thumbnails</span>

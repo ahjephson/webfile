@@ -138,7 +138,7 @@ function requestElevation() {
     </div>
     <section v-else-if="sessionError && !session" class="grid h-full place-items-center p-6 text-center">
       <div class="max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-8 shadow-2xl">
-        <i class="pi pi-wifi mb-4 text-4xl text-amber-400" />
+        <i class="webfile-accent-warning pi pi-wifi mb-4 text-4xl" />
         <h1 class="text-xl font-semibold">Unable to connect to WebFile</h1>
         <p class="mt-2 text-sm text-zinc-400">{{ sessionError }}</p>
         <Button class="mt-6" label="Try again" icon="pi pi-refresh" @click="refreshSession" />
@@ -146,7 +146,7 @@ function requestElevation() {
     </section>
     <section v-else-if="!session?.authenticated && session?.mode === 'proxy'" class="grid h-full place-items-center p-6 text-center">
       <div class="max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-8 shadow-2xl">
-        <i class="pi pi-shield mb-4 text-4xl text-sky-400" />
+        <i class="webfile-accent-info pi pi-shield mb-4 text-4xl" />
         <h1 class="text-xl font-semibold">External authentication required</h1>
         <p class="mt-2 text-sm text-zinc-400">Sign in through the configured authentication proxy, then try again.</p>
         <Button class="mt-6" label="Try again" icon="pi pi-refresh" @click="retryExternalAuthentication" />

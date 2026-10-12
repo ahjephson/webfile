@@ -49,7 +49,7 @@ function updateVisible(value: boolean) {
   >
     <form class="space-y-4" autocomplete="off" @submit.prevent="submit">
       <p class="text-sm text-zinc-300">This archive is encrypted. Enter its password to continue extraction.</p>
-      <p v-if="error" class="text-sm text-red-300" role="alert">{{ error }}</p>
+      <p v-if="error" class="webfile-text-error text-sm" role="alert">{{ error }}</p>
       <div class="space-y-2">
         <label for="archive-password" class="block text-sm font-medium">Password</label>
         <Password

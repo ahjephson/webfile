@@ -45,8 +45,10 @@ type videoThumbnailQueue struct {
 	mu            sync.Mutex
 	jobs          map[string]*videoThumbnailJob
 	ids           map[string]*videoThumbnailJob
+	settling      []*videoThumbnailJob
 	queued        []*videoThumbnailJob
 	subscribers   map[chan VideoThumbnailJob]struct{}
+	settleWake    chan struct{}
 	wake          chan struct{}
 	stop          chan struct{}
 	closeOnce     sync.Once
@@ -60,9 +62,11 @@ func newVideoThumbnailQueue(service *Service, options ThumbnailOptions) *videoTh
 	queue := &videoThumbnailQueue{
 		service: service, workers: options.VideoWorkers, maxQueued: options.MaxQueued, timeout: options.VideoTimeout,
 		jobs: make(map[string]*videoThumbnailJob), ids: make(map[string]*videoThumbnailJob),
-		subscribers: make(map[chan VideoThumbnailJob]struct{}), wake: make(chan struct{}, options.VideoWorkers), stop: make(chan struct{}),
+		subscribers: make(map[chan VideoThumbnailJob]struct{}), settleWake: make(chan struct{}, 1), wake: make(chan struct{}, options.VideoWorkers), stop: make(chan struct{}),
 		retryBackoff: 10 * time.Second, completedLife: 3 * time.Second, settleDelay: 2 * time.Second,
 	}
+	queue.workerWait.Add(1)
+	go queue.runSettler()
 	for i := 0; i < queue.workers; i++ {
 		queue.workerWait.Add(1)
 		go queue.runWorker()
@@ -87,6 +91,7 @@ func (q *videoThumbnailQueue) scheduleBatch(sources []thumbnailSource) []VideoTh
 		if existing := q.jobs[logicalKey]; existing != nil {
 			if existing.source.key != source.key {
 				now := time.Now()
+				previousState := existing.view.State
 				existing.source = source
 				existing.view.Path, existing.view.Name = source.virtualPath, filepath.Base(source.virtualPath)
 				existing.view.Error, existing.view.FinishedAt, existing.view.UpdatedAt = "", nil, now.UTC()
@@ -94,25 +99,31 @@ func (q *videoThumbnailQueue) scheduleBatch(sources []thumbnailSource) []VideoTh
 				if isThumbnailTerminal(existing.view.State) {
 					existing.done = make(chan struct{})
 					existing.view.State, existing.view.Cancellable, existing.view.StartedAt = "settling", true, nil
-					q.queued = append(q.queued, existing)
+					q.settling = append(q.settling, existing)
 					added++
-				} else if existing.view.State == "queued" || existing.view.State == "settling" {
+				} else if existing.view.State == "queued" {
+					q.removeQueuedLocked(existing)
 					existing.view.State = "settling"
+					q.settling = append(q.settling, existing)
+					added++
 				}
-				q.publishLocked(q.snapshotLocked(existing))
+				if previousState != "settling" {
+					q.publishLocked(q.snapshotLocked(existing))
+				}
 			} else if existing.view.State == "failed" && time.Since(existing.view.UpdatedAt) >= q.retryBackoff {
 				now := time.Now()
 				existing.done = make(chan struct{})
 				existing.view.State, existing.view.Error, existing.view.Cancellable = "settling", "", true
 				existing.view.StartedAt, existing.view.FinishedAt = nil, nil
 				existing.view.UpdatedAt, existing.eligibleAt = now.UTC(), now.Add(q.settleDelay)
-				q.queued = append(q.queued, existing)
+				q.settling = append(q.settling, existing)
 				added++
+				q.publishLocked(q.snapshotLocked(existing))
 			}
 			jobs = append(jobs, q.snapshotLocked(existing))
 			continue
 		}
-		if len(q.queued) >= q.maxQueued {
+		if len(q.queued)+len(q.settling) >= q.maxQueued {
 			break
 		}
 		now := time.Now().UTC()
@@ -124,16 +135,111 @@ func (q *videoThumbnailQueue) scheduleBatch(sources []thumbnailSource) []VideoTh
 			source: source, logicalKey: logicalKey, eligibleAt: time.Now().Add(q.settleDelay), done: make(chan struct{}),
 		}
 		q.jobs[logicalKey], q.ids[job.view.ID] = job, job
-		q.queued = append(q.queued, job)
+		q.settling = append(q.settling, job)
 		jobs = append(jobs, q.snapshotLocked(job))
 		added++
 	}
-	q.publishQueuePositionsLocked()
 	q.mu.Unlock()
-	for index := 0; index < added && index < q.workers; index++ {
-		q.signal()
+	if added > 0 {
+		q.signalSettler()
 	}
 	return jobs
+}
+
+func (q *videoThumbnailQueue) runSettler() {
+	defer q.workerWait.Done()
+	for {
+		job, wait := q.nextSettling()
+		if job != nil {
+			q.settle(job)
+			continue
+		}
+		var timer <-chan time.Time
+		if wait > 0 {
+			timer = time.After(wait)
+		}
+		select {
+		case <-q.settleWake:
+		case <-timer:
+		case <-q.stop:
+			return
+		}
+	}
+}
+
+func (q *videoThumbnailQueue) nextSettling() (*videoThumbnailJob, time.Duration) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.settling) == 0 {
+		return nil, 0
+	}
+	now := time.Now()
+	index := -1
+	var wait time.Duration
+	for candidateIndex, candidate := range q.settling {
+		remaining := candidate.eligibleAt.Sub(now)
+		if remaining <= 0 {
+			index = candidateIndex
+			break
+		}
+		if wait == 0 || remaining < wait {
+			wait = remaining
+		}
+	}
+	if index < 0 {
+		return nil, wait
+	}
+	job := q.settling[index]
+	q.settling = append(q.settling[:index], q.settling[index+1:]...)
+	job.ctx, job.cancel = context.WithCancel(context.Background())
+	return job, 0
+}
+
+func (q *videoThumbnailQueue) settle(job *videoThumbnailJob) {
+	q.mu.Lock()
+	expected, ctx, cancel := job.source, job.ctx, job.cancel
+	q.mu.Unlock()
+	defer cancel()
+
+	source, file, err := q.service.inspectThumbnailSource(ctx, expected.virtualPath, expected.width, expected.height)
+	if err == nil {
+		_ = file.Close()
+	}
+	if errors.Is(err, context.Canceled) {
+		q.finish(job, "cancelled", "cancelled", "")
+		return
+	}
+	if err != nil {
+		q.discardSettling(job, err)
+		return
+	}
+	if source.key != expected.key || source.mediaType != expected.mediaType || q.sourceChanged(job, expected) {
+		q.resettle(job, expected, source)
+		return
+	}
+
+	q.mu.Lock()
+	job.cancel, job.ctx = nil, nil
+	job.view.State, job.view.Error, job.view.Cancellable = "queued", "", true
+	job.view.UpdatedAt = time.Now().UTC()
+	q.queued = append(q.queued, job)
+	q.publishQueuePositionsLocked()
+	q.mu.Unlock()
+	q.signal()
+}
+
+func (q *videoThumbnailQueue) discardSettling(job *videoThumbnailJob, err error) {
+	q.mu.Lock()
+	if q.jobs[job.logicalKey] == job {
+		now := time.Now().UTC()
+		job.view.State, job.view.Error, job.view.Cancellable = "failed", err.Error(), false
+		job.view.UpdatedAt, job.view.FinishedAt = now, &now
+		job.cancel, job.ctx = nil, nil
+		delete(q.jobs, job.logicalKey)
+		delete(q.ids, job.view.ID)
+		close(job.done)
+	}
+	q.mu.Unlock()
 }
 
 func videoThumbnailLogicalKey(source thumbnailSource) string {
@@ -182,24 +288,8 @@ func (q *videoThumbnailQueue) next() (*videoThumbnailJob, time.Duration) {
 	if len(q.queued) == 0 {
 		return nil, 0
 	}
-	now := time.Now()
-	index := -1
-	var wait time.Duration
-	for candidateIndex, candidate := range q.queued {
-		remaining := candidate.eligibleAt.Sub(now)
-		if remaining <= 0 {
-			index = candidateIndex
-			break
-		}
-		if wait == 0 || remaining < wait {
-			wait = remaining
-		}
-	}
-	if index < 0 {
-		return nil, wait
-	}
-	job := q.queued[index]
-	q.queued = append(q.queued[:index], q.queued[index+1:]...)
+	job := q.queued[0]
+	q.queued = q.queued[1:]
 	q.publishQueuePositionsLocked()
 	ctx, cancel := context.WithCancel(context.Background())
 	job.ctx, job.cancel = ctx, cancel
@@ -284,10 +374,10 @@ func (q *videoThumbnailQueue) resettle(job *videoThumbnailJob, expected, source 
 	job.view.State, job.view.Error, job.view.Cancellable = "settling", "", true
 	job.view.StartedAt, job.view.FinishedAt = nil, nil
 	job.view.UpdatedAt, job.eligibleAt = time.Now().UTC(), time.Now().Add(q.settleDelay)
-	q.queued = append(q.queued, job)
-	q.publishQueuePositionsLocked()
+	q.settling = append(q.settling, job)
+	q.publishLocked(q.snapshotLocked(job))
 	q.mu.Unlock()
-	q.signal()
+	q.signalSettler()
 }
 
 func (q *videoThumbnailQueue) setState(job *videoThumbnailJob, state, detail string) {
@@ -303,10 +393,11 @@ func (q *videoThumbnailQueue) finish(job *videoThumbnailJob, state, detail, expe
 		job.cancel, job.ctx = nil, nil
 		job.view.State, job.view.Error, job.view.Cancellable = "settling", "", true
 		job.view.StartedAt, job.view.FinishedAt, job.view.UpdatedAt = nil, nil, time.Now().UTC()
-		q.queued = append(q.queued, job)
-		q.publishQueuePositionsLocked()
+		job.eligibleAt = time.Now().Add(q.settleDelay)
+		q.settling = append(q.settling, job)
+		q.publishLocked(q.snapshotLocked(job))
 		q.mu.Unlock()
-		q.signal()
+		q.signalSettler()
 		return
 	}
 	now := time.Now().UTC()
@@ -372,17 +463,28 @@ func (q *videoThumbnailQueue) cancelJob(id string) bool {
 		q.mu.Unlock()
 		return false
 	}
-	if job.view.State == "queued" || job.view.State == "settling" {
-		for index, queued := range q.queued {
-			if queued == job {
-				q.queued = append(q.queued[:index], q.queued[index+1:]...)
-				break
-			}
-		}
-		q.publishQueuePositionsLocked()
+	if job.view.State == "queued" {
+		q.removeQueuedLocked(job)
 		q.mu.Unlock()
 		q.finish(job, "cancelled", "cancelled", "")
 		return true
+	}
+	if job.view.State == "settling" {
+		for index, settling := range q.settling {
+			if settling == job {
+				q.settling = append(q.settling[:index], q.settling[index+1:]...)
+				q.mu.Unlock()
+				q.finish(job, "cancelled", "cancelled", "")
+				return true
+			}
+		}
+		cancel := job.cancel
+		q.mu.Unlock()
+		if cancel != nil {
+			cancel()
+			return true
+		}
+		return false
 	}
 	cancel := job.cancel
 	q.mu.Unlock()
@@ -421,6 +523,9 @@ func (q *videoThumbnailQueue) snapshot() []VideoThumbnailJob {
 	defer q.mu.Unlock()
 	jobs := make([]VideoThumbnailJob, 0, len(q.jobs))
 	for _, job := range q.jobs {
+		if job.view.State == "settling" {
+			continue
+		}
 		jobs = append(jobs, q.snapshotLocked(job))
 	}
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].UpdatedAt.After(jobs[j].UpdatedAt) })
@@ -429,7 +534,7 @@ func (q *videoThumbnailQueue) snapshot() []VideoThumbnailJob {
 
 func (q *videoThumbnailQueue) snapshotLocked(job *videoThumbnailJob) VideoThumbnailJob {
 	view := job.view
-	if view.State == "queued" || view.State == "settling" {
+	if view.State == "queued" {
 		for index, queued := range q.queued {
 			if queued == job {
 				view.QueuePosition = index + 1
@@ -470,6 +575,23 @@ func (q *videoThumbnailQueue) publishQueuePositionsLocked() {
 	}
 }
 
+func (q *videoThumbnailQueue) removeQueuedLocked(job *videoThumbnailJob) {
+	for index, queued := range q.queued {
+		if queued == job {
+			q.queued = append(q.queued[:index], q.queued[index+1:]...)
+			q.publishQueuePositionsLocked()
+			return
+		}
+	}
+}
+
+func (q *videoThumbnailQueue) signalSettler() {
+	select {
+	case q.settleWake <- struct{}{}:
+	default:
+	}
+}
+
 func (q *videoThumbnailQueue) signal() {
 	select {
 	case q.wake <- struct{}{}:
@@ -482,7 +604,9 @@ func (q *videoThumbnailQueue) close() {
 		close(q.stop)
 		q.mu.Lock()
 		queued := append([]*videoThumbnailJob(nil), q.queued...)
+		queued = append(queued, q.settling...)
 		q.queued = nil
+		q.settling = nil
 		for _, job := range q.jobs {
 			if job.cancel != nil {
 				job.cancel()

@@ -75,7 +75,7 @@ The Windows checkout and native-WSL workspace have different roles:
 | Role | Location |
 | --- | --- |
 | Authoritative Git checkout and GitHub remote | `C:\Code\webfile` |
-| Linux editing, testing, and builds | `$HOME/code/webfile` inside WSL |
+| Linux validation mirror, dependencies, tests, and builds | `$HOME/code/webfile` inside WSL |
 
 `/mnt/c/Code/webfile` is the Windows checkout viewed from Linux. It is not a
 native Linux workspace. Apart from initial setup or an explicit documentation
@@ -95,59 +95,46 @@ PowerShell so Windows does not expand Linux variables.
 
 ### Initial WSL workspace setup
 
-The Windows repository's `origin` points to GitHub. The WSL repository is a
-native-Linux clone whose `origin` deliberately points to the local Windows
-checkout:
-
-```text
-Windows origin -> GitHub
-WSL origin     -> /mnt/c/Code/webfile
-```
-
-Before creating the WSL clone, confirm that the Windows checkout has no work
-that would be lost or obscured:
+The Windows directory is the only Git checkout. The native-Linux WSL directory
+is a plain validation mirror and must not contain `.git` metadata:
 
 ```powershell
 git -C C:\Code\webfile status --short --branch
+wsl.exe -- bash -lc 'mkdir -p "$HOME/code/webfile" && test ! -e "$HOME/code/webfile/.git"'
 ```
 
-Then create and verify the native-Linux clone:
-
-```powershell
-wsl.exe -- bash -lc 'mkdir -p "$HOME/code"'
-wsl.exe -- bash -lc 'git clone --no-hardlinks /mnt/c/Code/webfile "$HOME/code/webfile"'
-git -C C:\Code\webfile rev-parse HEAD
-wsl.exe -- bash -lc 'git -C "$HOME/code/webfile" rev-parse HEAD'
-```
-
-The two commit IDs must match before development starts. Do not clone into
-`/mnt/c`, reuse dependencies installed in Windows, or copy `node_modules`,
-build caches, and other platform-specific working state between the checkouts.
+Do not clone into WSL or `/mnt/c`, reuse dependencies installed in Windows, or
+copy `node_modules`, build caches, and other platform-specific working state
+between the two locations. See `C:\Code\WINDOWS_EDIT_WSL_SYNC_WORKFLOW.md` for
+the shared bridge design.
 
 ### Beginning work
 
-Before changing code, inspect both repositories:
+Before changing code, inspect the authoritative repository and confirm that the
+WSL destination is a plain directory:
 
 ```powershell
 git -C C:\Code\webfile status --short --branch
-wsl.exe -- bash -lc 'git -C "$HOME/code/webfile" status --short --branch'
+wsl.exe -- bash -lc 'test -d "$HOME/code/webfile" && test ! -e "$HOME/code/webfile/.git"'
 ```
 
-If either checkout contains unexpected or unrelated changes, preserve them and
-stop before synchronizing overlapping work. If both are clean, update the WSL
-workspace from the Windows checkout:
+If Windows contains unexpected or unrelated changes, preserve them and avoid
+overlapping edits. If WSL contains source changes that are not represented in
+Windows, preserve and reconcile them before synchronizing.
+
+Make all hand edits in `C:\Code\webfile` with `apply_patch`. Preview the
+itemized Windows-to-WSL transfer, review it carefully (especially deletions),
+then apply the same sync:
 
 ```powershell
-wsl.exe -- bash -lc 'git -C "$HOME/code/webfile" fetch origin main'
-wsl.exe -- bash -lc 'git -C "$HOME/code/webfile" merge --ff-only origin/main'
+pwsh -NoProfile -File .\scripts\sync-to-wsl.ps1
+pwsh -NoProfile -File .\scripts\sync-to-wsl.ps1 -Apply
 ```
 
-Make all source edits in `$HOME/code/webfile`. Tool paths, patches, searches,
-and test commands for implementation work must target that native-WSL copy.
-
-The commands assume the authoritative branch is `main`. If the repository's
-authoritative branch changes, determine its actual name and use it consistently
-instead of silently creating or merging the wrong branch.
+Never fix ordinary source only in WSL because the next sync will replace it.
+Generators and formatters may create tracked source or lockfiles in WSL; copy
+only each intentional generated file explicitly back to Windows, review it,
+resync, and validate again. Never broadly mirror WSL back into Windows.
 
 ### Validation in WSL
 
@@ -219,43 +206,25 @@ Production builds and packages require Linux, CGO, `build-essential`, and
 `libpam0g-dev`. Keep all generated release artifacts only in the WSL workspace
 under `$HOME/code/webfile/dist`.
 
-### Returning validated work to Windows
+### Committing and pushing
 
-Use Git commits as the transfer mechanism; do not copy or mirror the working
-tree. Create an unsigned conventional commit in WSL when the task calls for a
-commit or for transferring the completed change to the authoritative checkout:
+After WSL validates the synchronized candidate tree, create an unsigned
+conventional commit in the authoritative Windows checkout:
 
 ```powershell
-wsl.exe -- bash -lc 'cd "$HOME/code/webfile" && git diff --check'
-wsl.exe -- bash -lc 'cd "$HOME/code/webfile" && git status --short'
-wsl.exe -- bash -lc 'cd "$HOME/code/webfile" && git add <files> && git -c commit.gpgsign=false commit --no-gpg-sign -m "type: concise description"'
+git -C C:\Code\webfile diff --check
+git -C C:\Code\webfile status --short
+git -C C:\Code\webfile add <files>
+git -C C:\Code\webfile -c commit.gpgsign=false commit --no-gpg-sign -m "type: concise description"
 ```
 
 Use a conventional type such as `feat`, `fix`, `docs`, `test`, `refactor`,
 `build`, or `chore`. Do not include unrelated user changes in the commit.
 
-Confirm the Windows checkout is clean, then fetch the WSL commit into Windows
-and fast-forward:
-
-```powershell
-git -C C:\Code\webfile status --short --branch
-wsl.exe -- bash -lc 'git -C /mnt/c/Code/webfile fetch "$HOME/code/webfile" main'
-wsl.exe -- bash -lc 'git -C /mnt/c/Code/webfile merge --ff-only FETCH_HEAD'
-wsl.exe -- bash -lc 'git -C "$HOME/code/webfile" fetch origin main'
-```
-
-After transfer, verify that both repositories are on the expected commit and
-have no unexpected changes:
-
-```powershell
-git -C C:\Code\webfile status --short --branch
-wsl.exe -- bash -lc 'git -C "$HOME/code/webfile" status --short --branch'
-```
-
 Push commits and tags to GitHub only from `C:\Code\webfile`, and only when the
 user asks for a push.
 
-Never use `git reset --hard`, `git clean`, `rsync --delete`, broad directory
-mirroring, or the legacy sync scripts to reconcile the two repositories. Never
-overwrite a dirty Windows checkout, push from the WSL clone into its local
-Windows `origin`, build from `/mnt/c`, or copy `dist/` into Windows.
+Never use `git reset --hard`, `git clean`, `--delete-excluded`, reverse broad
+mirroring, or the legacy `sync-to-windows.sh` scripts. Never run Git operations
+in the WSL mirror, build from `/mnt/c`, or copy `dist/` into Windows. The sync
+wrapper's dry run is mandatory before every applied sync.
