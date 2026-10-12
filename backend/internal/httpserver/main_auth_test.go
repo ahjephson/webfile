@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -57,6 +58,49 @@ func TestHealthReportsBuildInformation(t *testing.T) {
 	}
 	if !payload.OK || payload.Version != "1.0.0" || payload.Commit != "abc123" || payload.BuildDate != "2026-10-12T10:00:00Z" {
 		t.Fatalf("unexpected health payload: %#v", payload)
+	}
+}
+
+func TestBasePathMountsUIAndAPI(t *testing.T) {
+	target := NewMain(MainOptions{BasePath: "/tools/webfile", Version: "test"})
+
+	rootRequest := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	rootResponse := httptest.NewRecorder()
+	target.Handler().ServeHTTP(rootResponse, rootRequest)
+	if rootResponse.Code != http.StatusNotFound {
+		t.Fatalf("unprefixed status = %d", rootResponse.Code)
+	}
+
+	redirectRequest := httptest.NewRequest(http.MethodGet, "/tools/webfile", nil)
+	redirectResponse := httptest.NewRecorder()
+	target.Handler().ServeHTTP(redirectResponse, redirectRequest)
+	if redirectResponse.Code != http.StatusPermanentRedirect || redirectResponse.Header().Get("Location") != "/tools/webfile/" {
+		t.Fatalf("redirect = %d %q", redirectResponse.Code, redirectResponse.Header().Get("Location"))
+	}
+
+	healthRequest := httptest.NewRequest(http.MethodGet, "/tools/webfile/api/health", nil)
+	healthResponse := httptest.NewRecorder()
+	target.Handler().ServeHTTP(healthResponse, healthRequest)
+	if healthResponse.Code != http.StatusOK {
+		t.Fatalf("prefixed health status = %d: %s", healthResponse.Code, healthResponse.Body.String())
+	}
+
+	uiRequest := httptest.NewRequest(http.MethodGet, "/tools/webfile/", nil)
+	uiResponse := httptest.NewRecorder()
+	target.Handler().ServeHTTP(uiResponse, uiRequest)
+	if uiResponse.Code != http.StatusOK || !bytes.Contains(uiResponse.Body.Bytes(), []byte(`content="/tools/webfile/"`)) {
+		t.Fatalf("prefixed UI response = %d: %s", uiResponse.Code, uiResponse.Body.String())
+	}
+}
+
+func TestSameOriginUsesConfiguredOrigins(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/logout", nil)
+	request.Header.Set("Origin", "https://files.example.test")
+	if !sameOriginRequest(request, []string{"https://files.example.test"}) {
+		t.Fatal("configured public origin was rejected")
+	}
+	if sameOriginRequest(request, []string{"https://other.example.test"}) {
+		t.Fatal("unexpected public origin was accepted")
 	}
 }
 

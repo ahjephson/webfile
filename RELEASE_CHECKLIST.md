@@ -17,6 +17,7 @@ tag, package name and embedded binary metadata.
 - Run real 7-Zip integration coverage, including encrypted extraction, an
   incorrect-password retry, progress, extracted content and archive creation.
 - Run the complete Playwright suite in touch-enabled Chromium and WebKit.
+- Run the browser path-mount smoke test with a non-root `--public-url`.
 - Publish a SHA-256 checksum beside the release archive.
 
 The release workflow performs these automated gates. Any failure prevents the

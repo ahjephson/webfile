@@ -269,6 +269,33 @@ listener must be bound to a loopback IP address.
 The runtime host must also provide 7-Zip (`7zz` or a configured compatible
 executable) for archive operations and `ffmpeg`/`ffprobe` for video thumbnails.
 
+### Listener and public URL
+
+`serve` normally uses `listen` from the configuration file. Command-line
+options can override the broker listener without changing the worker-facing
+configuration:
+
+```bash
+webfile serve -config /etc/webfile/webfile.json \
+  --host 127.0.0.1 --port 6201 \
+  --public-url https://192.168.0.254/tools/webfile
+```
+
+`--http 127.0.0.1:6201` is the equivalent single listener option and cannot be
+combined with `--host` or `--port`. `--public-url` derives both the mounted base
+path and the allowed browser origin. The explicit equivalent is:
+
+```bash
+webfile serve -config /etc/webfile/webfile.json \
+  --http 127.0.0.1:6201 \
+  --base-path /tools/webfile/ \
+  --origins https://192.168.0.254
+```
+
+`--origins` may be repeated or contain a comma-separated list. The public URL
+form cannot be combined with `--base-path` or `--origins`. When no public URL or
+base path is supplied, WebFile retains its existing root-mounted behaviour.
+
 ### Supported environment
 
 - Linux AMD64 with systemd; Debian and Ubuntu are the packaged deployment
@@ -325,9 +352,9 @@ remains separately protected under `/etc/webfile/tls` for the broker only.
 
 Production always requires `auth.cookie_secure: true`. PAM mode serves HTTPS
 directly. If a reverse proxy is added, it must preserve the original `Host`
-header and
-support WebSocket upgrades on `/api/fs/ws`, because WebFile's same-origin
-mutation check deliberately compares the browser `Origin` with the request
+header and support WebSocket upgrades. With `--public-url` or `--origins`,
+WebFile's same-origin mutation check compares the browser `Origin` with the
+configured external origins; otherwise it compares the origin with the request
 host. Login limiting uses the direct peer address and does not trust forwarded
 client-address headers.
 
@@ -367,14 +394,22 @@ authentication check to every WebFile request, including the WebSocket
 handshake. A typical nginx location contains:
 
 ```nginx
-auth_request /_auth/check;
-auth_request_set $authenticated_user $upstream_http_x_authenticated_user;
+location = /tools/webfile {
+    return 308 /tools/webfile/;
+}
 
-proxy_set_header X-Authenticated-User $authenticated_user;
-proxy_set_header Host $host;
-proxy_set_header Upgrade $http_upgrade;
-proxy_set_header Connection $connection_upgrade;
-proxy_pass http://127.0.0.1:8080;
+location /tools/webfile/ {
+    auth_request /_auth/check;
+    auth_request_set $authenticated_user $upstream_http_x_authenticated_user;
+
+    proxy_set_header X-Authenticated-User $authenticated_user;
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+
+    # No trailing slash: nginx forwards the complete /tools/webfile/... path.
+    proxy_pass http://127.0.0.1:6201;
+}
 ```
 
 The `/_auth/check` location should be `internal` and return

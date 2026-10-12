@@ -1,9 +1,11 @@
 package httpserver
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -407,7 +409,7 @@ func requestLog(next http.Handler) http.Handler {
 	})
 }
 
-func spaHandler() http.Handler {
+func spaHandler(basePath string) http.Handler {
 	dist, err := fs.Sub(ui.Dist, "dist")
 	if err != nil {
 		panic(err)
@@ -422,17 +424,56 @@ func spaHandler() http.Handler {
 		if p == "." || p == "" {
 			p = "index.html"
 		}
-		if _, err := fs.Stat(dist, p); err == nil {
-			fileServer.ServeHTTP(w, r)
-			return
+		if p != "index.html" {
+			if _, err := fs.Stat(dist, p); err == nil {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
 		}
 		index, err := fs.ReadFile(dist, "index.html")
 		if err != nil {
 			http.Error(w, "frontend missing", http.StatusInternalServerError)
 			return
 		}
+		browserBasePath := basePath
+		if browserBasePath != "/" {
+			browserBasePath += "/"
+		}
+		index = bytes.ReplaceAll(index, []byte("__WEBFILE_BASE_PATH__"), []byte(html.EscapeString(browserBasePath)))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(index)
+	})
+}
+
+func normalizeBasePath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "/" {
+		return "/"
+	}
+	return "/" + strings.Trim(value, "/")
+}
+
+func mountBasePath(basePath string, next http.Handler) http.Handler {
+	if basePath == "/" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == basePath {
+			target := basePath + "/"
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusPermanentRedirect)
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, basePath+"/") {
+			http.NotFound(w, r)
+			return
+		}
+		request := r.Clone(r.Context())
+		request.URL.Path = strings.TrimPrefix(r.URL.Path, basePath)
+		request.URL.RawPath = ""
+		next.ServeHTTP(w, request)
 	})
 }

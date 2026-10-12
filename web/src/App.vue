@@ -8,6 +8,7 @@ import FileExplorer from '@/components/FileExplorer.vue'
 import LoginView from '@/components/LoginView.vue'
 import ElevationDialog from '@/components/ElevationDialog.vue'
 import { api, type SessionStatus } from '@/api/client'
+import { appPath } from '@/base'
 
 const session = ref<SessionStatus | null>(null)
 const checking = ref(true)
@@ -82,7 +83,7 @@ async function postExternalLogout(url: string) {
       redirect: 'follow',
     })
     if (!response.ok) throw new Error(`External logout failed with status ${response.status}`)
-    window.location.assign(response.redirected ? response.url : '/')
+    window.location.assign(response.redirected ? response.url : appPath())
     return
   }
 

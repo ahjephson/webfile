@@ -1,5 +1,6 @@
 import { onBeforeUnmount, ref } from 'vue'
 import type { FileOperation, VideoThumbnailJob } from '@/types/files'
+import { appWebSocketURL } from '@/base'
 
 type ServerMessage =
   | { type: 'ready' }
@@ -58,7 +59,7 @@ export function useRealtime(options: {
   function ensureConnected() {
     if (!active || socket) return
 
-    socket = new WebSocket(websocketUrl('/api/fs/ws'))
+    socket = new WebSocket(appWebSocketURL('/api/fs/ws'))
     socket.onopen = () => {
       connected.value = true
       retryDelayMs = 500
@@ -104,11 +105,6 @@ export function useRealtime(options: {
       ensureConnected()
     }, retryDelayMs)
     retryDelayMs = Math.min(retryDelayMs * 2, 10_000)
-  }
-
-  function websocketUrl(path: string): string {
-    const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${scheme}//${window.location.host}${path}`
   }
 
   onBeforeUnmount(stop)

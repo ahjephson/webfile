@@ -22,6 +22,8 @@ type MainOptions struct {
 	Version          string
 	Commit           string
 	BuildDate        string
+	BasePath         string
+	AllowedOrigins   []string
 	AuthMode         string
 	Authenticate     func(context.Context, string, string) error
 	Sessions         *session.Store
@@ -54,6 +56,7 @@ type elevationState struct {
 }
 
 func NewMain(opts MainOptions) *MainServer {
+	opts.BasePath = normalizeBasePath(opts.BasePath)
 	s := &MainServer{
 		opts:           opts,
 		mux:            http.NewServeMux(),
@@ -69,7 +72,7 @@ func NewMain(opts MainOptions) *MainServer {
 }
 
 func (s *MainServer) Handler() http.Handler {
-	return securityHeaders(requestLog(recoverer(s.csrfGuard(s.mux))))
+	return mountBasePath(s.opts.BasePath, securityHeaders(requestLog(recoverer(s.csrfGuard(s.mux)))))
 }
 
 func (s *MainServer) routes() {
@@ -89,7 +92,7 @@ func (s *MainServer) routes() {
 	s.mux.HandleFunc("GET /api/preferences", s.getPreferences)
 	s.mux.HandleFunc("PUT /api/preferences", s.putPreferences)
 	s.mux.HandleFunc("/api/fs/", s.proxyFilesystem)
-	s.mux.Handle("/", spaHandler())
+	s.mux.Handle("/", spaHandler(s.opts.BasePath))
 }
 
 func (s *MainServer) getSession(w http.ResponseWriter, r *http.Request) {
@@ -436,7 +439,7 @@ func (s *MainServer) putPreferences(w http.ResponseWriter, r *http.Request) {
 func (s *MainServer) csrfGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isMutation(r.Method) {
-			if !sameOriginRequest(r) {
+			if !sameOriginRequest(r, s.opts.AllowedOrigins) {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
 				return
 			}
@@ -458,13 +461,22 @@ func isMutation(method string) bool {
 	}
 }
 
-func sameOriginRequest(r *http.Request) bool {
+func sameOriginRequest(r *http.Request, allowedOrigins []string) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true
 	}
 	u, err := url.Parse(origin)
 	if err != nil || u.Host == "" {
+		return false
+	}
+	if len(allowedOrigins) > 0 {
+		actual := strings.ToLower(u.Scheme + "://" + u.Host)
+		for _, allowed := range allowedOrigins {
+			if subtle.ConstantTimeCompare([]byte(actual), []byte(strings.ToLower(allowed))) == 1 {
+				return true
+			}
+		}
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(strings.ToLower(u.Host)), []byte(strings.ToLower(r.Host))) == 1

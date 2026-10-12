@@ -10,9 +10,13 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -62,12 +66,23 @@ func main() {
 func serve(args []string) {
 	flags := flag.NewFlagSet("serve", flag.ExitOnError)
 	configPath := flags.String("config", "webfile.json", "path to configuration file")
+	httpAddress := flags.String("http", "", "HTTP listen address, overriding config listen")
+	host := flags.String("host", "", "listen host, overriding the configured host")
+	port := flags.Int("port", 0, "listen port, overriding the configured port")
+	publicURL := flags.String("public-url", "", "externally visible URL; derives base path and allowed origin")
+	basePath := flags.String("base-path", "", "externally visible URL path prefix")
+	var origins stringListFlag
+	flags.Var(&origins, "origins", "allowed browser origin; repeat or provide a comma-separated list")
 	_ = flags.Parse(args)
 
 	absConfig, err := filepath.Abs(*configPath)
 	fatalIf(err, "resolve config path")
 	cfg, err := config.Load(absConfig)
 	fatalIf(err, "configuration failed")
+	cfg.Listen, err = resolveListenAddress(cfg.Listen, *httpAddress, *host, *port)
+	fatalIf(err, "invalid listener configuration")
+	normalizedPublicURL, mountPath, allowedOrigins, err := resolvePublicAddress(*publicURL, *basePath, origins)
+	fatalIf(err, "invalid public URL configuration")
 	fatalIf(validateBuildConfig(cfg), "configuration is incompatible with this "+buildMode+" build")
 
 	trustedProxies := make([]netip.Prefix, 0, len(cfg.Auth.TrustedProxies))
@@ -124,10 +139,12 @@ func serve(args []string) {
 	currentIdentity, err := identity.Current()
 	fatalIf(err, "resolve current user")
 	mainServer := httpserver.NewMain(httpserver.MainOptions{
-		Version:   version,
-		Commit:    commit,
-		BuildDate: buildDate,
-		AuthMode:  cfg.Auth.Mode,
+		Version:        version,
+		Commit:         commit,
+		BuildDate:      buildDate,
+		BasePath:       mountPath,
+		AllowedOrigins: allowedOrigins,
+		AuthMode:       cfg.Auth.Mode,
 		Authenticate: func(ctx context.Context, username, password string) error {
 			return launcher.ClientAuthenticate(ctx, cfg.Runtime.LauncherSocket, username, password)
 		},
@@ -174,10 +191,141 @@ func serve(args []string) {
 		}
 	}()
 
-	slog.Info("webfile listening", slog.String("address", cfg.Listen), slog.String("auth", cfg.Auth.Mode), slog.String("build_mode", buildMode), slog.String("version", version))
+	slog.Info("webfile listening", slog.String("address", cfg.Listen), slog.String("public_url", normalizedPublicURL), slog.String("base_path", mountPath), slog.String("auth", cfg.Auth.Mode), slog.String("build_mode", buildMode), slog.String("version", version))
 	if err := serveConfigured(httpServer, cfg); err != nil && err != http.ErrServerClosed {
 		fatalIf(err, "server stopped")
 	}
+}
+
+type stringListFlag []string
+
+func (values *stringListFlag) String() string {
+	return strings.Join(*values, ",")
+}
+
+func (values *stringListFlag) Set(value string) error {
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			return errors.New("origin cannot be empty")
+		}
+		*values = append(*values, item)
+	}
+	return nil
+}
+
+func resolveListenAddress(configured, httpAddress, host string, port int) (string, error) {
+	if httpAddress != "" && (host != "" || port != 0) {
+		return "", errors.New("--http cannot be combined with --host or --port")
+	}
+	if httpAddress != "" {
+		if err := validateListenAddress(httpAddress); err != nil {
+			return "", err
+		}
+		return httpAddress, nil
+	}
+	configuredHost, configuredPort, err := net.SplitHostPort(configured)
+	if err != nil {
+		return "", fmt.Errorf("configured listen address: %w", err)
+	}
+	if host != "" {
+		configuredHost = strings.Trim(strings.TrimSpace(host), "[]")
+		if configuredHost == "" {
+			return "", errors.New("--host cannot be empty")
+		}
+	}
+	if port != 0 {
+		if port < 1 || port > 65535 {
+			return "", errors.New("--port must be between 1 and 65535")
+		}
+		configuredPort = strconv.Itoa(port)
+	}
+	resolved := net.JoinHostPort(configuredHost, configuredPort)
+	if err := validateListenAddress(resolved); err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+func validateListenAddress(address string) error {
+	_, portValue, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	port, err := strconv.Atoi(portValue)
+	if err != nil || port < 1 || port > 65535 {
+		return errors.New("listen port must be between 1 and 65535")
+	}
+	return nil
+}
+
+func resolvePublicAddress(publicURL, basePath string, origins []string) (string, string, []string, error) {
+	publicURL = strings.TrimSpace(publicURL)
+	basePath = strings.TrimSpace(basePath)
+	if publicURL != "" && (basePath != "" || len(origins) > 0) {
+		return "", "", nil, errors.New("--public-url cannot be combined with --base-path or --origins")
+	}
+	if publicURL != "" {
+		parsed, err := url.Parse(publicURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "", "", nil, errors.New("--public-url must be an absolute HTTP(S) URL without credentials, query or fragment")
+		}
+		parsed.Scheme = strings.ToLower(parsed.Scheme)
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return "", "", nil, errors.New("--public-url scheme must be http or https")
+		}
+		mountPath, err := normalizeMountPath(parsed.Path)
+		if err != nil {
+			return "", "", nil, err
+		}
+		parsed.Path = mountPath
+		if mountPath == "/" {
+			parsed.Path = ""
+		}
+		parsed.RawPath = ""
+		origin := parsed.Scheme + "://" + parsed.Host
+		return strings.TrimSuffix(parsed.String(), "/"), mountPath, []string{origin}, nil
+	}
+
+	mountPath, err := normalizeMountPath(basePath)
+	if err != nil {
+		return "", "", nil, err
+	}
+	normalizedOrigins := make([]string, 0, len(origins))
+	for _, origin := range origins {
+		normalized, err := normalizeOrigin(origin)
+		if err != nil {
+			return "", "", nil, err
+		}
+		normalizedOrigins = append(normalizedOrigins, normalized)
+	}
+	return "", mountPath, normalizedOrigins, nil
+}
+
+func normalizeMountPath(value string) (string, error) {
+	if value == "" || value == "/" {
+		return "/", nil
+	}
+	if !strings.HasPrefix(value, "/") || strings.ContainsAny(value, "?#\\") {
+		return "", errors.New("--base-path must be an absolute URL path")
+	}
+	cleaned := path.Clean(value)
+	if cleaned == "." {
+		return "/", nil
+	}
+	return "/" + strings.Trim(cleaned, "/"), nil
+}
+
+func normalizeOrigin(value string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("invalid origin %q", value)
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("origin %q must use http or https", value)
+	}
+	return parsed.Scheme + "://" + parsed.Host, nil
 }
 
 func launcherMain(args []string) {

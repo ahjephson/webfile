@@ -8,6 +8,7 @@ import type {
   UploadSession,
   VideoThumbnailJob,
 } from '@/types/files'
+import { appPath } from '@/base'
 
 export class ApiError extends Error {
   constructor(
@@ -31,7 +32,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   if (csrfToken && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
     headers.set('X-WebFile-CSRF', csrfToken)
   }
-  const response = await fetch(url, { ...init, headers })
+  const response = await fetch(appPath(url), { ...init, headers })
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`
     let code: string | undefined
@@ -315,20 +316,20 @@ export const api = {
   },
 
   downloadUrl(path: string) {
-    return withPath('/api/fs/download', path)
+    return appPath(withPath('/api/fs/download', path))
   },
 
   operationDownloadUrl(id: string) {
-    return `/api/fs/operations/${encodeURIComponent(id)}/download`
+    return appPath(`/api/fs/operations/${encodeURIComponent(id)}/download`)
   },
 
   previewUrl(path: string) {
-    return `${withPath('/api/fs/download', path)}&inline=true`
+    return appPath(`${withPath('/api/fs/download', path)}&inline=true`)
   },
 
   thumbnailUrl(path: string, width = 320, height = 320) {
     const query = new URLSearchParams({ path, width: String(width), height: String(height) })
-    return `/api/fs/thumbnail?${query}`
+    return appPath(`/api/fs/thumbnail?${query}`)
   },
 
   async requestThumbnail(path: string, width = 320, height = 320): Promise<{ url?: string; job?: VideoThumbnailJob }> {
