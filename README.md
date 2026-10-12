@@ -1,13 +1,15 @@
-# WebFile (working name)
+# WebFile
 
 A Linux-first web file manager whose filesystem is the source of truth. WebFile
 browses large existing filesystems immediately: there is no file catalogue to
 build before a mount is usable.
 
-The current code is an alpha implementation of the product brief: Go backend,
-Vue 3/TypeScript frontend, Linux/PAM identity, direct filesystem IO, live
-current-folder updates, Monaco editing, resumable uploads, file operations,
-extraction, durable background tasks and persistent application state.
+WebFile is released under the [MIT License](LICENSE).
+
+WebFile combines a Go backend with a Vue 3/TypeScript frontend, Linux/PAM
+identity, direct filesystem IO, live current-folder updates, Monaco editing,
+resumable uploads, file operations, archive handling, durable background tasks
+and persistent application state.
 
 ## Implemented
 
@@ -63,7 +65,8 @@ extraction, durable background tasks and persistent application state.
   with transparent buffered fallback.
 - Drag/drop local files to upload.
 - Conflict-safe operations: existing destinations are not silently overwritten.
-- Regular file downloads and streamed ZIP downloads for folders.
+- Regular file downloads. Folder downloads are prepared as cancellable 7-Zip
+  archive tasks and become downloadable when creation completes.
 - Delete permanently removes files and folders using native filesystem
   operations after explicit confirmation. Upgrades do not automatically purge
   files left in the legacy trash directory.
@@ -248,13 +251,13 @@ sudo apt install build-essential libpam0g-dev
 Then:
 
 ```bash
-make build VERSION=0.1.0
+make build VERSION=1.0.0
 ```
 
 or create a release archive:
 
 ```bash
-make package VERSION=0.1.0
+make package VERSION=1.0.0
 ```
 
 The release binary embeds the compiled Vue frontend. Node is a build-time
@@ -262,6 +265,18 @@ dependency only. The production build is compiled with the `production` and
 `pam` tags. PAM mode requires secure cookies and a TLS certificate/private-key
 pair. Trusted proxy mode also requires secure cookies; without direct TLS its
 listener must be bound to a loopback IP address.
+
+The runtime host must also provide 7-Zip (`7zz` or a configured compatible
+executable) for archive operations and `ffmpeg`/`ffprobe` for video thumbnails.
+
+### Supported environment
+
+- Linux AMD64 with systemd; Debian and Ubuntu are the packaged deployment
+  targets.
+- Current Chromium, Firefox and Safari/WebKit browsers. The automated browser
+  suite covers touch-enabled Chromium and WebKit; physical tablet testing is
+  part of the release checklist.
+- JavaScript, cookies and WebSocket support are required.
 
 ### Install
 
@@ -383,8 +398,8 @@ both HTTPS package and checksum URLs:
 
 ```bash
 sudo webfile-update \
-  https://example/releases/webfile-0.2.0-linux-amd64.tar.gz \
-  https://example/releases/webfile-0.2.0-linux-amd64.tar.gz.sha256
+  https://example/releases/webfile-1.0.0-linux-amd64.tar.gz \
+  https://example/releases/webfile-1.0.0-linux-amd64.tar.gz.sha256
 ```
 
 It verifies the checksum, atomically replaces the binary, updates the shipped
@@ -392,19 +407,21 @@ unit/PAM/tmpfiles files, restarts both services and restores the complete prior
 installation if the new service does not start successfully.
 `/etc/webfile/webfile.json` is never overwritten by an update.
 
-`.github/workflows/release.yml` builds/tests tagged releases and publishes the
-package + checksum. Frontend dependencies are reproducibly installed from the
-committed `web/package-lock.json` with `npm ci`.
+`.github/workflows/release.yml` builds and tests tagged releases, audits
+production frontend dependencies, scans the Go source and compiled binary,
+runs the Chromium/WebKit browser suite, and publishes the package + checksum.
+Frontend dependencies are reproducibly installed from the committed
+`web/package-lock.json` with `npm ci`.
 
-Release tags use bare semantic versions such as `0.4.0`, without a `v` prefix.
+Release tags use bare semantic versions such as `1.0.0`, without a `v` prefix.
 After validating and committing a release on `main`, create and push an
 annotated tag:
 
 ```bash
 make test-production
-make package VERSION=0.4.0
-git tag -a 0.4.0 -m "WebFile 0.4.0"
-git push origin main 0.4.0
+make package VERSION=1.0.0
+git tag -a 1.0.0 -m "WebFile 1.0.0"
+git push origin main 1.0.0
 ```
 
 Pushing the tag starts the release workflow. Every future release build should
@@ -435,6 +452,11 @@ scripts/
 
 ## Validation
 
-Run `go test ./...` and `go vet ./...` from `backend`, then `npm ci`,
-`npm run build` and `npm run test:e2e` from `web` before packaging a release.
+Run `go test ./...`, `go vet ./...` and `govulncheck ./...` from `backend`, then
+`npm ci`, `npm audit --omit=dev --audit-level=high`, `npm run build` and
+`npm run test:e2e` from `web` before packaging a release. Archive integration
+tests use a real `7zz` or `7z` when available and are required in release CI.
 `make test-production` also compiles and tests the production/PAM build tags.
+Complete [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) before publishing.
+The proposed stable-release summary is in
+[RELEASE_NOTES_1.0.0.md](RELEASE_NOTES_1.0.0.md).

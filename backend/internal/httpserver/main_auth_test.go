@@ -36,6 +36,30 @@ func proxyAuthTestServer(t *testing.T) (*MainServer, identity.Identity) {
 	}), current
 }
 
+func TestHealthReportsBuildInformation(t *testing.T) {
+	target := NewMain(MainOptions{Version: "1.0.0", Commit: "abc123", BuildDate: "2026-10-12T10:00:00Z"})
+	request := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	response := httptest.NewRecorder()
+
+	target.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		OK        bool   `json:"ok"`
+		Version   string `json:"version"`
+		Commit    string `json:"commit"`
+		BuildDate string `json:"build_date"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.OK || payload.Version != "1.0.0" || payload.Commit != "abc123" || payload.BuildDate != "2026-10-12T10:00:00Z" {
+		t.Fatalf("unexpected health payload: %#v", payload)
+	}
+}
+
 func TestProxyAuthenticationCreatesLocalSessionForTrustedIdentity(t *testing.T) {
 	target, current := proxyAuthTestServer(t)
 	request := httptest.NewRequest(http.MethodGet, "/api/session", nil)

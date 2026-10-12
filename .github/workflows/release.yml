@@ -24,10 +24,13 @@ jobs:
         with:
           node-version: '22'
       - name: Build dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential libpam0g-dev
+        run: sudo apt-get update && sudo apt-get install -y build-essential libpam0g-dev 7zip
       - name: Frontend dependencies
         working-directory: web
         run: npm ci --no-audit --no-fund
+      - name: Audit frontend production dependencies
+        working-directory: web
+        run: npm audit --omit=dev --audit-level=high
       - name: Build frontend
         working-directory: web
         run: npm run build
@@ -37,6 +40,28 @@ jobs:
       - name: Scan backend source
         working-directory: backend
         run: govulncheck ./...
+      - name: Install browser test engines
+        working-directory: web
+        run: npx playwright install --with-deps chromium webkit
+      - name: Test browser workflows
+        run: |
+          mkdir -p dist
+          go -C backend build -o ../dist/webfile-e2e ./cmd/webfile
+          ./dist/webfile-e2e serve -config webfile.dev.json > /tmp/webfile-e2e.log 2>&1 &
+          WEBFILE_PID=$!
+          trap 'kill "$WEBFILE_PID" 2>/dev/null || true' EXIT
+          for attempt in {1..50}; do
+            if curl --fail --silent http://127.0.0.1:8080/api/health >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$WEBFILE_PID" 2>/dev/null; then
+              cat /tmp/webfile-e2e.log
+              exit 1
+            fi
+            sleep 0.2
+          done
+          curl --fail --silent http://127.0.0.1:8080/api/health >/dev/null
+          npm --prefix web run test:e2e
       - name: Package
         env:
           VERSION: ${{ github.ref_name }}
@@ -47,7 +72,7 @@ jobs:
           CGO_ENABLED=1 go -C backend build -tags "production pam" \
             -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
             -o ../dist/stage/webfile-${VERSION}-linux-amd64/webfile ./cmd/webfile
-          cp README.md webfile.example.json dist/stage/webfile-${VERSION}-linux-amd64/
+          cp README.md LICENSE RELEASE_CHECKLIST.md RELEASE_NOTES_1.0.0.md webfile.example.json dist/stage/webfile-${VERSION}-linux-amd64/
           cp deploy/webfile.service deploy/webfile-launcher.service deploy/webfile.tmpfiles deploy/webfile.pam deploy/install.sh deploy/webfile-update dist/stage/webfile-${VERSION}-linux-amd64/deploy/
           chmod +x dist/stage/webfile-${VERSION}-linux-amd64/deploy/install.sh dist/stage/webfile-${VERSION}-linux-amd64/deploy/webfile-update
           tar -C dist/stage -czf dist/webfile-${VERSION}-linux-amd64.tar.gz webfile-${VERSION}-linux-amd64

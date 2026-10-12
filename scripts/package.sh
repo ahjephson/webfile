@@ -13,17 +13,22 @@ mkdir -p "$STAGE/deploy"
 
 cd "$ROOT/web"
 npm ci --no-audit --no-fund
+npm audit --omit=dev --audit-level=high
 npm run build
 
 cd "$ROOT/backend"
 CGO_ENABLED=1 go test -tags "production pam" ./...
 CGO_ENABLED=1 go vet -tags "production pam" ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 CGO_ENABLED=1 go build -tags "production pam" \
   -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE" \
   -o "$STAGE/webfile" ./cmd/webfile
 go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -mode=binary "$STAGE/webfile"
 
 cp "$ROOT/README.md" "$STAGE/"
+cp "$ROOT/LICENSE" "$STAGE/"
+cp "$ROOT/RELEASE_CHECKLIST.md" "$STAGE/"
+cp "$ROOT/RELEASE_NOTES_1.0.0.md" "$STAGE/"
 cp "$ROOT/webfile.example.json" "$STAGE/"
 cp "$ROOT/deploy/webfile.service" "$STAGE/deploy/"
 cp "$ROOT/deploy/webfile-launcher.service" "$STAGE/deploy/"

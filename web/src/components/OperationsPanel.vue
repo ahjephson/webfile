@@ -288,12 +288,12 @@ function formatDate(value?: string) {
                   </dl>
                 </details>
               </div>
-              <div class="flex shrink-0 flex-col gap-2">
-                <div class="ml-auto flex items-start gap-1" data-task-actions>
+              <div class="flex shrink-0 flex-col items-end gap-2">
+                <div class="flex items-start justify-end gap-1" data-task-actions>
                   <Button v-if="operation.kind === 'archive' && operation.state === 'completed' && operation.phase === 'completed'" v-tooltip.left="'Download archive'" icon="pi pi-download" size="small" severity="success" text :aria-label="`Download ${label(operation)}`" @click="emit('download', operation)" />
                   <Button v-tooltip.left="'Remove from history'" icon="pi pi-times" size="small" severity="secondary" text :aria-label="`Remove ${label(operation)} from history`" @click="emit('remove-history', operation)" />
                 </div>
-                <span class="ml-auto rounded px-2 py-0.5 text-xs capitalize" data-task-status :class="{
+                <span class="self-end rounded px-2 py-0.5 text-xs capitalize" data-task-status :class="{
                     'bg-emerald-950 text-emerald-300': operation.state === 'completed',
                     'bg-red-950 text-red-300': operation.state === 'failed',
                     'bg-amber-950 text-amber-300': operation.state === 'interrupted',

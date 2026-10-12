@@ -1,4 +1,4 @@
-.PHONY: test test-production audit frontend backend build build-dev dev package
+.PHONY: test test-production audit audit-backend audit-frontend frontend backend build build-dev dev package
 
 NPM ?= npm
 GO ?= go
@@ -16,8 +16,13 @@ test:
 test-production:
 	cd backend && CGO_ENABLED=1 $(GO) test -tags "production pam" ./... && CGO_ENABLED=1 $(GO) vet -tags "production pam" ./...
 
-audit:
+audit: audit-backend audit-frontend
+
+audit-backend:
 	cd backend && $(GOVULNCHECK) ./...
+
+audit-frontend:
+	cd web && $(NPM) audit --omit=dev --audit-level=high
 
 backend:
 	mkdir -p dist

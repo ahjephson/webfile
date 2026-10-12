@@ -19,6 +19,9 @@ import (
 )
 
 type MainOptions struct {
+	Version          string
+	Commit           string
+	BuildDate        string
 	AuthMode         string
 	Authenticate     func(context.Context, string, string) error
 	Sessions         *session.Store
@@ -71,7 +74,12 @@ func (s *MainServer) Handler() http.Handler {
 
 func (s *MainServer) routes() {
 	s.mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":         true,
+			"version":    s.opts.Version,
+			"commit":     s.opts.Commit,
+			"build_date": s.opts.BuildDate,
+		})
 	})
 	s.mux.HandleFunc("GET /api/session", s.getSession)
 	s.mux.HandleFunc("POST /api/login", s.login)

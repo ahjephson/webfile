@@ -446,7 +446,8 @@ for (const view of ['list', 'grid'] as const) {
       await expect(menu.locator('[role="separator"]')).toHaveCount(0)
     })
 
-    test('touch long-press opens while held and remains open after release', async ({ page }) => {
+    test('touch long-press opens while held and remains open after release', async ({ page, browserName }) => {
+      test.skip(browserName !== 'chromium', 'Playwright exposes raw touch hold injection through Chromium CDP only')
       const checkbox = selectionButtons(page).first()
       const menu = page.locator('.p-contextmenu')
 
@@ -460,7 +461,8 @@ for (const view of ['list', 'grid'] as const) {
       await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
     })
 
-    test('touch movement cancels long-press detection', async ({ page }) => {
+    test('touch movement cancels long-press detection', async ({ page, browserName }) => {
+      test.skip(browserName !== 'chromium', 'Playwright exposes raw touch hold injection through Chromium CDP only')
       const checkbox = selectionButtons(page).first()
 
       await longPressTouch(page, entryFor(checkbox), 20)
@@ -469,7 +471,8 @@ for (const view of ['list', 'grid'] as const) {
       await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
     })
 
-    test('stationary mouse-emulated long-press remains open after release', async ({ page }) => {
+    test('stationary mouse-emulated long-press remains open after release', async ({ page, browserName }) => {
+      test.skip(browserName !== 'chromium', 'Playwright exposes touch-from-mouse injection through Chromium CDP only')
       const checkbox = selectionButtons(page).first()
       const menu = page.locator('.p-contextmenu')
 
@@ -672,6 +675,9 @@ test('settings persist appearance, editor defaults, and copy chunk size', async 
   await page.route('**/api/fs/file?**', route => route.fulfill({
     json: { path: '/folder/notes.md', content: '# Notes', modified: '2000-01-01T00:00:00Z', etag: 'notes-1' },
   }))
+  await page.route('**/api/health', route => route.fulfill({
+    json: { ok: true, version: '1.0.0', commit: 'abc123', build_date: '2026-10-12T10:00:00Z' },
+  }))
 
   await page.goto('/#path=%2Ffolder')
   await page.getByRole('button', { name: 'Settings' }).click()
@@ -679,6 +685,8 @@ test('settings persist appearance, editor defaults, and copy chunk size', async 
   await expect(dialog.getByRole('heading', { name: 'Appearance' })).toBeVisible()
   await expect(dialog.getByRole('heading', { name: 'Editor' })).toBeVisible()
   await expect(dialog.getByRole('heading', { name: 'Transfers' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: 'About' })).toBeVisible()
+  await expect(dialog).toContainText('WebFile 1.0.0 · commit abc123 · built 2026-10-12T10:00:00Z')
 
   await dialog.getByRole('combobox', { name: 'Default view' }).click()
   await page.getByRole('option', { name: 'Grid', exact: true }).click()
@@ -1162,7 +1170,8 @@ test('parent directory navigation pushes when its target is absent from history'
 })
 
 for (const view of ['list', 'grid'] as const) {
-  test(`rapid stationary mouse clicks navigate successive folders in ${view} view`, async ({ page }) => {
+  test(`rapid stationary mouse clicks navigate successive folders in ${view} view`, async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'Exact repeated mouse click counts require Chromium CDP')
     await page.route('**/api/fs/dir**', async route => {
       const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
       const children: Record<string, string> = {
@@ -2062,7 +2071,8 @@ test('an image is constrained and hidden until its fitted size is ready', async 
   await expect(page.getByLabel('Loading image')).toHaveCount(0)
 })
 
-test('image gallery preloads neighbours and supports swipe, pinch, and explicit fullscreen controls', async ({ page }) => {
+test('image gallery preloads neighbours and supports swipe, pinch, and explicit fullscreen controls', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Multi-touch gesture injection requires Chromium CDP')
   const requestedImages = new Set<string>()
   const entries = Array.from({ length: 12 }, (_, index) => `image-${String(index + 1).padStart(2, '0')}.svg`).map((name, index) => ({
     name,
@@ -2210,7 +2220,8 @@ test('image gallery preloads neighbours and supports swipe, pinch, and explicit 
   await session.detach()
 })
 
-test('image gallery tracks a swipe and progressively loads an ordered thumbnail strip', async ({ page }) => {
+test('image gallery tracks a swipe and progressively loads an ordered thumbnail strip', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Touch-drag gesture injection requires Chromium CDP')
   const entries = Array.from({ length: 40 }, (_, index) => `gallery-${String(index + 1).padStart(2, '0')}.svg`).map(name => ({
     name,
     path: `/${name}`,
@@ -2426,7 +2437,7 @@ test('gallery navigation keeps the decoded target constrained throughout the tra
   expect(frames.every(frame => frame.height > 0 && frame.height <= frame.viewportHeight)).toBe(true)
 })
 
-test('a small image keeps its natural size until the user zooms it', async ({ page }) => {
+test('a small image keeps its natural size until the user zooms it', async ({ page, browserName }) => {
   await page.route('**/api/fs/dir**', route => route.fulfill({
     json: {
       path: '/',
@@ -2455,14 +2466,16 @@ test('a small image keeps its natural size until the user zooms it', async ({ pa
   await expect(page.getByLabel('Zoom level')).toHaveText('100%')
   await expect(image).toHaveCSS('width', '40px')
 
-  await image.hover()
-  await page.mouse.wheel(0, -100)
-  await expect(page.getByLabel('Zoom level')).toHaveText('110%')
-  await expect(image).toHaveCSS('width', '44px')
+  if (browserName === 'chromium') {
+    await image.hover()
+    await page.mouse.wheel(0, -100)
+    await expect(page.getByLabel('Zoom level')).toHaveText('110%')
+    await expect(image).toHaveCSS('width', '44px')
 
-  await page.mouse.wheel(0, 100)
-  await expect(page.getByLabel('Zoom level')).toHaveText('100%')
-  await expect(image).toHaveCSS('width', '40px')
+    await page.mouse.wheel(0, 100)
+    await expect(page.getByLabel('Zoom level')).toHaveText('100%')
+    await expect(image).toHaveCSS('width', '40px')
+  }
 })
 
 test('video preview uses a contained native player with controls', async ({ page }) => {
@@ -2759,7 +2772,8 @@ test('folder download starts an archive task without opening the task drawer', a
   })
 
   await page.goto('/')
-  const folder = page.locator('[data-file-entry]').filter({ hasText: 'photos' })
+  const folder = page.locator('[data-file-entry]').filter({ hasText: 'photos', visible: true })
+  await expect(folder).toBeVisible()
   await dispatchContextMenu(folder)
   await page.getByRole('menuitem', { name: 'Download' }).click()
 
@@ -2786,9 +2800,11 @@ test('downloaded folder archive history shows that its artifact is no longer ava
   await page.goto('/')
   await page.getByRole('button', { name: 'Open tasks' }).click()
   const drawer = page.getByRole('complementary')
-  await drawer.evaluate(async element => {
-    await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => undefined)))
-  })
+  await expect.poll(async () => {
+    const box = await drawer.boundingBox()
+    const viewportWidth = await page.evaluate(() => window.innerWidth)
+    return box ? Math.abs(box.x + box.width - viewportWidth) : Number.MAX_SAFE_INTEGER
+  }).toBeLessThanOrEqual(1)
   await expect(drawer.getByText('downloaded', { exact: true })).toBeVisible()
   await expect(drawer.getByRole('button', { name: 'Download Archive photos' })).toHaveCount(0)
   const downloadedCard = drawer.locator('article').filter({ hasText: 'Archive photos' })

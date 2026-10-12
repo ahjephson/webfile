@@ -5,6 +5,7 @@ import Dialog from 'primevue/dialog'
 import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
 import ToggleSwitch from 'primevue/toggleswitch'
+import { api, type HealthStatus } from '@/api/client'
 import type { UserPreferences } from '@/preferences'
 
 const props = defineProps<{
@@ -19,6 +20,7 @@ const emit = defineEmits<{
 }>()
 
 const draft = ref<UserPreferences>({ ...props.preferences })
+const build = ref<HealthStatus | null>(null)
 const themeOptions = [
   { label: 'System', value: 'system' },
   { label: 'Light', value: 'light' },
@@ -49,7 +51,9 @@ const extractExistingOptions = [
 ]
 
 watch(() => props.visible, visible => {
-  if (visible) draft.value = { ...props.preferences }
+  if (!visible) return
+  draft.value = { ...props.preferences }
+  void api.health().then(value => { build.value = value }).catch(() => { build.value = null })
 })
 
 function close() {
@@ -153,6 +157,13 @@ function save() {
             <Select v-model="draft.extract_existing_files" :options="extractExistingOptions" option-label="label" option-value="value" aria-label="Existing files when extracting" />
           </label>
         </div>
+      </section>
+
+      <section v-if="build" aria-labelledby="about-heading">
+        <h2 id="about-heading" class="mb-1 text-sm font-semibold text-zinc-100">About</h2>
+        <p class="text-xs text-zinc-500">
+          WebFile {{ build.version }} · commit {{ build.commit }} · built {{ build.build_date }}
+        </p>
       </section>
     </div>
 

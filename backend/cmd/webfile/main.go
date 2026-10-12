@@ -124,7 +124,10 @@ func serve(args []string) {
 	currentIdentity, err := identity.Current()
 	fatalIf(err, "resolve current user")
 	mainServer := httpserver.NewMain(httpserver.MainOptions{
-		AuthMode: cfg.Auth.Mode,
+		Version:   version,
+		Commit:    commit,
+		BuildDate: buildDate,
+		AuthMode:  cfg.Auth.Mode,
 		Authenticate: func(ctx context.Context, username, password string) error {
 			return launcher.ClientAuthenticate(ctx, cfg.Runtime.LauncherSocket, username, password)
 		},

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
-test('proxy-authenticated sessions use the configured external logout URL', async ({ page }) => {
+test('proxy-authenticated sessions use the configured external logout URL', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Playwright WebKit cannot fulfill intercepted requests with redirect responses')
   let logoutRequests = 0
   let externalLogoutMethod = ''
   let externalLogoutOrigin = ''

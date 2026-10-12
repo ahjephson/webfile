@@ -77,6 +77,13 @@ export interface SessionStatus {
   logout_url?: string
 }
 
+export interface HealthStatus {
+  ok: boolean
+  version: string
+  commit: string
+  build_date: string
+}
+
 interface UploadInitResponse {
   upload: UploadSession
   operation: FileOperation
@@ -87,6 +94,10 @@ interface UploadChunkResponse extends UploadInitResponse {
 }
 
 export const api = {
+  health() {
+    return request<HealthStatus>('/api/health')
+  },
+
   async session() {
     const status = await request<SessionStatus>('/api/session')
     setCSRF(status.csrf_token)
