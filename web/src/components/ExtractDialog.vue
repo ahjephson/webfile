@@ -9,6 +9,7 @@ const props = defineProps<{
   archiveName: string
   destination: string
   busy?: boolean
+  existingFiles: 'skip' | 'overwrite'
 }>()
 
 const emit = defineEmits<{
@@ -39,11 +40,12 @@ function submit() {
   >
     <form class="space-y-4" @submit.prevent="submit">
       <div class="space-y-2">
-        <label for="extract-destination" class="block text-sm font-medium">Destination</label>
+        <label for="extract-destination" class="block text-sm font-medium">Destination folder</label>
         <InputText id="extract-destination" v-model="destination" fluid autocomplete="off" />
       </div>
       <p class="text-xs text-zinc-400">
-        Existing files are not overwritten. If this archive is encrypted, the password will be requested after choosing the destination.
+        Each archive will be extracted into its own named folder. Existing regular files will be
+        {{ existingFiles === 'overwrite' ? 'overwritten' : 'skipped' }}. Encrypted archives request a password when they reach the front of the queue.
       </p>
       <div class="flex justify-end gap-2">
         <Button label="Cancel" severity="secondary" text :disabled="busy" @click="emit('update:visible', false)" />

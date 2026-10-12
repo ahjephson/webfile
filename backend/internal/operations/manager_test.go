@@ -199,6 +199,97 @@ func TestTasksQueueAtConfiguredConcurrency(t *testing.T) {
 	}
 }
 
+func TestTasksRunAtMostOneOfEachKind(t *testing.T) {
+	manager := newManager(nil, 10, 2)
+	firstCopyStarted := make(chan struct{})
+	firstCopyRelease := make(chan struct{})
+	secondCopyStarted := make(chan struct{})
+	extractStarted := make(chan struct{})
+	extractRelease := make(chan struct{})
+
+	manager.Start("copy", nil, "", func(context.Context, Reporter) error {
+		close(firstCopyStarted)
+		<-firstCopyRelease
+		return nil
+	})
+	<-firstCopyStarted
+	second := manager.Start("copy", nil, "", func(context.Context, Reporter) error {
+		close(secondCopyStarted)
+		return nil
+	})
+	manager.Start("extract", nil, "", func(context.Context, Reporter) error {
+		close(extractStarted)
+		<-extractRelease
+		return nil
+	})
+
+	select {
+	case <-extractStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("different task kind did not use the second slot")
+	}
+	select {
+	case <-secondCopyStarted:
+		t.Fatal("second copy ran concurrently with the first")
+	default:
+	}
+	for _, operation := range manager.List() {
+		if operation.ID == second.ID && (operation.State != StateQueued || operation.QueuePosition != 1) {
+			t.Fatalf("second copy was not queued first: %#v", operation)
+		}
+	}
+
+	close(firstCopyRelease)
+	select {
+	case <-secondCopyStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second copy did not start when its kind became available")
+	}
+	close(extractRelease)
+}
+
+func TestQueuedTasksCanBeReordered(t *testing.T) {
+	manager := newManager(nil, 10, 2)
+	firstStarted := make(chan struct{})
+	firstRelease := make(chan struct{})
+	secondStarted := make(chan struct{})
+	thirdStarted := make(chan struct{})
+	manager.Start("extract", nil, "", func(context.Context, Reporter) error {
+		close(firstStarted)
+		<-firstRelease
+		return nil
+	})
+	<-firstStarted
+	second := manager.Start("extract", []string{"/second"}, "", func(context.Context, Reporter) error {
+		close(secondStarted)
+		return nil
+	})
+	third := manager.Start("extract", []string{"/third"}, "", func(context.Context, Reporter) error {
+		close(thirdStarted)
+		return nil
+	})
+
+	if _, moved := manager.MoveQueued(third.ID, -1); !moved {
+		t.Fatal("third task was not moved up")
+	}
+	for _, operation := range manager.List() {
+		if operation.ID == third.ID && operation.QueuePosition != 1 {
+			t.Fatalf("third queue position=%d, want 1", operation.QueuePosition)
+		}
+		if operation.ID == second.ID && operation.QueuePosition != 2 {
+			t.Fatalf("second queue position=%d, want 2", operation.QueuePosition)
+		}
+	}
+	close(firstRelease)
+	select {
+	case <-thirdStarted:
+	case <-secondStarted:
+		t.Fatal("second task started before reordered third task")
+	case <-time.After(2 * time.Second):
+		t.Fatal("reordered task did not start")
+	}
+}
+
 func TestQueuedTaskCanBeCancelledWithoutRunning(t *testing.T) {
 	manager := newManager(nil, 10, 1)
 	firstStarted := make(chan struct{})

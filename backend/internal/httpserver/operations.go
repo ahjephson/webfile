@@ -2,8 +2,17 @@ package httpserver
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"log/slog"
 	"net/http"
+	"net/url"
+	"os"
 	"path"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"webfile/internal/archive"
@@ -12,10 +21,12 @@ import (
 )
 
 type operationRequest struct {
-	Kind         string   `json:"kind"`
-	Sources      []string `json:"sources"`
-	Destination  string   `json:"destination,omitempty"`
-	CopyChunkMiB int      `json:"copy_chunk_mib,omitempty"`
+	Kind          string   `json:"kind"`
+	Sources       []string `json:"sources"`
+	Destination   string   `json:"destination,omitempty"`
+	CopyChunkMiB  int      `json:"copy_chunk_mib,omitempty"`
+	ExtractLayout string   `json:"extract_layout,omitempty"`
+	ExistingFiles string   `json:"existing_files,omitempty"`
 }
 
 func (s *Server) listOperations(w http.ResponseWriter, r *http.Request) {
@@ -79,65 +90,193 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, op)
 
 	case "extract":
-		if len(req.Sources) != 1 || strings.TrimSpace(req.Destination) == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "one archive source and destination are required"})
+		if len(req.Sources) == 0 || strings.TrimSpace(req.Destination) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "archive sources and destination are required"})
 			return
 		}
-		source := req.Sources[0]
-		op := s.ops.StartTask(req.Kind, req.Sources, req.Destination, operations.TaskOptions{
+		layout := strings.TrimSpace(req.ExtractLayout)
+		if layout == "" && len(req.Sources) != 1 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "extract_layout is required for multiple archives"})
+			return
+		}
+		if layout != "" && layout != "separate_directories" && layout != "here" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "extract_layout must be separate_directories or here"})
+			return
+		}
+		policy := archive.ExistingFilePolicy(req.ExistingFiles)
+		if policy == archive.ExistingFilesFail {
+			policy = archive.ExistingFilesSkip
+		}
+		if policy != archive.ExistingFilesSkip && policy != archive.ExistingFilesOverwrite {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "existing_files must be skip or overwrite"})
+			return
+		}
+		destinations := make([]string, len(req.Sources))
+		for index, source := range req.Sources {
+			if !supportedArchivePath(source) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "all sources must be supported archives"})
+				return
+			}
+			destinations[index] = req.Destination
+			if layout == "separate_directories" {
+				destinations[index] = path.Join(req.Destination, archiveNameWithoutExtension(path.Base(filesystem.CleanVirtual(source))))
+			}
+		}
+		started := make([]operations.Operation, 0, len(req.Sources))
+		for index, source := range req.Sources {
+			started = append(started, s.startExtractOperation(source, destinations[index], policy))
+		}
+		if layout == "" {
+			writeJSON(w, http.StatusAccepted, started[0])
+		} else {
+			writeJSON(w, http.StatusAccepted, map[string]any{"operations": started})
+		}
+
+	case "archive":
+		if len(req.Sources) != 1 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "one folder source is required"})
+			return
+		}
+		source := filesystem.CleanVirtual(req.Sources[0])
+		op := s.ops.StartTask("archive", []string{source}, "", operations.TaskOptions{
 			Cancellable:   true,
-			CleanupPolicy: "Temporary and newly-created extraction output is removed on cancellation.",
+			CleanupPolicy: "The incomplete archive is removed. A completed archive is removed after it is downloaded.",
+			Cleanup: func(_ context.Context, operation operations.Operation) error {
+				return removeArchiveArtifacts(s.archiveDir, operation.ID)
+			},
 		}, func(ctx context.Context, reporter operations.Reporter) error {
-			reporter.SetState(operations.StatePreparing, "preparing", "Preparing archive")
-			passwordProvider := func(waitCtx context.Context, incorrect bool) (string, error) {
-				message := "Password required"
-				if incorrect {
-					message = "Incorrect password — try again"
-				}
-				value, err := s.passwords.Wait(waitCtx, reporter.ID(), func() {
-					reporter.SetState(operations.StateAwaitingInput, "awaiting_password", message)
-				})
-				if err != nil {
-					return "", err
-				}
-				reporter.SetState(operations.StateRunning, "checking_password", "Checking password")
-				return value, nil
+			if strings.TrimSpace(s.archiveDir) == "" {
+				return errors.New("archive download storage is not configured")
 			}
-			count, err := s.extractor.ExtractInteractive(ctx, source, req.Destination, passwordProvider, func(progress archive.Progress) {
-				if progress.Phase == "extracting" && progress.PercentKnown {
-					reporter.Report(operations.ProgressUpdate{
-						Phase: progress.Phase, Message: progress.Message,
-						ProgressDone: int64(progress.Percent), ProgressTotal: 100,
-						ProgressUnit: operations.ProgressUnitPercent,
-					})
-				} else if progress.Phase == "extracting" {
-					reporter.Report(operations.ProgressUpdate{
-						Phase: progress.Phase, Message: progress.Message,
-					})
-				} else {
-					reporter.Report(operations.ProgressUpdate{
-						Phase: progress.Phase, Message: progress.Message,
-						ProgressDone: progress.ItemsDone, ProgressTotal: progress.ItemsTotal,
-						ProgressUnit: operations.ProgressUnitItems,
-						ItemsDone:    progress.ItemsDone, ItemsTotal: progress.ItemsTotal,
-					})
-				}
-			})
-			if err == nil {
+			if err := os.MkdirAll(s.archiveDir, 0o700); err != nil {
+				return err
+			}
+			partialPath := filepath.Join(s.archiveDir, reporter.ID()+".partial.zip")
+			completedPath := filepath.Join(s.archiveDir, reporter.ID()+".zip")
+			defer func() { _ = os.Remove(partialPath) }()
+			result, err := s.extractor.CreateFolderArchive(ctx, source, partialPath, func(progress archive.Progress) {
 				reporter.Report(operations.ProgressUpdate{
-					Phase: "publishing", Message: "Extracted", ProgressDone: int64(count),
-					ProgressTotal: int64(count), ProgressUnit: operations.ProgressUnitItems,
-					ItemsDone: int64(count), ItemsTotal: int64(count),
+					Phase: progress.Phase, Message: progress.Message,
+					ProgressDone: progress.BytesDone, ProgressTotal: progress.BytesTotal,
+					ProgressUnit: operations.ProgressUnitBytes,
+					BytesDone:    progress.BytesDone, BytesTotal: progress.BytesTotal,
+					ItemsDone: progress.ItemsDone, ItemsTotal: progress.ItemsTotal,
 				})
-				s.invalidateDestination(req.Destination)
+			})
+			if err != nil {
+				return err
 			}
-			return err
+			if err := os.Rename(partialPath, completedPath); err != nil {
+				return fmt.Errorf("publish archive: %w", err)
+			}
+			reporter.Report(operations.ProgressUpdate{
+				Phase: "ready", Message: fmt.Sprintf("Ready to download · %d files", result.Files),
+				ProgressDone: result.Bytes, ProgressTotal: result.Bytes, ProgressUnit: operations.ProgressUnitBytes,
+				BytesDone: result.Bytes, BytesTotal: result.Bytes, ItemsDone: result.Files, ItemsTotal: result.Files,
+			})
+			return nil
 		})
 		writeJSON(w, http.StatusAccepted, op)
 
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind must be copy, move, delete or extract"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind must be copy, move, delete, extract or archive"})
 	}
+}
+
+func (s *Server) startExtractOperation(source, destination string, policy archive.ExistingFilePolicy) operations.Operation {
+	return s.ops.StartTask("extract", []string{source}, destination, operations.TaskOptions{
+		Cancellable:   true,
+		CleanupPolicy: "Temporary extraction data is removed on cancellation. Files already published are retained.",
+	}, func(ctx context.Context, reporter operations.Reporter) error {
+		defer func() {
+			if !s.ops.HasQueuedKind("extract") {
+				s.archivePassword.Clear()
+			}
+		}()
+		reporter.SetState(operations.StatePreparing, "preparing", "Preparing archive")
+		lastPassword := ""
+		passwordProvider := func(waitCtx context.Context, incorrect bool) (string, error) {
+			if incorrect {
+				s.archivePassword.Clear()
+			} else if cached, ok := s.archivePassword.Get(); ok {
+				lastPassword = cached
+				reporter.SetState(operations.StateRunning, "checking_password", "Checking saved password")
+				return cached, nil
+			}
+			message := "Password required"
+			if incorrect {
+				message = "Incorrect password — try again"
+			}
+			value, err := s.passwords.Wait(waitCtx, reporter.ID(), func() {
+				reporter.SetState(operations.StateAwaitingInput, "awaiting_password", message)
+			})
+			if err != nil {
+				return "", err
+			}
+			lastPassword = value
+			reporter.SetState(operations.StateRunning, "checking_password", "Checking password")
+			return value, nil
+		}
+		result, err := s.extractor.ExtractInteractiveWithOptions(ctx, source, destination, passwordProvider, func(progress archive.Progress) {
+			if progress.Phase == "extracting" && progress.PercentKnown {
+				reporter.Report(operations.ProgressUpdate{
+					Phase: progress.Phase, Message: progress.Message,
+					ProgressDone: int64(progress.Percent), ProgressTotal: 100,
+					ProgressUnit: operations.ProgressUnitPercent,
+				})
+			} else if progress.Phase == "extracting" {
+				reporter.Report(operations.ProgressUpdate{
+					Phase: progress.Phase, Message: progress.Message,
+				})
+			} else {
+				reporter.Report(operations.ProgressUpdate{
+					Phase: progress.Phase, Message: progress.Message,
+					ProgressDone: progress.ItemsDone, ProgressTotal: progress.ItemsTotal,
+					ProgressUnit: operations.ProgressUnitItems,
+					ItemsDone:    progress.ItemsDone, ItemsTotal: progress.ItemsTotal,
+				})
+			}
+		}, archive.ExtractOptions{ExistingFiles: policy})
+		if err == nil {
+			if lastPassword != "" {
+				s.archivePassword.Set(lastPassword)
+			}
+			message := fmt.Sprintf("Extracted %d files", result.Extracted)
+			if result.Skipped > 0 {
+				message += fmt.Sprintf(" · skipped %d existing files", result.Skipped)
+			}
+			total := result.Extracted + result.Skipped
+			reporter.Report(operations.ProgressUpdate{
+				Phase: "publishing", Message: message, ProgressDone: int64(total),
+				ProgressTotal: int64(total), ProgressUnit: operations.ProgressUnitItems,
+				ItemsDone: int64(total), ItemsTotal: int64(total),
+			})
+			s.invalidateDestination(destination)
+		}
+		return err
+	})
+}
+
+var archiveExtensions = []string{".tar.bz2", ".tar.gz", ".tar.xz", ".zip", ".7z", ".rar", ".tar", ".tgz"}
+
+func supportedArchivePath(value string) bool {
+	lower := strings.ToLower(path.Base(filesystem.CleanVirtual(value)))
+	for _, extension := range archiveExtensions {
+		if strings.HasSuffix(lower, extension) {
+			return true
+		}
+	}
+	return false
+}
+
+func archiveNameWithoutExtension(name string) string {
+	lower := strings.ToLower(name)
+	for _, extension := range archiveExtensions {
+		if strings.HasSuffix(lower, extension) {
+			return name[:len(name)-len(extension)]
+		}
+	}
+	return name
 }
 
 func (s *Server) submitOperationPassword(w http.ResponseWriter, r *http.Request) {
@@ -181,17 +320,129 @@ func (s *Server) cancelOperation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 }
 
+func (s *Server) reorderOperation(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Direction string `json:"direction"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	direction := 0
+	if req.Direction == "up" {
+		direction = -1
+	} else if req.Direction == "down" {
+		direction = 1
+	} else {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "direction must be up or down"})
+		return
+	}
+	operation, moved := s.ops.MoveQueued(r.PathValue("id"), direction)
+	if !moved {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "operation cannot be moved"})
+		return
+	}
+	writeJSON(w, http.StatusOK, operation)
+}
+
+func (s *Server) downloadOperationArtifact(w http.ResponseWriter, r *http.Request) {
+	operation, ok := s.ops.Get(r.PathValue("id"))
+	if !ok || operation.Kind != "archive" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "archive task not found"})
+		return
+	}
+	if operation.State != operations.StateCompleted {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "archive is not ready to download"})
+		return
+	}
+	if operation.Phase == "downloaded" || operation.Phase == "unavailable" {
+		writeJSON(w, http.StatusGone, map[string]string{"error": "archive download is no longer available"})
+		return
+	}
+	if strings.TrimSpace(s.archiveDir) == "" {
+		writeJSON(w, http.StatusGone, map[string]string{"error": "archive download is no longer available"})
+		return
+	}
+	filePath := filepath.Join(s.archiveDir, operation.ID+".zip")
+	file, err := os.Open(filePath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			s.ops.MarkArtifactUnavailable(operation.ID)
+			writeJSON(w, http.StatusGone, map[string]string{"error": "archive download is no longer available"})
+			return
+		}
+		writeError(w, err)
+		return
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = file.Close()
+		}
+	}()
+	info, err := file.Stat()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	name := "folder.zip"
+	if len(operation.Sources) == 1 {
+		name = path.Base(filesystem.CleanVirtual(operation.Sources[0])) + ".zip"
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(name)))
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	written, copyErr := io.Copy(w, file)
+	closeErr := file.Close()
+	closed = true
+	if copyErr != nil || closeErr != nil || written != info.Size() {
+		slog.Warn("folder archive download interrupted", "operation", operation.ID, "written", written, "expected", info.Size(), "copy_error", copyErr, "close_error", closeErr)
+		return
+	}
+	if err := os.Remove(filePath); err != nil {
+		slog.Error("remove downloaded folder archive", "operation", operation.ID, "path", filePath, "error", err)
+		return
+	}
+	s.ops.MarkArtifactDownloaded(operation.ID)
+}
+
+func removeArchiveArtifacts(directory, id string) error {
+	if strings.TrimSpace(directory) == "" {
+		return nil
+	}
+	var result error
+	for _, suffix := range []string{".partial.zip", ".zip"} {
+		if err := os.Remove(filepath.Join(directory, id+suffix)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			result = errors.Join(result, err)
+		}
+	}
+	return result
+}
+
 func (s *Server) clearOperationHistory(w http.ResponseWriter, r *http.Request) {
+	completed := s.ops.List()
 	removed, err := s.ops.ClearHistory()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not clear task history"})
 		return
 	}
+	for _, operation := range completed {
+		if operation.Kind == "archive" && operation.FinishedAt != nil {
+			_ = removeArchiveArtifacts(s.archiveDir, operation.ID)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"removed": removed})
 }
 
 func (s *Server) removeOperationHistory(w http.ResponseWriter, r *http.Request) {
-	removed, err := s.ops.RemoveHistory(r.PathValue("id"))
+	id := r.PathValue("id")
+	operation, exists := s.ops.Get(id)
+	removed, err := s.ops.RemoveHistory(id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not remove task history"})
 		return
@@ -199,6 +450,9 @@ func (s *Server) removeOperationHistory(w http.ResponseWriter, r *http.Request) 
 	if !removed {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "task is active or no longer exists"})
 		return
+	}
+	if exists && operation.Kind == "archive" {
+		_ = removeArchiveArtifacts(s.archiveDir, operation.ID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"removed": true})
 }

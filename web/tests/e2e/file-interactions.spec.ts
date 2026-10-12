@@ -200,6 +200,36 @@ for (const view of ['list', 'grid'] as const) {
       await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(breadcrumbBefore)
     })
 
+    test('touch tap on the whole tile toggles selection while selection controls are enabled', async ({ page }) => {
+      const checkbox = selectionButtons(page).first()
+      const entry = entryFor(checkbox)
+      const breadcrumbBefore = await page.locator('nav[aria-label="Breadcrumb"] button').count()
+
+      await showSelectionControls(page)
+      await touchPoint(page, entry)
+
+      await expect(checkbox).toHaveAttribute('aria-pressed', 'true')
+      await expect(entry).toHaveClass(/webfile-selection-tint/)
+      await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(breadcrumbBefore)
+    })
+
+    test('clicking empty file-pane space clears selection and item focus', async ({ page }) => {
+      const checkbox = selectionButtons(page).first()
+      const entry = entryFor(checkbox)
+
+      await showSelectionControls(page)
+      await checkbox.click()
+      await expect(checkbox).toHaveAttribute('aria-pressed', 'true')
+      await expect(entry).toHaveClass(/webfile-selection-tint/)
+
+      await page.locator('[data-file-viewport]').dispatchEvent('click')
+
+      await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
+      await expect(page.getByText('0 selected', { exact: true })).toBeVisible()
+      await expect(entry).not.toHaveClass(/webfile-selection-tint/)
+      await expect(entry).not.toHaveClass(/outline-sky-500/)
+    })
+
     test('selection controls are opt-in with a touch-sized target', async ({ page }) => {
       const checkbox = selectionButtons(page).first()
       const toggle = page.getByRole('button', { name: 'Show selection controls' })
@@ -400,6 +430,20 @@ for (const view of ['list', 'grid'] as const) {
       await expect(menu.getByRole('menuitem', { name: 'Move to…' })).toBeVisible()
       await expect(menu.getByRole('menuitem', { name: 'Rename…' })).toBeVisible()
       await expect(menu.getByRole('menuitem', { name: 'Delete' })).toBeVisible()
+    })
+
+    test('multi-item actions do not start with an empty separator', async ({ page }) => {
+      const checkboxes = selectionButtons(page)
+
+      await showSelectionControls(page)
+      await checkboxes.nth(0).click()
+      await checkboxes.nth(1).click()
+      await checkboxes.nth(2).click()
+      await page.getByRole('button', { name: 'Actions' }).click()
+
+      const menu = page.getByRole('menu').filter({ visible: true })
+      await expect(menu.getByRole('menuitem', { name: 'Copy 3 items', exact: true })).toBeVisible()
+      await expect(menu.locator('[role="separator"]')).toHaveCount(0)
     })
 
     test('touch long-press opens while held and remains open after release', async ({ page }) => {
@@ -650,6 +694,8 @@ test('settings persist appearance, editor defaults, and copy chunk size', async 
   await dialog.getByRole('switch', { name: 'Markdown preview by default' }).click()
   await dialog.getByRole('combobox', { name: 'Copy chunk size' }).click()
   await page.getByRole('option', { name: '16 MiB', exact: true }).click()
+  await dialog.getByRole('combobox', { name: 'Existing files when extracting' }).click()
+  await page.getByRole('option', { name: 'Overwrite existing files', exact: true }).click()
   await dialog.getByRole('button', { name: 'Save settings' }).click()
 
   await expect(dialog).toBeHidden()
@@ -660,6 +706,7 @@ test('settings persist appearance, editor defaults, and copy chunk size', async 
     grid_size: 'large',
     show_hidden: true,
     hide_inaccessible: true,
+    extract_existing_files: 'overwrite',
     editor_word_wrap: true,
     editor_font_size: 18,
     editor_minimap: true,
@@ -1459,7 +1506,11 @@ test('an unmapped file opens the preview fallback instead of the text editor', a
 
   await expect(page.getByLabel('File preview')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'No preview available' })).toBeVisible()
+  await expect(page.getByText("This type of file can't be previewed.", { exact: true })).toBeVisible()
   await expect(page.getByLabel('File preview').getByRole('button', { name: 'Download' })).toHaveCount(0)
+  await expect(page.getByLabel('File preview')).toHaveAttribute('data-immersive', 'false')
+  await expect(page.getByRole('button', { name: 'Back to folder' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Enter fullscreen' })).toHaveCount(0)
 })
 
 test('extensionless text detected by content opens in the editor', async ({ page }) => {
@@ -1841,7 +1892,7 @@ test('the main pane uses generated thumbnails while full previews use the origin
   await page.getByRole('button', { name: 'Grid view' }).click()
   const rows = page.locator('[data-file-entry]')
   await expect(rows).toHaveCount(4)
-  const thumbnail = page.getByRole('img', { name: 'Preview photo.jpg' })
+  const thumbnail = rows.filter({ hasText: 'photo.jpg' }).locator('[data-file-thumbnail]')
   await expect(thumbnail).toBeVisible()
   const thumbnailBounds = await thumbnail.boundingBox()
   const tileBounds = await rows.filter({ hasText: 'photo.jpg' }).boundingBox()
@@ -2415,6 +2466,12 @@ test('a small image keeps its natural size until the user zooms it', async ({ pa
 })
 
 test('video preview uses a contained native player with controls', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(Element.prototype, 'requestFullscreen', {
+      configurable: true,
+      value: () => Promise.reject(new DOMException('Fullscreen unavailable', 'NotSupportedError')),
+    })
+  })
   await page.route('**/api/fs/dir**', route => route.fulfill({
     json: {
       path: '/',
@@ -2452,6 +2509,87 @@ test('video preview uses a contained native player with controls', async ({ page
   expect(player.objectFit).toBe('contain')
   expect(player.width).toBeLessThanOrEqual(player.parentWidth)
   expect(player.height).toBeLessThanOrEqual(player.parentHeight)
+
+  const preview = page.getByLabel('File preview')
+  await page.getByRole('button', { name: 'Enter fullscreen' }).click()
+  await expect(preview).toHaveAttribute('data-immersive', 'true')
+  await expect(page.getByRole('button', { name: 'Exit fullscreen' })).toBeVisible()
+  await video.dispatchEvent('error')
+  await expect(page.getByRole('heading', { name: 'Preview unavailable' })).toBeVisible()
+  await expect(preview).toHaveAttribute('data-immersive', 'false')
+  await expect(page.getByRole('button', { name: 'Back to folder' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Enter fullscreen' })).toHaveCount(0)
+  await page.goBack()
+  await expect(preview).toHaveCount(0)
+  await page.goForward()
+  await expect(preview).toHaveAttribute('data-immersive', 'false')
+  await expect(page.getByRole('button', { name: 'Back to folder' })).toBeVisible()
+})
+
+test('repeated terminal operation updates announce completion only once', async ({ page }) => {
+  await page.addInitScript(() => {
+    class MockWebSocket {
+      static readonly CONNECTING = 0
+      static readonly OPEN = 1
+      static readonly CLOSING = 2
+      static readonly CLOSED = 3
+      readyState = MockWebSocket.OPEN
+      onopen: ((event: Event) => void) | null = null
+      onmessage: ((event: MessageEvent) => void) | null = null
+      onerror: ((event: Event) => void) | null = null
+      onclose: ((event: CloseEvent) => void) | null = null
+
+      constructor() {
+        ;(window as typeof window & { __testSocket?: MockWebSocket }).__testSocket = this
+        queueMicrotask(() => this.onopen?.(new Event('open')))
+      }
+
+      send() {}
+
+      close() {
+        this.readyState = MockWebSocket.CLOSED
+      }
+    }
+
+    Object.defineProperty(window, 'WebSocket', { configurable: true, value: MockWebSocket })
+  })
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries: [] } }))
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [] } }))
+  await page.route('**/api/fs/thumbnails/jobs**', route => route.fulfill({ json: { jobs: [] } }))
+
+  await page.goto('/')
+  await page.waitForFunction(() => Boolean((window as typeof window & { __testSocket?: unknown }).__testSocket))
+
+  const operation = {
+    id: 'delete-completed',
+    kind: 'delete',
+    sources: ['/folder'],
+    state: 'completed',
+    message: 'Deleted 1 item',
+    progress_done: 1,
+    progress_total: 1,
+    progress_unit: 'items',
+    bytes_done: 0,
+    bytes_total: 0,
+    items_done: 1,
+    items_total: 1,
+    cancellable: false,
+    started_at: '2000-01-01T00:00:00Z',
+    updated_at: '2000-01-01T00:00:01Z',
+    finished_at: '2000-01-01T00:00:01Z',
+  }
+  await page.evaluate(completedOperation => {
+    const socket = (window as typeof window & {
+      __testSocket?: { onmessage: ((event: MessageEvent) => void) | null }
+    }).__testSocket
+    for (let index = 0; index < 100; index += 1) {
+      socket?.onmessage?.(new MessageEvent('message', {
+        data: JSON.stringify({ type: 'operation-updated', operation: completedOperation }),
+      }))
+    }
+  }, operation)
+
+  await expect(page.getByText('Delete complete', { exact: true })).toHaveCount(1)
 })
 
 test('task drawer separates active work from persistent history', async ({ page }) => {
@@ -2546,7 +2684,14 @@ test('task drawer separates active work from persistent history', async ({ page 
   await expect(drawer.getByText('Copying photos')).toBeVisible()
   await expect(drawer.getByRole('progressbar', { name: 'Copy photos progress' })).toHaveAttribute('aria-valuenow', '25')
   await expect(drawer.getByText(/86\.3 MiB\/s/)).toBeVisible()
-  await expect(drawer.getByRole('button', { name: 'Cancel' })).toBeVisible()
+  const activeTask = drawer.getByRole('article').filter({ hasText: 'Copy photos' })
+  await expect(activeTask.getByText('Remove files created by this task')).toHaveCount(0)
+  await activeTask.getByRole('button', { name: 'Cancel' }).click()
+  const cancelConfirmation = page.getByRole('alertdialog', { name: 'Cancel Copy photos?' })
+  await expect(cancelConfirmation).toContainText('Remove files created by this task')
+  await cancelConfirmation.getByRole('button', { name: 'Continue running' }).click()
+  await expect(cancelConfirmation).toHaveCount(0)
+  await expect(activeTask).toBeVisible()
   await expect(drawer.getByText('interrupted', { exact: true })).toBeVisible()
 
   await page.reload()
@@ -2556,6 +2701,7 @@ test('task drawer separates active work from persistent history', async ({ page 
   const interruptedTask = reloadedDrawer.getByRole('article').filter({ hasText: 'Extract archive.zip' })
   await interruptedTask.getByText('Details', { exact: true }).click()
   await expect(interruptedTask.getByText('Interrupted by restart')).toBeVisible()
+  await expect(interruptedTask.getByText('Remove files created by this task')).toHaveCount(0)
 
   await interruptedTask.getByRole('button', { name: 'Remove Extract archive.zip from history' }).click()
   const removeConfirmation = page.getByRole('alertdialog', { name: 'Remove task from history' })
@@ -2575,6 +2721,101 @@ test('task drawer separates active work from persistent history', async ({ page 
   await expect.poll(() => clearHistoryCalled).toBe(true)
   await expect(reloadedDrawer.getByText('History', { exact: true })).toHaveCount(0)
   await expect(reloadedDrawer.getByText('Copying photos')).toBeVisible()
+})
+
+test('folder download starts an archive task without opening the task drawer', async ({ page }) => {
+  let operationRequest: Record<string, unknown> | undefined
+  await page.route('**/api/fs/dir**', route => route.fulfill({
+    json: {
+      path: '/',
+      entries: [{
+        name: 'photos',
+        path: '/Files/photos',
+        is_dir: true,
+        can_navigate: true,
+        size: 0,
+        modified: '2000-01-01T00:00:00Z',
+        mode: 'drwxr-xr-x',
+      }],
+    },
+  }))
+  await page.route('**/api/fs/thumbnails/jobs**', route => route.fulfill({ json: { jobs: [] } }))
+  await page.route('**/api/fs/operations', async route => {
+    if (route.request().method() === 'POST') {
+      operationRequest = route.request().postDataJSON() as Record<string, unknown>
+      await route.fulfill({
+        status: 202,
+        json: {
+          id: 'archive-1', kind: 'archive', sources: ['/Files/photos'], state: 'queued',
+          phase: 'queued', message: 'Queued', progress_done: 0, progress_total: 0,
+          bytes_done: 0, bytes_total: 0, items_done: 0, items_total: 0,
+          queue_position: 1, cancellable: true,
+          started_at: '2000-01-01T00:00:00Z', updated_at: '2000-01-01T00:00:00Z',
+        },
+      })
+      return
+    }
+    await route.fulfill({ json: { operations: [] } })
+  })
+
+  await page.goto('/')
+  const folder = page.locator('[data-file-entry]').filter({ hasText: 'photos' })
+  await dispatchContextMenu(folder)
+  await page.getByRole('menuitem', { name: 'Download' }).click()
+
+  await expect.poll(() => operationRequest).toEqual({ kind: 'archive', sources: ['/Files/photos'] })
+  await expect(page.getByRole('button', { name: 'Open tasks' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Close tasks' })).toHaveCount(0)
+})
+
+test('downloaded folder archive history shows that its artifact is no longer available', async ({ page }) => {
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries: [] } }))
+  await page.route('**/api/fs/thumbnails/jobs**', route => route.fulfill({ json: { jobs: [] } }))
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [{
+    id: 'archive-downloaded', kind: 'archive', sources: ['/Files/photos'], state: 'completed', phase: 'downloaded',
+    message: 'Downloaded · temporary archive removed', progress_done: 10, progress_total: 10, progress_unit: 'bytes',
+    bytes_done: 10, bytes_total: 10, items_done: 1, items_total: 1, cancellable: false,
+    started_at: '2000-01-01T00:00:00Z', updated_at: '2000-01-01T00:00:02Z', finished_at: '2000-01-01T00:00:01Z',
+  }, {
+    id: 'archive-ready', kind: 'archive', sources: ['/Files/videos'], state: 'completed', phase: 'completed',
+    message: 'Ready to download', progress_done: 20, progress_total: 20, progress_unit: 'bytes',
+    bytes_done: 20, bytes_total: 20, items_done: 2, items_total: 2, cancellable: false,
+    started_at: '2000-01-01T00:00:03Z', updated_at: '2000-01-01T00:00:05Z', finished_at: '2000-01-01T00:00:04Z',
+  }] } }))
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open tasks' }).click()
+  const drawer = page.getByRole('complementary')
+  await drawer.evaluate(async element => {
+    await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => undefined)))
+  })
+  await expect(drawer.getByText('downloaded', { exact: true })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: 'Download Archive photos' })).toHaveCount(0)
+  const downloadedCard = drawer.locator('article').filter({ hasText: 'Archive photos' })
+  const readyCard = drawer.locator('article').filter({ hasText: 'Archive videos' })
+  const downloadedStatus = await downloadedCard.locator('[data-task-status]').boundingBox()
+  const downloadedClose = await downloadedCard.getByRole('button', { name: 'Remove Archive photos from history' }).boundingBox()
+  const readyStatus = await readyCard.locator('[data-task-status]').boundingBox()
+  const readyDownload = await readyCard.getByRole('button', { name: 'Download Archive videos' }).boundingBox()
+  const readyClose = await readyCard.getByRole('button', { name: 'Remove Archive videos from history' }).boundingBox()
+  expect(downloadedStatus).not.toBeNull()
+  expect(downloadedClose).not.toBeNull()
+  expect(readyStatus).not.toBeNull()
+  expect(readyDownload).not.toBeNull()
+  expect(readyClose).not.toBeNull()
+  expect(Math.abs(downloadedStatus!.x + downloadedStatus!.width - downloadedClose!.x - downloadedClose!.width)).toBeLessThanOrEqual(1)
+  expect(downloadedStatus!.y).toBeGreaterThan(downloadedClose!.y + downloadedClose!.height)
+  expect(Math.abs(readyStatus!.x + readyStatus!.width - readyClose!.x - readyClose!.width)).toBeLessThanOrEqual(1)
+  expect(readyStatus!.y).toBeGreaterThan(readyClose!.y + readyClose!.height)
+  expect(Math.abs(readyDownload!.y - readyClose!.y)).toBeLessThanOrEqual(1)
+
+  await downloadedCard.locator('summary', { hasText: 'Details' }).click()
+  const expandedStatus = await downloadedCard.locator('[data-task-status]').boundingBox()
+  const expandedClose = await downloadedCard.getByRole('button', { name: 'Remove Archive photos from history' }).boundingBox()
+  expect(expandedStatus).not.toBeNull()
+  expect(expandedClose).not.toBeNull()
+  expect(Math.abs(expandedStatus!.y - downloadedStatus!.y)).toBeLessThanOrEqual(1)
+  expect(Math.abs(expandedClose!.y - downloadedClose!.y)).toBeLessThanOrEqual(1)
 })
 
 test('task drawer surfaces the transient video thumbnail queue separately', async ({ page }) => {
@@ -2619,6 +2860,12 @@ test('task drawer surfaces the transient video thumbnail queue separately', asyn
     'queued-1', 'queued-2', 'queued-3', 'queued-4', 'queued-5', 'queued-6', 'queued-7', 'queued-8',
   ])
   await expect(drawer.getByText('and 3 more', { exact: true })).toBeVisible()
+  const processingThumbnail = drawer.locator('[data-thumbnail-job="processing-1"]')
+  const queuedThumbnail = drawer.locator('[data-thumbnail-job="queued-1"]')
+  await expect(processingThumbnail).toHaveAttribute('data-thumbnail-processing', 'true')
+  await expect(processingThumbnail).toHaveClass(/border-sky-700/)
+  await expect(queuedThumbnail).not.toHaveAttribute('data-thumbnail-processing', 'true')
+  await expect(queuedThumbnail).toHaveClass(/border-violet-900/)
   const thumbnailSpinners = drawer.locator('[data-thumbnail-job] [data-task-spinner]')
   await expect(thumbnailSpinners).toHaveCount(10)
   await expect(drawer.getByRole('progressbar')).toHaveCount(0)
@@ -2642,7 +2889,7 @@ test('Extract here starts a single-pass task in the archive directory', async ({
       return
     }
     operationRequest = route.request().postDataJSON() as Record<string, unknown>
-    await route.fulfill({ json: { id: 'extract-1', kind: 'extract', sources: ['/folder/archive.zip'], destination: '/folder', state: 'queued', bytes_done: 0, bytes_total: 0, items_done: 0, items_total: 0, started_at: '2000-01-01T00:00:00Z', updated_at: '2000-01-01T00:00:00Z' } })
+    await route.fulfill({ json: { operations: [{ id: 'extract-1', kind: 'extract', sources: ['/folder/archive.zip'], destination: '/folder', state: 'queued', bytes_done: 0, bytes_total: 0, items_done: 0, items_total: 0, started_at: '2000-01-01T00:00:00Z', updated_at: '2000-01-01T00:00:00Z' }] } })
   })
 
   await page.goto('/#path=%2Ffolder')
@@ -2651,7 +2898,7 @@ test('Extract here starts a single-pass task in the archive directory', async ({
   await page.getByRole('menuitem', { name: 'Extract here', exact: true }).click()
 
   await expect.poll(() => operationRequest).not.toBeNull()
-  expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/archive.zip'], destination: '/folder' })
+  expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/archive.zip'], destination: '/folder', extract_layout: 'here', existing_files: 'skip' })
   await expect(page.getByRole('button', { name: 'Open tasks' })).toHaveClass(/webfile-task-attention/)
   await expect(page.getByRole('complementary')).toHaveCount(0)
 })
@@ -2675,7 +2922,7 @@ test('Extract defaults to an archive-named folder and prompts when the task requ
       return
     }
     operationRequest = route.request().postDataJSON() as Record<string, unknown>
-    await route.fulfill({ json: { id: 'extract-2', kind: 'extract', sources: ['/folder/secure.tar.gz'], destination: '/target', state: 'awaiting_input', phase: 'awaiting_password', message: 'Password required', bytes_done: 0, bytes_total: 0, items_done: 0, items_total: 0, cancellable: true, started_at: '2000-01-01T00:00:00Z', updated_at: '2000-01-01T00:00:00Z' } })
+    await route.fulfill({ json: { operations: [{ id: 'extract-2', kind: 'extract', sources: ['/folder/secure.tar.gz'], destination: '/target/secure', state: 'awaiting_input', phase: 'awaiting_password', message: 'Password required', bytes_done: 0, bytes_total: 0, items_done: 0, items_total: 0, cancellable: true, started_at: '2000-01-01T00:00:00Z', updated_at: '2000-01-01T00:00:00Z' }] } })
   })
 
   await page.goto('/#path=%2Ffolder')
@@ -2683,8 +2930,8 @@ test('Extract defaults to an archive-named folder and prompts when the task requ
   await page.getByRole('menuitem', { name: 'Extract…', exact: true }).click()
   const destinationDialog = page.getByRole('dialog', { name: 'Extract secure.tar.gz' })
   await expect(destinationDialog.getByLabel('Password')).toHaveCount(0)
-  await expect(destinationDialog.getByLabel('Destination')).toHaveValue('/folder/secure')
-  await destinationDialog.getByLabel('Destination').fill('/target')
+  await expect(destinationDialog.getByLabel('Destination folder')).toHaveValue('/folder')
+  await destinationDialog.getByLabel('Destination folder').fill('/target')
   await destinationDialog.getByRole('button', { name: 'Extract' }).click()
 
   const passwordDialog = page.getByRole('dialog', { name: 'Password required — secure.tar.gz' })
@@ -2699,8 +2946,90 @@ test('Extract defaults to an archive-named folder and prompts when the task requ
   await expect(passwordDialog).toBeHidden()
 
   await expect.poll(() => operationRequest).not.toBeNull()
-  expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/secure.tar.gz'], destination: '/target' })
+  expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/secure.tar.gz'], destination: '/target', extract_layout: 'separate_directories', existing_files: 'skip' })
   await expect.poll(() => submittedPassword).not.toBeNull()
   expect(submittedPassword).toEqual({ password: 'secret' })
   releasePasswordRequest()
+})
+
+test('multiple selected archives can be queued as independent extraction tasks', async ({ page }) => {
+  let operationRequest: Record<string, unknown> | null = null
+  const archiveEntries = [
+    { name: 'first.zip', path: '/folder/first.zip', is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' },
+    { name: 'second.tar.gz', path: '/folder/second.tar.gz', is_dir: false, size: 200, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' },
+  ]
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/folder', entries: archiveEntries } }))
+  await page.route('**/api/fs/operations', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: { operations: [] } })
+    operationRequest = route.request().postDataJSON() as Record<string, unknown>
+    return route.fulfill({ json: { operations: archiveEntries.map((entry, index) => ({
+      id: `extract-${index}`,
+      kind: 'extract',
+      sources: [entry.path],
+      destination: `/folder/${index ? 'second' : 'first'}`,
+      state: 'queued',
+      queue_position: index + 1,
+      progress_done: 0,
+      progress_total: 0,
+      bytes_done: 0,
+      bytes_total: 0,
+      items_done: 0,
+      items_total: 0,
+      cancellable: true,
+      started_at: `2000-01-01T00:00:0${index}Z`,
+      updated_at: `2000-01-01T00:00:0${index}Z`,
+    })) } })
+  })
+
+  await page.goto('/#path=%2Ffolder')
+  const entries = page.locator('[data-file-entry]')
+  await entries.nth(0).click()
+  await entries.nth(1).click({ modifiers: ['Control'] })
+  await page.getByRole('button', { name: 'Actions' }).click()
+  await page.getByRole('menuitem', { name: 'Extract 2 archives…', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract 2 archives' })
+  await expect(dialog.getByLabel('Destination folder')).toHaveValue('/folder')
+  await dialog.getByRole('button', { name: 'Extract', exact: true }).click()
+
+  await expect.poll(() => operationRequest).not.toBeNull()
+  expect(operationRequest).toEqual({
+    kind: 'extract',
+    sources: ['/folder/first.zip', '/folder/second.tar.gz'],
+    destination: '/folder',
+    extract_layout: 'separate_directories',
+    existing_files: 'skip',
+  })
+})
+
+test('queued filesystem tasks expose persistent up and down controls', async ({ page }) => {
+  let reorderRequest: Record<string, unknown> | null = null
+  let reordered = false
+  const queuedOperations = () => [
+    {
+      id: 'copy-queued', kind: 'copy', sources: ['/first'], destination: '/target', state: 'queued', queue_position: reordered ? 2 : 1,
+      progress_done: 0, progress_total: 0, bytes_done: 0, bytes_total: 0, items_done: 0, items_total: 0, cancellable: true,
+      started_at: '2000-01-01T00:00:01Z', updated_at: '2000-01-01T00:00:01Z',
+    },
+    {
+      id: 'extract-queued', kind: 'extract', sources: ['/second.zip'], destination: '/target', state: 'queued', queue_position: reordered ? 1 : 2,
+      progress_done: 0, progress_total: 0, bytes_done: 0, bytes_total: 0, items_done: 0, items_total: 0, cancellable: true,
+      started_at: '2000-01-01T00:00:02Z', updated_at: '2000-01-01T00:00:02Z',
+    },
+  ]
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries: [] } }))
+  await page.route('**/api/fs/operations/**', async route => {
+    reorderRequest = route.request().postDataJSON() as Record<string, unknown>
+    reordered = true
+    return route.fulfill({ json: queuedOperations()[0] })
+  })
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: queuedOperations() } }))
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open tasks' }).click()
+  const drawer = page.getByRole('complementary')
+  await expect(drawer.getByText('Queue position 1', { exact: true })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: 'Move Copy first up' })).toBeDisabled()
+  await drawer.getByRole('button', { name: 'Move Extract second.zip up' }).click()
+  await expect.poll(() => reorderRequest).toEqual({ direction: 'up' })
+  await expect(drawer.getByRole('button', { name: 'Move Extract second.zip up' })).toBeDisabled()
 })

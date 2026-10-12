@@ -141,6 +141,7 @@ const transferEntries = ref<FileEntry[]>([])
 const fileClipboard = ref<FileClipboard | null>(null)
 const renameTarget = ref<FileEntry | null>(null)
 const extractTarget = ref<FileEntry | null>(null)
+const extractTargets = ref<FileEntry[]>([])
 const uploadInput = ref<HTMLInputElement | null>(null)
 const draggingOver = ref(false)
 let invalidateTimer: number | null = null
@@ -159,6 +160,8 @@ const {
   load: loadOperations,
   update: updateOperation,
   start: startFileOperation,
+  startExtractions,
+  reorder: reorderFileOperation,
   clearHistory: clearFinishedOperations,
   removeHistory: removeFinishedOperation,
 } = useFileOperations(onOperationTerminal)
@@ -289,15 +292,17 @@ const contextItems = computed(() => {
     result.push({ label: 'Open', icon: one.is_dir ? 'pi pi-folder-open' : 'pi pi-file-edit', disabled: !canOpenEntry(one), command: () => openEntry(one) })
     result.push({ label: 'Download', icon: 'pi pi-download', disabled: !one.is_dir && one.can_read === false, command: () => download(one) })
     result.push({ label: 'Details', icon: 'pi pi-info-circle', command: () => toggleDetails(one) })
-    if (isArchive(one)) {
-      result.push({ label: 'Extract…', icon: 'pi pi-box', disabled: one.can_read === false, command: () => openExtract(one) })
-      result.push({ label: 'Extract here', icon: 'pi pi-folder-open', disabled: one.can_read === false, command: () => extractHere(one) })
-    }
+  }
+
+  if (items.every(isArchive)) {
+    const unreadable = items.some(item => item.can_read === false)
+    result.push({ label: items.length > 1 ? `Extract ${items.length} archives…` : 'Extract…', icon: 'pi pi-box', disabled: unreadable, command: () => openExtract(items) })
+    result.push({ label: items.length > 1 ? `Extract ${items.length} archives here` : 'Extract here', icon: 'pi pi-folder-open', disabled: unreadable, command: () => extractHere(items) })
   }
 
   if (!containsConfiguredRoot) {
+    if (result.length > 0) result.push({ separator: true })
     result.push(
-      { separator: true },
       { label: `Copy${items.length > 1 ? ` ${items.length} items` : ''}`, icon: 'pi pi-copy', command: () => setFileClipboard('copy', items) },
       { label: `Cut${items.length > 1 ? ` ${items.length} items` : ''}`, icon: 'pi pi-file-export', command: () => setFileClipboard('move', items) },
       { label: `Copy${items.length > 1 ? ` ${items.length} items` : ''} to…`, icon: 'pi pi-copy', command: () => openTransfer('copy', items) },
@@ -723,6 +728,15 @@ function clearSelection() {
   clearSelectionState()
 }
 
+function onFileViewClick(event: MouseEvent) {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  if (target.closest('[data-file-entry], button, input, textarea, select, a')) return
+  clearSelection()
+  clearFocus()
+  fileViewHost.value?.focus({ preventScroll: true })
+}
+
 function clearFocus(fallbackPath = currentPath.value) {
   focusedPath.value = ''
   if (detailsVisible.value) detailsPath.value = fallbackPath
@@ -848,7 +862,7 @@ function deleteEntries(items: FileEntry[] = selectedEntries.value) {
   })
 }
 
-async function beginOperation(kind: 'copy' | 'move' | 'delete' | 'extract', sources: string[], destination?: string) {
+async function beginOperation(kind: 'copy' | 'move' | 'delete' | 'extract' | 'archive', sources: string[], destination?: string) {
   try {
     const copyChunkMiB = kind === 'copy' || kind === 'move' ? userPreferences.value.copy_chunk_mib : undefined
     await startFileOperation(kind, sources, destination, copyChunkMiB)
@@ -864,6 +878,23 @@ function cancelOperation(id: string) {
   if (!cancelRealtimeOperation(id)) {
     void api.cancelOperation(id).catch(err => showError(err, 'Could not cancel operation'))
   }
+}
+
+function requestOperationCancellation(operation: FileOperation) {
+  const source = operation.sources?.length === 1
+    ? operation.sources[0].split('/').pop()
+    : `${operation.sources?.length ?? 0} items`
+  const task = `${capitalize(operation.kind)} ${source ?? ''}`.trim()
+  const cleanupPolicy = operation.cleanup_policy?.trim()
+  confirm.require({
+    header: `Cancel ${task}?`,
+    message: cleanupPolicy || 'The task will stop as soon as possible.',
+    icon: 'pi pi-exclamation-triangle',
+    rejectLabel: 'Continue running',
+    acceptLabel: 'Cancel task',
+    acceptProps: { severity: 'danger' },
+    accept: () => cancelOperation(operation.id),
+  })
 }
 
 function clearOperationHistory() {
@@ -903,24 +934,43 @@ function removeOperationHistory(operation: FileOperation) {
   })
 }
 
-function download(item: FileEntry) {
+async function download(item: FileEntry) {
+  if (item.is_dir) {
+    await beginOperation('archive', [item.path])
+    return
+  }
+  downloadURL(api.downloadUrl(item.path), item.name)
+}
+
+function downloadOperation(operation: FileOperation) {
+  const sourceName = operation.sources?.[0]?.split('/').pop() || 'folder'
+  downloadURL(api.operationDownloadUrl(operation.id), `${sourceName}.zip`)
+}
+
+function downloadURL(url: string, name: string) {
   const anchor = document.createElement('a')
-  anchor.href = api.downloadUrl(item.path)
-  anchor.download = item.is_dir ? `${item.name}.zip` : item.name
+  anchor.href = url
+  anchor.download = name
   document.body.appendChild(anchor)
   anchor.click()
   anchor.remove()
 }
 
 async function prepareExtraction(destination: string) {
-  if (!extractTarget.value) return
+  if (extractTargets.value.length === 0) return
   extractVisible.value = false
   extractDestination.value = destination
   extractBusy.value = true
   try {
-    const operation = await api.extract(extractTarget.value.path, extractDestination.value)
-    handleOperationUpdate(operation)
+    const started = await startExtractions(
+      extractTargets.value.map(entry => entry.path),
+      extractDestination.value,
+      'separate_directories',
+      userPreferences.value.extract_existing_files,
+    )
+    for (const operation of started) handleOperationUpdate(operation)
     signalTaskAdded()
+    clearSelection()
     extractVisible.value = false
   } catch (err) {
     showError(err, 'Could not start extraction')
@@ -985,15 +1035,25 @@ async function cancelPasswordPrompt() {
   if (id) await cancelOperation(id)
 }
 
-function openExtract(entry: FileEntry) {
-  extractTarget.value = entry
-  extractDestination.value = joinPath(directoryOf(entry.path), archiveNameWithoutExtension(entry.name))
+function openExtract(entries: FileEntry[]) {
+  extractTargets.value = entries
+  extractDestination.value = currentPath.value
   extractVisible.value = true
 }
 
-function extractHere(entry: FileEntry) {
-  extractTarget.value = entry
-  void prepareExtraction(directoryOf(entry.path))
+async function extractHere(entries: FileEntry[]) {
+  try {
+    const started = await startExtractions(entries.map(entry => entry.path), currentPath.value, 'here', userPreferences.value.extract_existing_files)
+    for (const operation of started) handleOperationUpdate(operation)
+    signalTaskAdded()
+    clearSelection()
+  } catch (err) {
+    showError(err, 'Could not start extraction')
+  }
+}
+
+function reorderOperation(id: string, direction: 'up' | 'down') {
+	void reorderFileOperation(id, direction).catch(err => showError(err, 'Could not reorder operation'))
 }
 
 function chooseUpload() {
@@ -1239,20 +1299,8 @@ function isArchive(entry: FileEntry) {
 
 const archiveExtensions = ['.tar.bz2', '.tar.gz', '.tar.xz', '.zip', '.7z', '.rar', '.tar', '.tgz']
 
-function archiveNameWithoutExtension(name: string): string {
-  const lower = name.toLowerCase()
-  const extension = archiveExtensions.find(candidate => lower.endsWith(candidate))
-  return extension ? name.slice(0, -extension.length) : name
-}
-
 function joinPath(base: string, name: string): string {
   return `${base === '/' ? '' : base}/${name}`.replace(/\/+/g, '/') || '/'
-}
-
-function directoryOf(path: string): string {
-  const parts = path.split('/').filter(Boolean)
-  parts.pop()
-  return parts.length ? `/${parts.join('/')}` : '/'
 }
 
 function messageOf(err: unknown): string {
@@ -1411,6 +1459,7 @@ function operationLabel(value: string) {
         class="relative min-h-0 min-w-0 flex-1 outline-none"
         tabindex="0"
         @keydown="onKeyDown"
+        @click="onFileViewClick"
         @dragover="onViewDragOver"
         @dragleave="onViewDragLeave"
         @drop="onBackgroundDrop"
@@ -1484,7 +1533,7 @@ function operationLabel(value: string) {
     <SettingsDialog v-model:visible="settingsVisible" :preferences="currentPreferences()" :saving="settingsSaving" @save="saveSettings" />
     <EditorDialog v-if="editorVisible" :visible="editorVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" :preferences="userPreferences" @update:visible="setEditorVisible" @saved="onEditorSaved" />
     <FilePreview :visible="previewVisible" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="entries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
-    <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTarget?.name ?? ''" :destination="extractDestination" :busy="extractBusy" @extract="prepareExtraction" />
+    <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTargets.length === 1 ? extractTargets[0].name : `${extractTargets.length} archives`" :destination="extractDestination" :busy="extractBusy" :existing-files="userPreferences.extract_existing_files" @extract="prepareExtraction" />
     <ArchivePasswordDialog v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="extractBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @cancel="cancelPasswordPrompt" @after-hide="onArchivePasswordAfterHide" />
     <DestinationDialog
       v-model:visible="destinationVisible"
@@ -1495,6 +1544,6 @@ function operationLabel(value: string) {
       :hide-inaccessible="userPreferences.hide_inaccessible"
       @submit="submitTransfer"
     />
-    <OperationsPanel v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @cancel="cancelOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" />
+    <OperationsPanel v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @cancel="requestOperationCancellation" @reorder="reorderOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" @download="downloadOperation" />
   </section>
 </template>

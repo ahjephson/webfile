@@ -433,7 +433,7 @@ func (s *Service) OpenDownload(ctx context.Context, virtualPath string) (*os.Fil
 	}
 	if st.IsDir() {
 		_ = f.Close()
-		return nil, nil, errors.New("path is a directory; use the streaming folder download")
+		return nil, nil, errors.New("path is a directory; prepare it as an archive task")
 	}
 	return f, st, nil
 }

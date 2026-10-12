@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     bytes_total INTEGER NOT NULL,
     items_done INTEGER NOT NULL,
     items_total INTEGER NOT NULL,
+    queue_position INTEGER NOT NULL DEFAULT 0,
     cancellable INTEGER NOT NULL,
     cleanup_policy TEXT NOT NULL,
     cleanup_error TEXT NOT NULL,
@@ -92,7 +93,7 @@ func OpenStore(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize task database: %w", err)
 	}
-	if err := ensureProgressColumns(db); err != nil {
+	if err := ensureTaskColumns(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate task progress: %w", err)
 	}
@@ -103,7 +104,7 @@ func OpenStore(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-func ensureProgressColumns(db *sql.DB) error {
+func ensureTaskColumns(db *sql.DB) error {
 	rows, err := db.Query(`PRAGMA table_info(tasks)`)
 	if err != nil {
 		return err
@@ -127,6 +128,7 @@ func ensureProgressColumns(db *sql.DB) error {
 		"progress_done":  "INTEGER NOT NULL DEFAULT 0",
 		"progress_total": "INTEGER NOT NULL DEFAULT 0",
 		"progress_unit":  "TEXT NOT NULL DEFAULT ''",
+		"queue_position": "INTEGER NOT NULL DEFAULT 0",
 	} {
 		if !columns[name] {
 			if _, err := db.Exec("ALTER TABLE tasks ADD COLUMN " + name + " " + definition); err != nil {
@@ -165,9 +167,9 @@ func (s *Store) Upsert(operation Operation, recordEvent bool) error {
 	_, err = tx.Exec(`
 INSERT INTO tasks (
     id, kind, sources_json, destination, state, phase, message, error,
-    progress_done, progress_total, progress_unit, bytes_done, bytes_total, items_done, items_total, cancellable,
+    progress_done, progress_total, progress_unit, bytes_done, bytes_total, items_done, items_total, queue_position, cancellable,
     cleanup_policy, cleanup_error, started_at, updated_at, finished_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     kind = excluded.kind,
     sources_json = excluded.sources_json,
@@ -183,6 +185,7 @@ ON CONFLICT(id) DO UPDATE SET
     bytes_total = excluded.bytes_total,
     items_done = excluded.items_done,
     items_total = excluded.items_total,
+    queue_position = excluded.queue_position,
     cancellable = excluded.cancellable,
     cleanup_policy = excluded.cleanup_policy,
     cleanup_error = excluded.cleanup_error,
@@ -190,7 +193,7 @@ ON CONFLICT(id) DO UPDATE SET
     finished_at = excluded.finished_at`,
 		operation.ID, operation.Kind, string(sources), operation.Destination, operation.State, operation.Phase,
 		operation.Message, operation.Error, operation.ProgressDone, operation.ProgressTotal, operation.ProgressUnit,
-		operation.BytesDone, operation.BytesTotal, operation.ItemsDone, operation.ItemsTotal,
+		operation.BytesDone, operation.BytesTotal, operation.ItemsDone, operation.ItemsTotal, operation.QueuePosition,
 		operation.Cancellable, operation.CleanupPolicy, operation.CleanupError,
 		formatTime(operation.StartedAt), formatTime(operation.UpdatedAt), finished)
 	if err != nil {
@@ -211,7 +214,7 @@ func (s *Store) List(limit int) ([]Operation, error) {
 	}
 	rows, err := s.db.Query(`
 SELECT id, kind, sources_json, destination, state, phase, message, error,
-       progress_done, progress_total, progress_unit, bytes_done, bytes_total, items_done, items_total, cancellable,
+       progress_done, progress_total, progress_unit, bytes_done, bytes_total, items_done, items_total, queue_position, cancellable,
        cleanup_policy, cleanup_error, started_at, updated_at, finished_at
 FROM tasks
 ORDER BY started_at DESC
@@ -232,7 +235,7 @@ LIMIT ?`, limit)
 			&operation.ID, &operation.Kind, &sources, &operation.Destination, &state, &operation.Phase,
 			&operation.Message, &operation.Error, &operation.ProgressDone, &operation.ProgressTotal,
 			&operation.ProgressUnit, &operation.BytesDone, &operation.BytesTotal,
-			&operation.ItemsDone, &operation.ItemsTotal, &operation.Cancellable, &operation.CleanupPolicy,
+			&operation.ItemsDone, &operation.ItemsTotal, &operation.QueuePosition, &operation.Cancellable, &operation.CleanupPolicy,
 			&operation.CleanupError, &startedAt, &updatedAt, &finishedAt,
 		); err != nil {
 			return nil, err

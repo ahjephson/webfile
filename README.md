@@ -103,9 +103,9 @@ shared task system. Per-user workers persist task history in
   the task;
 - the Tasks drawer separates active work from persistent history.
 
-The task, event, artifact and checkpoint tables provide the durable foundation
-for additional background work such as archive creation and resumable task
-handlers without making the filesystem database-backed.
+The task, event, artifact and checkpoint tables provide durable backing for
+archive creation and future resumable task handlers without making the
+filesystem database-backed.
 
 ### Editor
 
@@ -116,12 +116,16 @@ handlers without making the filesystem database-backed.
 - Existing-file ETag conflicts and first-save collisions.
 - Conflict UI offers Cancel, Save As and explicit Overwrite.
 
-### Archive extraction
+### Archive handling
 
-Extraction is delegated to a configured CLI such as `7zz`; WebFile does not
-maintain archive-format implementations.
+Extraction and folder-download ZIP creation are delegated to a configured CLI
+such as `7zz`; WebFile does not maintain archive-format implementations.
 
 - configurable executable/argument mapping;
+- folder downloads run as cancellable archive tasks, publish through a private
+  partial file and expose a Download action only after the ZIP is complete;
+- folder archive preflight enforces configured exclusions and rejects included
+  symlinks or special files before invoking 7-Zip;
 - encrypted archives are prepared out of the visible task list, then request a
   password through an in-memory operation channel; incorrect passwords prompt
   again until the user succeeds or cancels;
@@ -144,6 +148,7 @@ Example:
 ```json
 "archive": {
   "executable": "/usr/bin/7zz",
+  "create_args": ["a", "-tzip", "-y", "-bsp1", "-bso0", "-bse2", "-snl", "{archive}"],
   "extract_args": ["x", "-y", "-bsp1", "-bso0", "-bse2", "{archive}", "-o{destination}"],
   "inspect_args": ["l", "-slt", "{archive}"],
   "inspect_password_arg": "-p"

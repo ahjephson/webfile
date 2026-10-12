@@ -58,6 +58,7 @@ export interface Preferences {
   editor_toolbar?: 'compact' | 'rich'
   editor_markdown_preview?: boolean
   copy_chunk_mib?: 1 | 4 | 16 | 64
+  extract_existing_files?: 'skip' | 'overwrite'
 }
 
 export interface UploadSession {
@@ -74,7 +75,7 @@ export type OperationState = 'queued' | 'preparing' | 'awaiting_input' | 'runnin
 
 export interface FileOperation {
   id: string
-  kind: 'copy' | 'move' | 'delete' | 'extract' | 'upload' | string
+  kind: 'copy' | 'move' | 'delete' | 'extract' | 'archive' | 'upload' | string
   sources?: string[]
   destination?: string
   state: OperationState
@@ -89,6 +90,7 @@ export interface FileOperation {
   bytes_per_second?: number | null
   items_done: number
   items_total: number
+  queue_position?: number
   cancellable: boolean
   cleanup_policy?: string
   cleanup_error?: string

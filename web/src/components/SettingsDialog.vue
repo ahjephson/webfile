@@ -43,6 +43,10 @@ const chunkOptions = [
   { label: '16 MiB', value: 16 },
   { label: '64 MiB', value: 64 },
 ]
+const extractExistingOptions = [
+  { label: 'Skip existing files', value: 'skip' },
+  { label: 'Overwrite existing files', value: 'overwrite' },
+]
 
 watch(() => props.visible, visible => {
   if (visible) draft.value = { ...props.preferences }
@@ -136,6 +140,17 @@ function save() {
           <label class="settings-row">
             <span><strong>Copy chunk size</strong><small>Smaller chunks update progress and cancellation more frequently.</small></span>
             <Select v-model="draft.copy_chunk_mib" :options="chunkOptions" option-label="label" option-value="value" aria-label="Copy chunk size" />
+          </label>
+        </div>
+      </section>
+
+      <section aria-labelledby="archive-settings-heading">
+        <h2 id="archive-settings-heading" class="mb-1 text-sm font-semibold text-zinc-100">Archives</h2>
+        <p class="mb-3 text-xs text-zinc-500">Defaults used when extracting archives.</p>
+        <div class="divide-y divide-zinc-800 rounded-lg border border-zinc-800">
+          <label class="settings-row">
+            <span><strong>Existing files when extracting</strong><small>Skip existing files by default, or replace regular files with extracted versions.</small></span>
+            <Select v-model="draft.extract_existing_files" :options="extractExistingOptions" option-label="label" option-value="value" aria-label="Existing files when extracting" />
           </label>
         </div>
       </section>

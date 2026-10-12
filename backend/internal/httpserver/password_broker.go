@@ -13,6 +13,29 @@ type passwordBroker struct {
 	waiters map[string]chan string
 }
 
+type passwordCache struct {
+	mu       sync.Mutex
+	password string
+}
+
+func (c *passwordCache) Get() (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.password, c.password != ""
+}
+
+func (c *passwordCache) Set(password string) {
+	c.mu.Lock()
+	c.password = password
+	c.mu.Unlock()
+}
+
+func (c *passwordCache) Clear() {
+	c.mu.Lock()
+	c.password = ""
+	c.mu.Unlock()
+}
+
 func newPasswordBroker() *passwordBroker {
 	return &passwordBroker{waiters: make(map[string]chan string)}
 }

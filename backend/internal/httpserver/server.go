@@ -23,17 +23,19 @@ import (
 )
 
 type Server struct {
-	files     *filesystem.Service
-	uploads   *filesystem.UploadManager
-	watch     *watch.Manager
-	extractor *archive.Extractor
-	ops       *operations.Manager
-	passwords *passwordBroker
-	mux       *http.ServeMux
+	files           *filesystem.Service
+	uploads         *filesystem.UploadManager
+	watch           *watch.Manager
+	extractor       *archive.Extractor
+	ops             *operations.Manager
+	passwords       *passwordBroker
+	archivePassword passwordCache
+	archiveDir      string
+	mux             *http.ServeMux
 }
 
-func NewWorker(files *filesystem.Service, uploads *filesystem.UploadManager, watchManager *watch.Manager, extractor *archive.Extractor, opManager *operations.Manager) *Server {
-	s := &Server{files: files, uploads: uploads, watch: watchManager, extractor: extractor, ops: opManager, passwords: newPasswordBroker(), mux: http.NewServeMux()}
+func NewWorker(files *filesystem.Service, uploads *filesystem.UploadManager, watchManager *watch.Manager, extractor *archive.Extractor, opManager *operations.Manager, archiveDir string) *Server {
+	s := &Server{files: files, uploads: uploads, watch: watchManager, extractor: extractor, ops: opManager, passwords: newPasswordBroker(), archiveDir: archiveDir, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -65,8 +67,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /api/fs/uploads/chunk", s.uploadChunk)
 	s.mux.HandleFunc("DELETE /api/fs/uploads", s.cancelUpload)
 	s.mux.HandleFunc("GET /api/fs/operations", s.listOperations)
+	s.mux.HandleFunc("GET /api/fs/operations/{id}/download", s.downloadOperationArtifact)
 	s.mux.HandleFunc("POST /api/fs/operations", s.startOperation)
 	s.mux.HandleFunc("POST /api/fs/operations/cancel", s.cancelOperation)
+	s.mux.HandleFunc("POST /api/fs/operations/{id}/reorder", s.reorderOperation)
 	s.mux.HandleFunc("POST /api/fs/operations/{id}/password", s.submitOperationPassword)
 	s.mux.HandleFunc("DELETE /api/fs/operations/history", s.clearOperationHistory)
 	s.mux.HandleFunc("DELETE /api/fs/operations/{id}", s.removeOperationHistory)
@@ -200,13 +204,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if details.IsDir {
-		name := details.Name + ".zip"
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(name)))
-		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Cache-Control", "no-store")
-		if err := s.files.WriteFolderZip(r.Context(), virtualPath, w); err != nil {
-			slog.Warn("folder download failed", slog.String("path", virtualPath), slog.String("err", err.Error()))
-		}
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "folder downloads must be prepared as an archive task"})
 		return
 	}
 	file, st, err := s.files.OpenDownload(r.Context(), virtualPath)

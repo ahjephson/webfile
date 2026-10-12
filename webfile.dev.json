@@ -33,6 +33,7 @@
   ],
   "archive": {
     "executable": "/usr/bin/7z",
+    "create_args": ["a", "-tzip", "-y", "-bsp1", "-bso0", "-bse2", "-snl", "{archive}"],
     "extract_args": ["x", "-y", "-bsp1", "-bso0", "-bse2", "{archive}", "-o{destination}"],
     "inspect_args": ["l", "-slt", "{archive}"],
     "inspect_password_arg": "-p"

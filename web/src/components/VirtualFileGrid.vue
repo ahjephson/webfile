@@ -123,6 +123,10 @@ function onEntryClick(entry: FileEntry, event: MouseEvent | PointerEvent) {
   if (isTouch) {
     if (Date.now() < ignoreTouchActivationUntil) return
     ignoreTouchActivationUntil = Date.now() + 600
+    if (props.selectionControlsVisible) {
+      emit('select', entry, event as MouseEvent)
+      return
+    }
     emit('activate', entry, 'touch')
     return
   }
@@ -233,7 +237,9 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: columns })
           </button>
           <FileVisual :entry="cell.entry" tile :tile-size="size" :thumbnail-enabled="thumbnailsReady" />
           <span class="w-full truncate text-sm" :title="cell.entry.name">{{ cell.entry.name }}</span>
-          <span v-if="!cell.entry.is_dir || cell.entry.size_status === 'ready'" class="text-xs text-zinc-500">{{ formatBytes(cell.entry.size) }}</span>
+          <span class="h-[17px] w-full text-xs text-zinc-500">
+            {{ !cell.entry.is_dir || cell.entry.size_status === 'ready' ? formatBytes(cell.entry.size) : '' }}
+          </span>
         </div>
       </div>
     </div>

@@ -224,11 +224,25 @@ export const api = {
     return operation
   },
 
-  startOperation(kind: 'copy' | 'move' | 'delete' | 'extract', sources: string[], destination?: string, copyChunkMiB?: number) {
+  startOperation(kind: 'copy' | 'move' | 'delete' | 'extract' | 'archive', sources: string[], destination?: string, copyChunkMiB?: number) {
     return request<FileOperation>('/api/fs/operations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind, sources, destination, copy_chunk_mib: copyChunkMiB }),
+    })
+  },
+
+  startExtractions(sources: string[], destination: string, layout: 'separate_directories' | 'here', existingFiles: 'skip' | 'overwrite') {
+    return request<{ operations: FileOperation[] }>('/api/fs/operations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'extract',
+        sources,
+        destination,
+        extract_layout: layout,
+        existing_files: existingFiles,
+      }),
     })
   },
 
@@ -242,6 +256,14 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id }),
+    })
+  },
+
+  reorderOperation(id: string, direction: 'up' | 'down') {
+    return request<FileOperation>(`/api/fs/operations/${encodeURIComponent(id)}/reorder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ direction }),
     })
   },
 
@@ -283,6 +305,10 @@ export const api = {
 
   downloadUrl(path: string) {
     return withPath('/api/fs/download', path)
+  },
+
+  operationDownloadUrl(id: string) {
+    return `/api/fs/operations/${encodeURIComponent(id)}/download`
   },
 
   previewUrl(path: string) {

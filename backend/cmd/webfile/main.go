@@ -259,6 +259,7 @@ func workerMain(args []string) {
 	defer watchManager.Close()
 	extractor := archive.New(archive.Config{
 		Executable:         cfg.Archive.Executable,
+		CreateArgs:         cfg.Archive.CreateArgs,
 		ExtractArgs:        cfg.Archive.ExtractArgs,
 		InspectArgs:        cfg.Archive.InspectArgs,
 		InspectPasswordArg: cfg.Archive.InspectPasswordArg,
@@ -273,7 +274,7 @@ func workerMain(args []string) {
 			slog.Error("close task manager", slog.String("err", err.Error()))
 		}
 	}()
-	app := httpserver.NewWorker(files, uploads, watchManager, extractor, opManager)
+	app := httpserver.NewWorker(files, uploads, watchManager, extractor, opManager, filepath.Join(workerStateDir, "downloads"))
 
 	_ = os.Remove(*socketPath)
 	listener, err := net.Listen("unix", *socketPath)

@@ -3,6 +3,7 @@ package archive
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -44,6 +45,106 @@ printf ok > "$out/folder/file.txt"
 		t.Fatalf("content=%q", data)
 	}
 	assertNoStaging(t, destinationRoot)
+}
+
+func TestPublishStageSkipsExistingRegularFiles(t *testing.T) {
+	root := t.TempDir()
+	stage := filepath.Join(root, "stage")
+	destination := filepath.Join(root, "destination")
+	if err := os.MkdirAll(stage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destination, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "existing.txt"), []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "added.txt"), []byte("added"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, "existing.txt"), []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := publishStage(context.Background(), stage, destination, true, ExistingFilesSkip, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Extracted != 1 || result.Skipped != 1 {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	content, err := os.ReadFile(filepath.Join(destination, "existing.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "old" {
+		t.Fatalf("existing file changed to %q", content)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "added.txt")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPublishStageOverwritesExistingRegularFiles(t *testing.T) {
+	root := t.TempDir()
+	stage := filepath.Join(root, "stage")
+	destination := filepath.Join(root, "destination")
+	if err := os.MkdirAll(stage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destination, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "existing.txt"), []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, "existing.txt"), []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := publishStage(context.Background(), stage, destination, true, ExistingFilesOverwrite, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Extracted != 1 || result.Skipped != 0 {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	content, err := os.ReadFile(filepath.Join(destination, "existing.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "new" {
+		t.Fatalf("existing file was not overwritten: %q", content)
+	}
+}
+
+func TestPublishStageRejectsTypeConflictsBeforePublishing(t *testing.T) {
+	root := t.TempDir()
+	stage := filepath.Join(root, "stage")
+	destination := filepath.Join(root, "destination")
+	if err := os.MkdirAll(filepath.Join(stage, "conflict"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destination, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "conflict", "child.txt"), []byte("child"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "new.txt"), []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, "conflict"), []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := publishStage(context.Background(), stage, destination, true, ExistingFilesOverwrite, nil); err == nil {
+		t.Fatal("type conflict was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(destination, "new.txt")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("new file was partially published: %v", err)
+	}
 }
 
 func TestExtractPreflightsAllConflictsBeforePublishing(t *testing.T) {

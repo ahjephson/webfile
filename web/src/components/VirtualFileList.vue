@@ -98,6 +98,10 @@ function onEntryClick(entry: FileEntry, event: MouseEvent | PointerEvent) {
   if (isTouch) {
     if (Date.now() < ignoreTouchActivationUntil) return
     ignoreTouchActivationUntil = Date.now() + 600
+    if (props.selectionControlsVisible) {
+      emit('select', entry, event as MouseEvent)
+      return
+    }
     emit('activate', entry, 'touch')
     return
   }

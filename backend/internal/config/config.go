@@ -21,6 +21,7 @@ type Root struct {
 
 type Archive struct {
 	Executable         string   `json:"executable"`
+	CreateArgs         []string `json:"create_args"`
 	ExtractArgs        []string `json:"extract_args"`
 	InspectArgs        []string `json:"inspect_args"`
 	InspectPasswordArg string   `json:"inspect_password_arg"`
@@ -87,6 +88,7 @@ func Default() Config {
 		EditorMaxBytes: 5 << 20,
 		Archive: Archive{
 			Executable:         "7zz",
+			CreateArgs:         []string{"a", "-tzip", "-y", "-bsp1", "-bso0", "-bse2", "-snl", "{archive}"},
 			ExtractArgs:        []string{"x", "-y", "-bsp1", "-bso0", "-bse2", "{archive}", "-o{destination}"},
 			InspectArgs:        []string{"l", "-slt", "{archive}"},
 			InspectPasswordArg: "-p",
@@ -199,6 +201,9 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.Archive.Executable != "" && len(c.Archive.CreateArgs) == 0 {
+		return errors.New("archive.create_args is required when archive.executable is set")
+	}
 	if c.Archive.Executable != "" && len(c.Archive.ExtractArgs) == 0 {
 		return errors.New("archive.extract_args is required when archive.executable is set")
 	}

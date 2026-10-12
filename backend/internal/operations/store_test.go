@@ -65,8 +65,16 @@ INSERT INTO tasks (
 	if operation.ProgressDone != 5 || operation.ProgressTotal != 10 || operation.ProgressUnit != ProgressUnitBytes {
 		t.Fatalf("progress=%d/%d %q", operation.ProgressDone, operation.ProgressTotal, operation.ProgressUnit)
 	}
+	operation.QueuePosition = 3
 	operation.UpdatedAt = time.Now().UTC()
 	if err := store.Upsert(operation, false); err != nil {
 		t.Fatalf("upsert migrated task: %v", err)
+	}
+	operations, err = store.List(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operations[0].QueuePosition != 3 {
+		t.Fatalf("queue_position=%d", operations[0].QueuePosition)
 	}
 }

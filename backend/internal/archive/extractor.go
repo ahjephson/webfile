@@ -26,6 +26,7 @@ var (
 
 type Config struct {
 	Executable         string
+	CreateArgs         []string
 	ExtractArgs        []string
 	InspectArgs        []string
 	InspectPasswordArg string
@@ -37,7 +38,26 @@ type Progress struct {
 	PercentKnown bool
 	ItemsDone    int64
 	ItemsTotal   int64
+	BytesDone    int64
+	BytesTotal   int64
 	Message      string
+}
+
+type ExistingFilePolicy string
+
+const (
+	ExistingFilesFail      ExistingFilePolicy = ""
+	ExistingFilesSkip      ExistingFilePolicy = "skip"
+	ExistingFilesOverwrite ExistingFilePolicy = "overwrite"
+)
+
+type ExtractOptions struct {
+	ExistingFiles ExistingFilePolicy
+}
+
+type ExtractResult struct {
+	Extracted int
+	Skipped   int
 }
 
 type PasswordProvider func(context.Context, bool) (string, error)
@@ -78,12 +98,17 @@ func staticPasswordProvider(password string) PasswordProvider {
 }
 
 func (e *Extractor) ExtractInteractive(ctx context.Context, archivePath, destinationPath string, password PasswordProvider, report ProgressReporter) (int, error) {
+	result, err := e.ExtractInteractiveWithOptions(ctx, archivePath, destinationPath, password, report, ExtractOptions{})
+	return result.Extracted, err
+}
+
+func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePath, destinationPath string, password PasswordProvider, report ProgressReporter, options ExtractOptions) (ExtractResult, error) {
 	if !e.Enabled() {
-		return 0, errors.New("archive extraction is not configured")
+		return ExtractResult{}, errors.New("archive extraction is not configured")
 	}
 	_, archiveAbs, err := e.resolver.ResolveExisting(archivePath)
 	if err != nil {
-		return 0, err
+		return ExtractResult{}, err
 	}
 	_, destinationAbs, err := e.resolver.ResolveExisting(destinationPath)
 	destinationExists := err == nil
@@ -91,36 +116,36 @@ func (e *Extractor) ExtractInteractive(ctx context.Context, archivePath, destina
 		_, destinationAbs, err = e.resolver.ResolveForCreate(destinationPath)
 	}
 	if err != nil {
-		return 0, err
+		return ExtractResult{}, err
 	}
 	if destinationExists {
 		info, statErr := os.Stat(destinationAbs)
 		if statErr != nil {
-			return 0, statErr
+			return ExtractResult{}, statErr
 		}
 		if !info.IsDir() {
-			return 0, errors.New("extraction destination is not a directory")
+			return ExtractResult{}, errors.New("extraction destination is not a directory")
 		}
 	}
 
 	passwordValue := ""
 	passwordRequired, err := e.PasswordRequired(ctx, archiveAbs)
 	if err != nil {
-		return 0, err
+		return ExtractResult{}, err
 	}
 	if passwordRequired {
 		if password == nil {
-			return 0, ErrPasswordRequired
+			return ExtractResult{}, ErrPasswordRequired
 		}
 		passwordValue, err = password(ctx, false)
 		if err != nil {
-			return 0, err
+			return ExtractResult{}, err
 		}
 	}
 	incorrect := false
 	for {
 		if err := ctx.Err(); err != nil {
-			return 0, err
+			return ExtractResult{}, err
 		}
 		stageParent := filepath.Dir(destinationAbs)
 		if destinationExists {
@@ -128,41 +153,41 @@ func (e *Extractor) ExtractInteractive(ctx context.Context, archivePath, destina
 		}
 		stage, err := os.MkdirTemp(stageParent, ".webfile-extract-")
 		if err != nil {
-			return 0, err
+			return ExtractResult{}, err
 		}
 		runErr := e.runTool(ctx, archiveAbs, stage, passwordValue, report)
 		if errors.Is(runErr, ErrPasswordRequired) {
 			if cleanupErr := os.RemoveAll(stage); cleanupErr != nil {
-				return 0, errors.Join(runErr, fmt.Errorf("clean password attempt: %w", cleanupErr))
+				return ExtractResult{}, errors.Join(runErr, fmt.Errorf("clean password attempt: %w", cleanupErr))
 			}
 			if password == nil {
-				return 0, ErrPasswordRequired
+				return ExtractResult{}, ErrPasswordRequired
 			}
 			passwordValue, err = password(ctx, false)
 			if err != nil {
-				return 0, err
+				return ExtractResult{}, err
 			}
 			continue
 		}
 		if errors.Is(runErr, ErrIncorrectPassword) {
 			if cleanupErr := os.RemoveAll(stage); cleanupErr != nil {
-				return 0, errors.Join(runErr, fmt.Errorf("clean password attempt: %w", cleanupErr))
+				return ExtractResult{}, errors.Join(runErr, fmt.Errorf("clean password attempt: %w", cleanupErr))
 			}
 			incorrect = true
 			if password == nil {
-				return 0, ErrIncorrectPassword
+				return ExtractResult{}, ErrIncorrectPassword
 			}
 			passwordValue, err = password(ctx, incorrect)
 			if err != nil {
-				return 0, err
+				return ExtractResult{}, err
 			}
 			continue
 		}
 		if runErr != nil {
 			_ = os.RemoveAll(stage)
-			return 0, runErr
+			return ExtractResult{}, runErr
 		}
-		return publishStage(ctx, stage, destinationAbs, destinationExists, report)
+		return publishStage(ctx, stage, destinationAbs, destinationExists, options.ExistingFiles, report)
 	}
 }
 
@@ -405,7 +430,7 @@ func sanitizeToolError(output string) string {
 	return message
 }
 
-func publishStage(ctx context.Context, stage, destination string, destinationExists bool, report ProgressReporter) (count int, err error) {
+func publishStage(ctx context.Context, stage, destination string, destinationExists bool, policy ExistingFilePolicy, report ProgressReporter) (result ExtractResult, err error) {
 	defer func() {
 		if stage != "" {
 			_ = os.RemoveAll(stage)
@@ -414,24 +439,25 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 	if report != nil {
 		report(Progress{Phase: "validating", Message: "Validating extracted files"})
 	}
-	count, err = validateStage(stage)
+	count, err := validateStage(stage)
 	if err != nil {
-		return 0, err
+		return ExtractResult{}, err
 	}
-	conflicts, err := preflight(stage, destination)
+	conflicts, err := preflight(stage, destination, policy)
 	if err != nil {
-		return 0, err
+		return ExtractResult{}, err
 	}
 	if len(conflicts) > 0 {
-		return 0, fmt.Errorf("destination conflicts: %s", strings.Join(conflicts, ", "))
+		return ExtractResult{}, fmt.Errorf("destination conflicts: %s", strings.Join(conflicts, ", "))
 	}
 	if report != nil {
 		report(Progress{Phase: "publishing", ItemsTotal: int64(count), Message: "Publishing extracted files"})
 	}
 	published := make([]publishedMove, 0)
 	done := int64(0)
+	skipped := 0
 	if destinationExists {
-		err = publishNode(ctx, stage, destination, &published, &done, int64(count), report)
+		err = publishNode(ctx, stage, destination, policy, &skipped, &published, &done, int64(count), report)
 	} else {
 		err = publishAbsent(ctx, stage, destination, count, &published, &done, int64(count), report)
 		if err == nil {
@@ -440,11 +466,11 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 	}
 	if err != nil {
 		if rollbackErr := rollbackPublished(published); rollbackErr != nil {
-			return 0, errors.Join(err, fmt.Errorf("rollback published files: %w", rollbackErr))
+			return ExtractResult{}, errors.Join(err, fmt.Errorf("rollback published files: %w", rollbackErr))
 		}
-		return 0, err
+		return ExtractResult{}, err
 	}
-	return count, nil
+	return ExtractResult{Extracted: count - skipped, Skipped: skipped}, nil
 }
 
 func validateStage(stage string) (int, error) {
@@ -478,16 +504,16 @@ func validateStage(stage string) (int, error) {
 	return files, err
 }
 
-func preflight(source, destination string) ([]string, error) {
+func preflight(source, destination string, policy ExistingFilePolicy) ([]string, error) {
 	conflicts := make([]string, 0)
-	if err := preflightNode(source, destination, destination, &conflicts); err != nil {
+	if err := preflightNode(source, destination, destination, policy, &conflicts); err != nil {
 		return nil, err
 	}
 	sort.Strings(conflicts)
 	return conflicts, nil
 }
 
-func preflightNode(source, destination, root string, conflicts *[]string) error {
+func preflightNode(source, destination, root string, policy ExistingFilePolicy, conflicts *[]string) error {
 	destinationInfo, err := os.Lstat(destination)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -499,7 +525,11 @@ func preflightNode(source, destination, root string, conflicts *[]string) error 
 	if err != nil {
 		return err
 	}
+	regularFileConflict := sourceInfo.Mode().IsRegular() && destinationInfo.Mode().IsRegular()
 	if !sourceInfo.IsDir() || !destinationInfo.IsDir() {
+		if regularFileConflict && (policy == ExistingFilesSkip || policy == ExistingFilesOverwrite) {
+			return nil
+		}
 		relative, relErr := filepath.Rel(root, destination)
 		if relErr != nil || relative == "." {
 			relative = filepath.Base(destination)
@@ -512,7 +542,7 @@ func preflightNode(source, destination, root string, conflicts *[]string) error 
 		return err
 	}
 	for _, entry := range entries {
-		if err := preflightNode(filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name()), root, conflicts); err != nil {
+		if err := preflightNode(filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name()), root, policy, conflicts); err != nil {
 			return err
 		}
 	}
@@ -525,7 +555,7 @@ type publishedMove struct {
 	directoryMode fs.FileMode
 }
 
-func publishNode(ctx context.Context, source, destination string, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
+func publishNode(ctx context.Context, source, destination string, policy ExistingFilePolicy, skipped *int, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -544,6 +574,26 @@ func publishNode(ctx context.Context, source, destination string, published *[]p
 	if err != nil {
 		return err
 	}
+	if sourceInfo.Mode().IsRegular() && destinationInfo.Mode().IsRegular() {
+		if policy == ExistingFilesSkip {
+			*skipped += 1
+			*done += 1
+			if report != nil {
+				report(Progress{Phase: "publishing", ItemsDone: *done, ItemsTotal: total, Message: "Publishing extracted files"})
+			}
+			return nil
+		}
+		if policy == ExistingFilesOverwrite {
+			if err := os.Rename(source, destination); err != nil {
+				return err
+			}
+			*done += 1
+			if report != nil {
+				report(Progress{Phase: "publishing", ItemsDone: *done, ItemsTotal: total, Message: "Publishing extracted files"})
+			}
+			return nil
+		}
+	}
 	if !sourceInfo.IsDir() || !destinationInfo.IsDir() {
 		return filesystem.ErrConflict
 	}
@@ -552,7 +602,7 @@ func publishNode(ctx context.Context, source, destination string, published *[]p
 		return err
 	}
 	for _, entry := range entries {
-		if err := publishNode(ctx, filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name()), published, done, total, report); err != nil {
+		if err := publishNode(ctx, filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name()), policy, skipped, published, done, total, report); err != nil {
 			return err
 		}
 	}

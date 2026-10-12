@@ -51,6 +51,7 @@ type Operation struct {
 	BytesPerSecond *int64       `json:"bytes_per_second,omitempty"`
 	ItemsDone      int64        `json:"items_done"`
 	ItemsTotal     int64        `json:"items_total"`
+	QueuePosition  int          `json:"queue_position,omitempty"`
 	Cancellable    bool         `json:"cancellable"`
 	CleanupPolicy  string       `json:"cleanup_policy,omitempty"`
 	CleanupError   string       `json:"cleanup_error,omitempty"`
@@ -143,6 +144,7 @@ type Manager struct {
 	maxKeep       int
 	maxConcurrent int
 	running       int
+	runningKinds  map[string]int
 	closed        bool
 	wg            sync.WaitGroup
 }
@@ -194,6 +196,7 @@ func newManager(store *Store, maxKeep, maxConcurrent int) *Manager {
 		store:         store,
 		maxKeep:       maxKeep,
 		maxConcurrent: maxConcurrent,
+		runningKinds:  make(map[string]int),
 	}
 }
 
@@ -233,9 +236,10 @@ func (m *Manager) StartTask(kind string, sources []string, destination string, o
 	rec := &record{op: op, run: run, cleanup: options.Cleanup}
 	m.records[id] = rec
 	m.queue = append(m.queue, id)
+	m.refreshQueuePositionsLocked()
 	m.persistLocked(rec, true)
 	m.trimLocked()
-	m.broadcastLocked(op)
+	m.broadcastLocked(rec.op)
 	m.scheduleLocked()
 	result := cloneOperation(rec.op)
 	m.mu.Unlock()
@@ -243,13 +247,22 @@ func (m *Manager) StartTask(kind string, sources []string, destination string, o
 }
 
 func (m *Manager) scheduleLocked() {
-	for !m.closed && m.running < m.maxConcurrent && len(m.queue) > 0 {
-		id := m.queue[0]
-		m.queue = m.queue[1:]
-		rec := m.records[id]
-		if rec == nil || rec.op.State != StateQueued || rec.run == nil {
-			continue
+	for !m.closed && m.running < m.maxConcurrent {
+		queueIndex := -1
+		for index, id := range m.queue {
+			rec := m.records[id]
+			if rec != nil && rec.op.State == StateQueued && rec.run != nil && m.runningKinds[rec.op.Kind] == 0 {
+				queueIndex = index
+				break
+			}
 		}
+		if queueIndex < 0 {
+			return
+		}
+		id := m.queue[queueIndex]
+		m.queue = append(m.queue[:queueIndex], m.queue[queueIndex+1:]...)
+		rec := m.records[id]
+		rec.op.QueuePosition = 0
 		ctx, cancel := context.WithCancel(context.Background())
 		rec.cancel = cancel
 		rec.op.State = StateRunning
@@ -257,14 +270,16 @@ func (m *Manager) scheduleLocked() {
 		rec.op.Message = "Starting"
 		rec.op.UpdatedAt = time.Now().UTC()
 		m.running++
+		m.runningKinds[rec.op.Kind]++
 		m.persistLocked(rec, true)
 		m.broadcastLocked(rec.op)
+		m.refreshQueuePositionsLocked()
 		m.wg.Add(1)
-		go m.execute(ctx, id, rec.run)
+		go m.execute(ctx, id, rec.op.Kind, rec.run)
 	}
 }
 
-func (m *Manager) execute(ctx context.Context, id string, run RunFunc) {
+func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 	defer m.wg.Done()
 	err := run(ctx, Reporter{manager: m, id: id})
 
@@ -272,6 +287,7 @@ func (m *Manager) execute(ctx context.Context, id string, run RunFunc) {
 	rec := m.records[id]
 	if rec == nil {
 		m.running--
+		m.runningKinds[kind]--
 		m.scheduleLocked()
 		m.mu.Unlock()
 		return
@@ -330,6 +346,7 @@ func (m *Manager) execute(ctx context.Context, id string, run RunFunc) {
 		m.broadcastLocked(rec.op)
 	}
 	m.running--
+	m.runningKinds[kind]--
 	m.trimLocked()
 	m.scheduleLocked()
 	m.mu.Unlock()
@@ -390,8 +407,11 @@ func (m *Manager) Cancel(id string) bool {
 		rec.op.Cancellable = false
 		rec.op.UpdatedAt = now
 		rec.op.FinishedAt = timePointer(now)
+		rec.op.QueuePosition = 0
+		m.removeFromQueueLocked(id)
 		m.persistLocked(rec, true)
 		m.broadcastLocked(rec.op)
+		m.refreshQueuePositionsLocked()
 		m.mu.Unlock()
 		return true
 	}
@@ -457,6 +477,89 @@ func (m *Manager) List() []Operation {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
 	return out
+}
+
+func (m *Manager) Get(id string) (Operation, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec := m.records[id]
+	if rec == nil {
+		return Operation{}, false
+	}
+	return cloneOperation(rec.op), true
+}
+
+func (m *Manager) MarkArtifactDownloaded(id string) (Operation, bool) {
+	return m.markArchiveArtifact(id, "downloaded", "Downloaded · temporary archive removed")
+}
+
+func (m *Manager) MarkArtifactUnavailable(id string) (Operation, bool) {
+	return m.markArchiveArtifact(id, "unavailable", "Temporary archive is no longer available")
+}
+
+func (m *Manager) markArchiveArtifact(id, phase, message string) (Operation, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec := m.records[id]
+	if rec == nil || rec.op.Kind != "archive" || rec.op.State != StateCompleted {
+		return Operation{}, false
+	}
+	if rec.op.Phase == phase && rec.op.Message == message {
+		return cloneOperation(rec.op), true
+	}
+	rec.op.Phase = phase
+	rec.op.Message = message
+	rec.op.UpdatedAt = time.Now().UTC()
+	m.persistLocked(rec, true)
+	rec.lastBroadcast = time.Now()
+	m.broadcastLocked(rec.op)
+	return cloneOperation(rec.op), true
+}
+
+func (m *Manager) MoveQueued(id string, direction int) (Operation, bool) {
+	if direction != -1 && direction != 1 {
+		return Operation{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec := m.records[id]
+	if rec == nil || rec.op.State != StateQueued {
+		return Operation{}, false
+	}
+	index := -1
+	for current, queuedID := range m.queue {
+		if queuedID == id {
+			index = current
+			break
+		}
+	}
+	target := index + direction
+	if index < 0 || target < 0 || target >= len(m.queue) {
+		return cloneOperation(rec.op), false
+	}
+	m.queue[index], m.queue[target] = m.queue[target], m.queue[index]
+	m.refreshQueuePositionsLocked()
+	return cloneOperation(rec.op), true
+}
+
+func (m *Manager) HasQueuedKind(kind string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, id := range m.queue {
+		if rec := m.records[id]; rec != nil && rec.op.State == StateQueued && rec.op.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) removeFromQueueLocked(id string) {
+	for index, queuedID := range m.queue {
+		if queuedID == id {
+			m.queue = append(m.queue[:index], m.queue[index+1:]...)
+			return
+		}
+	}
 }
 
 func (m *Manager) ClearHistory() (int, error) {
@@ -643,6 +746,23 @@ func (m *Manager) persistLocked(rec *record, stateChanged bool) {
 		return
 	}
 	rec.lastPersistence = time.Now()
+}
+
+func (m *Manager) refreshQueuePositionsLocked() {
+	for index, id := range m.queue {
+		rec := m.records[id]
+		if rec == nil || rec.op.State != StateQueued {
+			continue
+		}
+		position := index + 1
+		if rec.op.QueuePosition == position {
+			continue
+		}
+		rec.op.QueuePosition = position
+		rec.op.UpdatedAt = time.Now().UTC()
+		m.persistLocked(rec, false)
+		m.broadcastLocked(rec.op)
+	}
 }
 
 func (m *Manager) broadcastLocked(op Operation) {

@@ -414,6 +414,10 @@ func (s *MainServer) putPreferences(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "copy_chunk_mib must be 1, 4, 16 or 64"})
 		return
 	}
+	if prefs.ExtractExistingFiles != "" && prefs.ExtractExistingFiles != "skip" && prefs.ExtractExistingFiles != "overwrite" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "extract_existing_files must be skip or overwrite"})
+		return
+	}
 	if err := s.opts.State.SetPreferences(id.Username, prefs); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save preferences"})
 		return
