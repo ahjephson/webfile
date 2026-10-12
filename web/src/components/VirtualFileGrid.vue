@@ -11,7 +11,7 @@ const props = defineProps<{
   focusedPath: string
   selectionControlsVisible: boolean
   size: 'small' | 'medium' | 'large'
-  thumbnailsReady: boolean
+  thumbnailPendingPaths: string[]
   parentPath?: string
 }>()
 
@@ -37,6 +37,7 @@ let touchPointerUntil = 0
 
 const selected = computed(() => new Set(props.selectedPaths))
 const cut = computed(() => new Set(props.cutPaths))
+const thumbnailPending = computed(() => new Set(props.thumbnailPendingPaths))
 const metrics = computed(() => ({
   small: { cardMinWidth: 118, rowHeight: 132, cellHeight: 124 },
   medium: { cardMinWidth: 170, rowHeight: 176, cellHeight: 168 },
@@ -235,7 +236,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: columns })
               <i class="pi pi-check text-xs" />
             </span>
           </button>
-          <FileVisual :entry="cell.entry" tile :tile-size="size" :thumbnail-enabled="thumbnailsReady" />
+          <FileVisual :entry="cell.entry" tile :tile-size="size" :thumbnail-enabled="!thumbnailPending.has(cell.entry.path)" />
           <span class="w-full truncate text-sm" :title="cell.entry.name">{{ cell.entry.name }}</span>
           <span class="h-[17px] w-full text-xs text-zinc-500">
             {{ !cell.entry.is_dir || cell.entry.size_status === 'ready' ? formatBytes(cell.entry.size) : '' }}

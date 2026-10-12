@@ -35,7 +35,7 @@ const visibleThumbnailJobs = computed(() => props.thumbnailJobs
   .sort((a, b) => {
     const stateDifference = thumbnailStateRank(a) - thumbnailStateRank(b)
     if (stateDifference !== 0) return stateDifference
-    if (a.state === 'queued' && b.state === 'queued') {
+    if (['settling', 'queued'].includes(a.state) && ['settling', 'queued'].includes(b.state)) {
       const positionDifference = (a.queue_position ?? Number.MAX_SAFE_INTEGER) - (b.queue_position ?? Number.MAX_SAFE_INTEGER)
       if (positionDifference !== 0) return positionDifference
     }
@@ -48,7 +48,8 @@ const remainingThumbnailJobs = computed(() => Math.max(0, visibleThumbnailJobs.v
 const thumbnailSummary = computed(() => {
   const generating = visibleThumbnailJobs.value.filter(job => processingThumbnailStates.includes(job.state)).length
   const queued = visibleThumbnailJobs.value.filter(job => job.state === 'queued').length
-  return [generating ? `${generating} generating` : '', queued ? `${queued} queued` : ''].filter(Boolean).join(', ')
+  const settling = visibleThumbnailJobs.value.filter(job => job.state === 'settling').length
+  return [generating ? `${generating} generating` : '', settling ? `${settling} waiting` : '', queued ? `${queued} queued` : ''].filter(Boolean).join(', ')
 })
 const thumbnailsExpanded = ref(true)
 const activeExpanded = ref(true)
@@ -65,9 +66,10 @@ onBeforeUnmount(stopIndeterminateProgress)
 
 function thumbnailStateRank(job: VideoThumbnailJob): number {
   if (processingThumbnailStates.includes(job.state)) return 0
-  if (job.state === 'queued') return 1
-  if (job.state === 'failed') return 2
-  return 3
+  if (job.state === 'settling') return 1
+  if (job.state === 'queued') return 2
+  if (job.state === 'failed') return 3
+  return 4
 }
 
 function startIndeterminateProgress() {
@@ -192,7 +194,8 @@ function formatDate(value?: string) {
                   <span class="capitalize">{{ job.state }}</span><span v-if="job.queue_position"> · Queue position {{ job.queue_position }}</span>
                 </div>
               </div>
-              <Button v-if="job.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel-thumbnail', job.id)" />
+              <Button v-if="job.state === 'failed'" label="Dismiss" size="small" severity="secondary" text @click="emit('cancel-thumbnail', job.id)" />
+              <Button v-else-if="job.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel-thumbnail', job.id)" />
             </div>
             <p v-if="job.error" class="mt-2 text-xs text-red-300">{{ job.error }}</p>
           </article>

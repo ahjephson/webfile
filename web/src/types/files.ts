@@ -99,7 +99,7 @@ export interface FileOperation {
   finished_at?: string
 }
 
-export type VideoThumbnailState = 'queued' | 'probing' | 'generating' | 'publishing' | 'ready' | 'failed' | 'cancelled'
+export type VideoThumbnailState = 'settling' | 'queued' | 'probing' | 'generating' | 'publishing' | 'ready' | 'failed' | 'cancelled'
 
 export interface VideoThumbnailJob {
   id: string

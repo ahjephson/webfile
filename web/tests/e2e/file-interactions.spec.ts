@@ -2003,6 +2003,90 @@ test('video thumbnails are batch queued in directory order before tile requests'
   expect(tileRequestedBeforeBatch).toBe(false)
 })
 
+test('directory invalidation keeps existing video thumbnails mounted while newly added videos are queued', async ({ page }) => {
+  await page.addInitScript(() => {
+    class MockWebSocket {
+      static readonly CONNECTING = 0
+      static readonly OPEN = 1
+      static readonly CLOSING = 2
+      static readonly CLOSED = 3
+      readyState = MockWebSocket.OPEN
+      onopen: ((event: Event) => void) | null = null
+      onmessage: ((event: MessageEvent) => void) | null = null
+      onerror: ((event: Event) => void) | null = null
+      onclose: ((event: CloseEvent) => void) | null = null
+
+      constructor() {
+        ;(window as typeof window & { __testSocket?: MockWebSocket }).__testSocket = this
+        queueMicrotask(() => this.onopen?.(new Event('open')))
+      }
+
+      send() {}
+
+      close() {
+        this.readyState = MockWebSocket.CLOSED
+      }
+    }
+
+    Object.defineProperty(window, 'WebSocket', { configurable: true, value: MockWebSocket })
+  })
+
+  const entry = (name: string) => ({
+    name,
+    path: `/${name}`,
+    is_dir: false,
+    size: 100,
+    modified: '2000-01-01T00:00:00Z',
+    mode: '-rw-r--r--',
+  })
+  let entries = [entry('first.mp4')]
+  let batchCount = 0
+  let releaseSecondBatch!: () => void
+  const secondBatchReleased = new Promise<void>(resolve => { releaseSecondBatch = resolve })
+  const thumbnailRequests = new Map<string, number>()
+
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries } }))
+  await page.route('**/api/fs/thumbnails/queue', async route => {
+    batchCount++
+    if (batchCount === 2) await secondBatchReleased
+    await route.fulfill({ json: { jobs: [] } })
+  })
+  await page.route('**/api/fs/thumbnail?**', route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? ''
+    thumbnailRequests.set(path, (thumbnailRequests.get(path) ?? 0) + 1)
+    return route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="100"><rect width="1000" height="100" fill="#7c3aed"/></svg>',
+    })
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Grid view' }).click()
+  const firstThumbnail = page.locator('[data-file-entry]').filter({ hasText: 'first.mp4' }).locator('[data-video-thumbnail]')
+  await expect(firstThumbnail).toBeVisible()
+  await firstThumbnail.evaluate(element => { element.setAttribute('data-test-instance', 'original') })
+
+  entries = [entry('first.mp4'), entry('second.mp4')]
+  await page.evaluate(() => {
+    const socket = (window as typeof window & {
+      __testSocket?: { onmessage: ((event: MessageEvent) => void) | null }
+    }).__testSocket
+    socket?.onmessage?.(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'directory-invalidated', path: '/' }),
+    }))
+  })
+
+  await expect.poll(() => batchCount).toBe(2)
+  await expect(firstThumbnail).toHaveAttribute('data-test-instance', 'original')
+  expect(thumbnailRequests.get('/first.mp4')).toBe(1)
+  await expect(page.locator('[data-video-thumbnail]')).toHaveCount(1)
+
+  releaseSecondBatch()
+  await expect(page.locator('[data-video-thumbnail]')).toHaveCount(2)
+  await expect(firstThumbnail).toHaveAttribute('data-test-instance', 'original')
+  expect(thumbnailRequests.get('/first.mp4')).toBe(1)
+})
+
 test('a tall image is contained within both dimensions of the preview canvas', async ({ page }) => {
   await page.route('**/api/fs/dir**', route => route.fulfill({
     json: {
@@ -2892,6 +2976,39 @@ test('task drawer surfaces the transient video thumbnail queue separately', asyn
   await drawer.getByRole('button', { name: 'Expand Video thumbnails (13)' }).click()
   await drawer.locator('[data-thumbnail-job="queued-1"]').getByRole('button', { name: 'Cancel' }).click()
   await expect.poll(() => cancelled).toBe('queued-1')
+})
+
+test('failed video thumbnail tasks can be dismissed', async ({ page }) => {
+  const failedJob = {
+    id: 'failed-thumbnail',
+    path: '/media/copying.mp4',
+    name: 'copying.mp4',
+    state: 'failed',
+    error: 'video is incomplete',
+    cancellable: false,
+    updated_at: '2000-01-01T00:00:00Z',
+  }
+  let dismissed = false
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries: [] } }))
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [] } }))
+  await page.route('**/api/fs/thumbnails/jobs**', route => {
+    if (route.request().method() === 'DELETE') {
+      dismissed = true
+      return route.fulfill({ json: { ok: true } })
+    }
+    return route.fulfill({ json: { jobs: dismissed ? [] : [failedJob] } })
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open tasks' }).click()
+
+  const drawer = page.getByRole('complementary')
+  const failedCard = drawer.locator('[data-thumbnail-job="failed-thumbnail"]')
+  await expect(failedCard).toContainText('video is incomplete')
+  await failedCard.getByRole('button', { name: 'Dismiss' }).click()
+  await expect.poll(() => dismissed).toBe(true)
+  await expect(failedCard).toHaveCount(0)
+  await expect(drawer.getByText('No tasks yet.')).toBeVisible()
 })
 
 test('Extract here starts a single-pass task in the archive directory', async ({ page }) => {

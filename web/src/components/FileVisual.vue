@@ -40,7 +40,7 @@ const videoSpriteStyle = computed(() => ({
   transition: 'none',
 }))
 
-watch(() => props.entry.path, async path => {
+watch(() => [props.entry.path, props.entry.size, props.entry.modified] as const, async ([path]) => {
   stopVideoAnimation()
   detectedContentType.value = ''
   thumbnailFailed.value = false

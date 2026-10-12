@@ -113,6 +113,7 @@ func TestThumbnailCreatesAndCachesRepresentativeVideoSprite(t *testing.T) {
 
 func TestVideoThumbnailBatchPreservesSourceOrderBeforeWorkersStart(t *testing.T) {
 	queue := newVideoThumbnailQueue(&Service{}, ThumbnailOptions{MaxQueued: 10, VideoTimeout: time.Minute})
+	queue.settleDelay = 0
 	t.Cleanup(queue.close)
 	sources := []thumbnailSource{
 		{virtualPath: "/Files/first.mp4", key: "11111111111111111111111111111111"},
@@ -133,6 +134,55 @@ func TestVideoThumbnailBatchPreservesSourceOrderBeforeWorkersStart(t *testing.T)
 	}
 }
 
+func TestVideoThumbnailQueueCoalescesChangedSourceAndDismissesFailure(t *testing.T) {
+	queue := newVideoThumbnailQueue(&Service{}, ThumbnailOptions{MaxQueued: 10, VideoTimeout: time.Minute})
+	queue.settleDelay = time.Minute
+	t.Cleanup(queue.close)
+	first := thumbnailSource{virtualPath: "/Files/copying.mp4", key: "11111111111111111111111111111111", width: 320, height: 180}
+	changed := thumbnailSource{virtualPath: first.virtualPath, key: "22222222222222222222222222222222", width: first.width, height: first.height}
+
+	initial := queue.scheduleBatch([]thumbnailSource{first})
+	updated := queue.scheduleBatch([]thumbnailSource{changed})
+	if len(initial) != 1 || len(updated) != 1 {
+		t.Fatalf("unexpected schedule results: initial=%#v updated=%#v", initial, updated)
+	}
+	if initial[0].ID != updated[0].ID {
+		t.Fatalf("changed source created a second job: %q != %q", initial[0].ID, updated[0].ID)
+	}
+	if len(queue.queued) != 1 || len(queue.jobs) != 1 || queue.queued[0].source.key != changed.key {
+		t.Fatalf("changed source was not coalesced: queued=%d jobs=%d source=%q", len(queue.queued), len(queue.jobs), queue.queued[0].source.key)
+	}
+	if updated[0].State != "settling" {
+		t.Fatalf("updated job state = %q, want settling", updated[0].State)
+	}
+
+	job := queue.queued[0]
+	queue.queued = nil
+	job.view.State = "failed"
+	job.view.Cancellable = false
+	close(job.done)
+	retriedSource := changed
+	retriedSource.key = "33333333333333333333333333333333"
+	retried := queue.scheduleBatch([]thumbnailSource{retriedSource})
+	if len(retried) != 1 || retried[0].ID != initial[0].ID || retried[0].State != "settling" {
+		t.Fatalf("changed failed job was not retried in place: %#v", retried)
+	}
+	if len(queue.queued) != 1 || len(queue.jobs) != 1 || queue.queued[0] != job {
+		t.Fatalf("retry created duplicate queue state: queued=%d jobs=%d", len(queue.queued), len(queue.jobs))
+	}
+
+	queue.queued = nil
+	job.view.State = "failed"
+	job.view.Cancellable = false
+	close(job.done)
+	if !queue.cancelJob(job.view.ID) {
+		t.Fatal("failed job could not be dismissed")
+	}
+	if len(queue.jobs) != 0 || len(queue.ids) != 0 {
+		t.Fatalf("dismissed job remains tracked: jobs=%d ids=%d", len(queue.jobs), len(queue.ids))
+	}
+}
+
 func TestVideoThumbnailRequestsAreQueuedAndDeduplicated(t *testing.T) {
 	target, root := testService(t)
 	videoPath := filepath.Join(root, "queued.mp4")
@@ -145,6 +195,7 @@ func TestVideoThumbnailRequestsAreQueuedAndDeduplicated(t *testing.T) {
 	if err := os.WriteFile(probePath, []byte("#!/bin/sh\nprintf '30\\n'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	target.videoQueue.settleDelay = 0
 	if err := os.WriteFile(ffmpegPath, []byte("#!/bin/sh\nsleep 0.2\nprintf 'queued-sprite'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -170,6 +221,45 @@ func TestVideoThumbnailRequestsAreQueuedAndDeduplicated(t *testing.T) {
 	}
 	if ready.Thumbnail == nil || string(ready.Thumbnail.Data) != "queued-sprite" {
 		t.Fatalf("unexpected ready thumbnail: %#v", ready.Thumbnail)
+	}
+}
+
+func TestVideoThumbnailRetriesWhenSourceChangesDuringGeneration(t *testing.T) {
+	target, root := testService(t)
+	target.videoQueue.settleDelay = 0
+	videoPath := filepath.Join(root, "changing.mp4")
+	if err := os.WriteFile(videoPath, []byte{0, 1, 2, 3}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tools := t.TempDir()
+	probePath := filepath.Join(tools, "ffprobe")
+	ffmpegPath := filepath.Join(tools, "ffmpeg")
+	changedFlag := filepath.Join(tools, "changed")
+	if err := os.WriteFile(probePath, []byte("#!/bin/sh\nprintf '30\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ffmpegScript := "#!/bin/sh\n" +
+		"if [ ! -e \"$WEBFILE_TEST_CHANGED_FLAG\" ]; then\n" +
+		"  : > \"$WEBFILE_TEST_CHANGED_FLAG\"\n" +
+		"  printf x >> \"$WEBFILE_TEST_VIDEO_SOURCE\"\n" +
+		"fi\n" +
+		"printf 'changed-sprite'\n"
+	if err := os.WriteFile(ffmpegPath, []byte(ffmpegScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WEBFILE_TEST_CHANGED_FLAG", changedFlag)
+	t.Setenv("WEBFILE_TEST_VIDEO_SOURCE", videoPath)
+	target.videoThumbnails = videoThumbnailGenerator{ffmpeg: ffmpegPath, ffprobe: probePath, threads: 1}
+
+	thumbnail, err := target.Thumbnail(context.Background(), "/Files/changing.mp4", 320, 180)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(thumbnail.Data) != "changed-sprite" {
+		t.Fatalf("unexpected thumbnail data: %q", thumbnail.Data)
+	}
+	if _, err := os.Stat(changedFlag); err != nil {
+		t.Fatalf("generation did not mutate the source as expected: %v", err)
 	}
 }
 

@@ -134,7 +134,7 @@ const settingsVisible = ref(false)
 const settingsSaving = ref(false)
 const userPreferences = ref<UserPreferences>({ ...defaultPreferences })
 const thumbnailJobs = ref<VideoThumbnailJob[]>([])
-const thumbnailBatchReady = ref(true)
+const pendingVideoThumbnailPaths = ref<Set<string>>(new Set())
 const detailsVisible = ref(restoredExplorerState.detailsVisible)
 const detailsPath = ref(restoredStateMatchesPath ? restoredExplorerState.detailsPath : currentPath.value)
 const transferEntries = ref<FileEntry[]>([])
@@ -149,7 +149,9 @@ let hashFileRequest = 0
 let breadcrumbResizeObserver: ResizeObserver | null = null
 let preferencesLoaded = false
 let navigationReady = false
-let thumbnailBatchGeneration = 0
+let queuedVideoThumbnailVersions = new Map<string, string>()
+let desiredVideoThumbnailEntries: Array<{ path: string; version: string }> = []
+let thumbnailBatchRunning = false
 let parentHistoryNavigationPending = false
 let queuedParentNavigations = 0
 let ignoreTouchNavigationUntil = 0
@@ -184,7 +186,7 @@ const {
   },
 })
 
-const activeThumbnailJobs = computed(() => thumbnailJobs.value.filter(job => ['queued', 'probing', 'generating', 'publishing'].includes(job.state)))
+const activeThumbnailJobs = computed(() => thumbnailJobs.value.filter(job => ['settling', 'queued', 'probing', 'generating', 'publishing'].includes(job.state)))
 const taskBadgeCount = computed(() => activeOperations.value.length + activeThumbnailJobs.value.length)
 
 watch(operationsVisible, visible => {
@@ -225,8 +227,14 @@ function updateThumbnailJob(job: VideoThumbnailJob) {
   }
 }
 
-function cancelThumbnailJob(id: string) {
-  void api.cancelThumbnailJob(id).catch(err => showError(err, 'Could not cancel thumbnail'))
+async function cancelThumbnailJob(id: string) {
+  const failed = thumbnailJobs.value.some(job => job.id === id && job.state === 'failed')
+  try {
+    await api.cancelThumbnailJob(id)
+    if (failed) thumbnailJobs.value = thumbnailJobs.value.filter(job => job.id !== id)
+  } catch (err) {
+    showError(err, failed ? 'Could not dismiss thumbnail task' : 'Could not cancel thumbnail')
+  }
 }
 
 const filteredEntries = computed(() => {
@@ -236,25 +244,53 @@ const filteredEntries = computed(() => {
     return !q || entry.name.toLocaleLowerCase().includes(q)
   })
 })
-const orderedVideoThumbnailPaths = computed(() => filteredEntries.value
+const orderedVideoThumbnailEntries = computed(() => filteredEntries.value
   .filter(entry => !entry.is_dir && entry.can_read !== false && fileVisualForPath(entry.path).kind === 'video')
-  .map(entry => entry.path))
+  .map(entry => ({ path: entry.path, version: `${entry.size}:${entry.modified}` })))
 
-watch([viewMode, orderedVideoThumbnailPaths], async ([mode, paths]) => {
-  const generation = ++thumbnailBatchGeneration
-  if (mode !== 'grid' || paths.length === 0) {
-    thumbnailBatchReady.value = true
-    return
+watch([viewMode, orderedVideoThumbnailEntries], ([mode, videoEntries]) => {
+  desiredVideoThumbnailEntries = mode === 'grid' ? videoEntries : []
+  const desired = new Set(desiredVideoThumbnailEntries.map(entry => entry.path))
+  queuedVideoThumbnailVersions = new Map([...queuedVideoThumbnailVersions].filter(([path]) => desired.has(path)))
+
+  const pending = new Set([...pendingVideoThumbnailPaths.value].filter(path => desired.has(path)))
+  for (const entry of desiredVideoThumbnailEntries) {
+    if (queuedVideoThumbnailVersions.get(entry.path) !== entry.version) pending.add(entry.path)
   }
-  thumbnailBatchReady.value = false
-  try {
-    await api.queueVideoThumbnails(paths)
-  } catch {
-    // Individual tile requests remain the fallback if batch scheduling fails.
-  } finally {
-    if (generation === thumbnailBatchGeneration) thumbnailBatchReady.value = true
-  }
+  pendingVideoThumbnailPaths.value = pending
+  void queuePendingVideoThumbnails()
 }, { flush: 'pre' })
+
+async function queuePendingVideoThumbnails() {
+  if (thumbnailBatchRunning || desiredVideoThumbnailEntries.length === 0) return
+  thumbnailBatchRunning = true
+  try {
+    while (desiredVideoThumbnailEntries.length > 0) {
+      const entriesToQueue = [...desiredVideoThumbnailEntries]
+      const missing = entriesToQueue.filter(entry => queuedVideoThumbnailVersions.get(entry.path) !== entry.version)
+      if (missing.length === 0) return
+      try {
+        await api.queueVideoThumbnails(missing.map(entry => entry.path))
+      } catch {
+        // Individual tile requests remain the fallback if batch scheduling fails.
+      }
+
+      const current = new Map(desiredVideoThumbnailEntries.map(entry => [entry.path, entry.version]))
+      const pending = new Set(pendingVideoThumbnailPaths.value)
+      for (const entry of missing) {
+        if (current.get(entry.path) !== entry.version) continue
+        pending.delete(entry.path)
+        queuedVideoThumbnailVersions.set(entry.path, entry.version)
+      }
+      pendingVideoThumbnailPaths.value = pending
+    }
+  } finally {
+    thumbnailBatchRunning = false
+    if (desiredVideoThumbnailEntries.some(entry => queuedVideoThumbnailVersions.get(entry.path) !== entry.version)) {
+      void queuePendingVideoThumbnails()
+    }
+  }
+}
 
 const selectedEntries = computed(() => entries.value.filter(entry => selectedPaths.value.has(entry.path)))
 const selectedOne = computed(() => selectedEntries.value.length === 1 ? selectedEntries.value[0] : null)
@@ -1503,7 +1539,7 @@ function operationLabel(value: string) {
             :focused-path="focusedPath"
             :selection-controls-visible="selectionControlsVisible"
             :size="gridSize"
-            :thumbnails-ready="thumbnailBatchReady"
+            :thumbnail-pending-paths="[...pendingVideoThumbnailPaths]"
             :parent-path="parentPath"
             @select="handleSelect"
             @focus="handleFocus"
