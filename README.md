@@ -460,10 +460,12 @@ git push origin main 1.0.0
 ```
 
 Pushing the tag starts the release workflow. Every future release build should
-have a matching version tag. An existing tag can be rebuilt from the Actions
-page by running **Release Linux binary** manually and supplying its version;
-the workflow verifies that the tag already exists and publishes or replaces
-the matching package assets.
+have a matching version tag and a `RELEASE_NOTES_<version>.md` file committed
+before that tag is created. The workflow uses that file as the GitHub Release
+description and includes all versioned release notes in the package. An
+existing tag can be rebuilt from the Actions page by running **Release Linux
+binary** manually and supplying its version; the workflow verifies that the
+tag already exists and publishes or replaces the matching package assets.
 
 ## Repository layout
 

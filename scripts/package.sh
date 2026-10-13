@@ -28,7 +28,11 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -mode=binary "$STAGE/webfile"
 cp "$ROOT/README.md" "$STAGE/"
 cp "$ROOT/LICENSE" "$STAGE/"
 cp "$ROOT/RELEASE_CHECKLIST.md" "$STAGE/"
-cp "$ROOT/RELEASE_NOTES_1.0.0.md" "$STAGE/"
+for release_notes in "$ROOT"/RELEASE_NOTES_*.md; do
+  if [[ -f "$release_notes" ]]; then
+    cp "$release_notes" "$STAGE/"
+  fi
+done
 cp "$ROOT/webfile.example.json" "$STAGE/"
 cp "$ROOT/deploy/webfile.service" "$STAGE/deploy/"
 cp "$ROOT/deploy/webfile-launcher.service" "$STAGE/deploy/"

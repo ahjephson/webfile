@@ -152,9 +152,18 @@ jobs:
           set -euo pipefail
           archive="dist/webfile-$RELEASE_TAG-linux-amd64.tar.gz"
           checksum="$archive.sha256"
+          release_notes="RELEASE_NOTES_$RELEASE_TAG.md"
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [[ -f "$release_notes" ]]; then
+              gh release edit "$RELEASE_TAG" --notes-file "$release_notes"
+            fi
             gh release upload "$RELEASE_TAG" "$archive" "$checksum" --clobber
+          elif [[ -f "$release_notes" ]]; then
+            gh release create "$RELEASE_TAG" "$archive" "$checksum" \
+              --verify-tag \
+              --notes-file "$release_notes" \
+              --title "WebFile $RELEASE_TAG"
           else
             gh release create "$RELEASE_TAG" "$archive" "$checksum" \
               --verify-tag \

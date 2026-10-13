@@ -47,6 +47,8 @@ GitHub release from being published.
 
 - Confirm the working trees are clean and the release commit is on `main`.
 - Build and inspect `dist/webfile-<version>-linux-amd64.tar.gz` and its checksum.
+- Create and review `RELEASE_NOTES_<version>.md`; commit it before tagging so
+  the workflow can use it as the GitHub Release description.
 - Create an annotated bare semantic-version tag, without a `v` prefix.
 - Push `main` and the tag from the authoritative Windows checkout.
 - For an existing tag that predates or missed its automatic run, manually run
