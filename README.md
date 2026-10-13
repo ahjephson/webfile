@@ -460,7 +460,10 @@ git push origin main 1.0.0
 ```
 
 Pushing the tag starts the release workflow. Every future release build should
-have a matching version tag.
+have a matching version tag. An existing tag can be rebuilt from the Actions
+page by running **Release Linux binary** manually and supplying its version;
+the workflow verifies that the tag already exists and publishes or replaces
+the matching package assets.
 
 ## Repository layout
 

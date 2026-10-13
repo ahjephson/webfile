@@ -1,0 +1,163 @@
+name: Release Linux binary
+
+on:
+  push:
+    tags:
+      - '[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing bare semantic-version tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  linux-amd64:
+    name: Build and publish Linux AMD64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - name: Validate release tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be a bare semantic version such as 1.1.0." >&2
+            exit 1
+          fi
+
+          tag_commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{}")"
+          head_commit="$(git rev-parse HEAD)"
+          if [[ "$tag_commit" != "$head_commit" ]]; then
+            echo "Checked-out commit does not match tag $RELEASE_TAG." >&2
+            exit 1
+          fi
+
+          echo "commit=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential libpam0g-dev 7zip
+
+      - name: Build and validate production package
+        env:
+          VERSION: ${{ env.RELEASE_TAG }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+        run: ./scripts/package.sh
+
+      - name: Install browser engines
+        working-directory: web
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Run browser workflow tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          go -C backend build -o ../dist/webfile-e2e ./cmd/webfile
+
+          webfile_pid=''
+          cleanup() {
+            if [[ -n "$webfile_pid" ]]; then
+              kill "$webfile_pid" 2>/dev/null || true
+              wait "$webfile_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          wait_for_server() {
+            local health_url="$1"
+            local log_file="$2"
+            for attempt in {1..50}; do
+              if curl --fail --silent "$health_url" >/dev/null; then
+                return 0
+              fi
+              if ! kill -0 "$webfile_pid" 2>/dev/null; then
+                cat "$log_file"
+                return 1
+              fi
+              sleep 0.2
+            done
+            cat "$log_file"
+            return 1
+          }
+
+          ./dist/webfile-e2e serve -config webfile.dev.json \
+            > /tmp/webfile-e2e.log 2>&1 &
+          webfile_pid=$!
+          wait_for_server http://127.0.0.1:8080/api/health /tmp/webfile-e2e.log
+          npm --prefix web run test:e2e
+          cleanup
+          webfile_pid=''
+
+          ./dist/webfile-e2e serve -config webfile.dev.json \
+            --http 127.0.0.1:8080 \
+            --public-url http://127.0.0.1:8080/tools/webfile \
+            > /tmp/webfile-e2e-prefix.log 2>&1 &
+          webfile_pid=$!
+          wait_for_server \
+            http://127.0.0.1:8080/tools/webfile/api/health \
+            /tmp/webfile-e2e-prefix.log
+          (
+            cd web
+            WEBFILE_E2E_PREFIX=/tools/webfile \
+              npx playwright test tests/e2e/base-path.spec.ts \
+                --project=chromium-touch
+          )
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webfile-${{ env.RELEASE_TAG }}-linux-amd64
+          path: |
+            dist/webfile-${{ env.RELEASE_TAG }}-linux-amd64.tar.gz
+            dist/webfile-${{ env.RELEASE_TAG }}-linux-amd64.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="dist/webfile-$RELEASE_TAG-linux-amd64.tar.gz"
+          checksum="$archive.sha256"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$archive" "$checksum" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$archive" "$checksum" \
+              --verify-tag \
+              --generate-notes \
+              --title "WebFile $RELEASE_TAG"
+          fi

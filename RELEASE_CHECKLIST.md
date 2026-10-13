@@ -49,5 +49,7 @@ GitHub release from being published.
 - Build and inspect `dist/webfile-<version>-linux-amd64.tar.gz` and its checksum.
 - Create an annotated bare semantic-version tag, without a `v` prefix.
 - Push `main` and the tag from the authoritative Windows checkout.
+- For an existing tag that predates or missed its automatic run, manually run
+  **Release Linux binary** in GitHub Actions and supply the exact tag.
 - Confirm the GitHub release workflow completed and its artifacts match the
   locally inspected package layout.
