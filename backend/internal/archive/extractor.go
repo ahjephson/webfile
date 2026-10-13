@@ -157,7 +157,7 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 		}
 		runErr := e.runTool(ctx, archiveAbs, stage, passwordValue, report)
 		if errors.Is(runErr, ErrPasswordRequired) {
-			if cleanupErr := os.RemoveAll(stage); cleanupErr != nil {
+			if cleanupErr := removeStage(stage); cleanupErr != nil {
 				return ExtractResult{}, errors.Join(runErr, fmt.Errorf("clean password attempt: %w", cleanupErr))
 			}
 			if password == nil {
@@ -170,7 +170,7 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 			continue
 		}
 		if errors.Is(runErr, ErrIncorrectPassword) {
-			if cleanupErr := os.RemoveAll(stage); cleanupErr != nil {
+			if cleanupErr := removeStage(stage); cleanupErr != nil {
 				return ExtractResult{}, errors.Join(runErr, fmt.Errorf("clean password attempt: %w", cleanupErr))
 			}
 			incorrect = true
@@ -184,7 +184,7 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 			continue
 		}
 		if runErr != nil {
-			_ = os.RemoveAll(stage)
+			_ = removeStage(stage)
 			return ExtractResult{}, runErr
 		}
 		return publishStage(ctx, stage, destinationAbs, destinationExists, options.ExistingFiles, report)
@@ -433,7 +433,7 @@ func sanitizeToolError(output string) string {
 func publishStage(ctx context.Context, stage, destination string, destinationExists bool, policy ExistingFilePolicy, report ProgressReporter) (result ExtractResult, err error) {
 	defer func() {
 		if stage != "" {
-			_ = os.RemoveAll(stage)
+			_ = removeStage(stage)
 		}
 	}()
 	if report != nil {
@@ -499,9 +499,45 @@ func validateStage(stage string) (int, error) {
 		if info.Mode().IsRegular() {
 			files++
 		}
+		// Repair only the extracted entry, before WalkDir descends into it.
+		// Missing/unusable modes must not hide the contents from their owner.
+		// Never add write bits: zero-mode and read-only entries stay read-only,
+		// and valid modes (including executable and special bits) are retained.
+		mode := info.Mode() | 0o400
+		if info.IsDir() {
+			mode |= 0o100
+		}
+		if mode != info.Mode() {
+			if err := os.Chmod(path, mode); err != nil {
+				return fmt.Errorf("repair extracted permissions: %w", err)
+			}
+		}
 		return nil
 	})
 	return files, err
+}
+
+// Private staging directories may be read-only or unsearchable, including
+// after a failed tool invocation. Make only those directories removable;
+// never follow links or touch the destination tree.
+func removeStage(stage string) error {
+	err := filepath.WalkDir(stage, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		return os.Chmod(path, info.Mode()|0o700)
+	})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return os.RemoveAll(stage)
 }
 
 func preflight(source, destination string, policy ExistingFilePolicy) ([]string, error) {
@@ -584,6 +620,10 @@ func publishNode(ctx context.Context, source, destination string, policy Existin
 			return nil
 		}
 		if policy == ExistingFilesOverwrite {
+			// Replacing contents must not change existing destination permissions.
+			if err := os.Chmod(source, destinationInfo.Mode()); err != nil {
+				return err
+			}
 			if err := os.Rename(source, destination); err != nil {
 				return err
 			}
@@ -596,6 +636,11 @@ func publishNode(ctx context.Context, source, destination string, policy Existin
 	}
 	if !sourceInfo.IsDir() || !destinationInfo.IsDir() {
 		return filesystem.ErrConflict
+	}
+	// This staging directory is being merged into an existing directory, so
+	// its mode will not be published. Renaming its children requires owner write.
+	if err := os.Chmod(source, sourceInfo.Mode()|0o700); err != nil {
+		return err
 	}
 	entries, err := os.ReadDir(source)
 	if err != nil {
@@ -636,13 +681,16 @@ func publishAbsent(ctx context.Context, source, destination string, files int, p
 }
 
 func publishDirectoryAbsent(ctx context.Context, source, destination string, info fs.FileInfo, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
-	if err := os.Mkdir(destination, info.Mode().Perm()); err != nil {
+	if err := os.Mkdir(destination, info.Mode().Perm()|0o700); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return filesystem.ErrConflict
 		}
 		return err
 	}
 	*published = append(*published, publishedMove{source: source, destination: destination, directoryMode: info.Mode()})
+	if err := os.Chmod(source, info.Mode()|0o700); err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(source)
 	if err != nil {
 		return err
@@ -661,7 +709,7 @@ func publishDirectoryAbsent(ctx context.Context, source, destination string, inf
 			return err
 		}
 	}
-	if err := os.Chmod(destination, info.Mode().Perm()); err != nil {
+	if err := os.Chmod(destination, info.Mode()); err != nil {
 		return err
 	}
 	if err := os.Chtimes(destination, info.ModTime(), info.ModTime()); err != nil {

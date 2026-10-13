@@ -140,6 +140,14 @@ such as `7zz`; WebFile does not maintain archive-format implementations.
   exposed by directory listings, even when hidden files are shown;
 - streamed 7-Zip progress followed by a distinct publish phase;
 - reject symlinks/special files and destination escapes;
+- extracted files receive owner read access and extracted directories receive
+  owner read/search access if those bits are missing, before validation descends
+  into directories. Other permissions, including executable bits, are retained
+  as produced by the archive tool and its umask. No write bits are added: a
+  `0000` file becomes `0400`, preserving read-only intent even when 7-Zip
+  interprets Windows attributes as unusable Unix permissions. Entries without
+  stored permissions keep the tool's normal creation defaults. Existing
+  destination permissions are retained, including when replacing file contents;
 - complete collision preflight before publishing anything;
 - Linux `renameat2(RENAME_NOREPLACE)` publication, moving whole subtrees when
   possible and attempting rollback after an unexpected partial publish;

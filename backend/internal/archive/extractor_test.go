@@ -47,6 +47,98 @@ printf ok > "$out/folder/file.txt"
 	assertNoStaging(t, destinationRoot)
 }
 
+func TestValidateStageRepairsOnlyOwnerAccess(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode fs.FileMode
+		dir  bool
+		want fs.FileMode
+	}{
+		{"zero file", 0, false, 0o400},
+		{"normal file", 0o644, false, 0o644},
+		{"private file", 0o600, false, 0o600},
+		{"read-only file", 0o444, false, 0o444},
+		{"owner read-only file", 0o400, false, 0o400},
+		{"executable file", 0o755, false, 0o755},
+		{"unreadable executable", 0o111, false, 0o511},
+		{"write-only file", 0o200, false, 0o600},
+		{"group readable file", 0o040, false, 0o440},
+		{"special bits", os.ModeSetuid | os.ModeSetgid | 0o111, false, os.ModeSetuid | os.ModeSetgid | 0o511},
+		{"zero directory", 0, true, 0o500},
+		{"unsearchable directory", 0o600, true, 0o700},
+		{"unreadable directory", 0o100, true, 0o500},
+		{"private directory", 0o700, true, 0o700},
+		{"read-only directory", 0o555, true, 0o555},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stage := t.TempDir()
+			defer removeStage(stage)
+			path := filepath.Join(stage, "entry")
+			if tc.dir {
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				writeTestFile(t, filepath.Join(path, "child.txt"), "child")
+			} else {
+				writeTestFile(t, path, "file")
+			}
+			if err := os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			count, err := validateStage(stage)
+			if err != nil || count != 1 {
+				t.Fatalf("validation: count=%d error=%v", count, err)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode() & (fs.ModePerm | os.ModeSetuid | os.ModeSetgid); got != tc.want {
+				t.Fatalf("mode=%v, want=%v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPublishRepairsUnsearchableNestedDirectoriesAndPreservesDestinationModes(t *testing.T) {
+	for _, policy := range []ExistingFilePolicy{ExistingFilesSkip, ExistingFilesOverwrite} {
+		t.Run(string(policy), func(t *testing.T) {
+			root := t.TempDir()
+			stage := filepath.Join(root, "stage")
+			destination := filepath.Join(root, "destination")
+			for _, base := range []string{stage, destination} {
+				if err := os.MkdirAll(filepath.Join(base, "nested"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				writeTestFile(t, filepath.Join(base, "nested", "existing.txt"), "existing")
+			}
+			writeTestFile(t, filepath.Join(stage, "nested", "new.txt"), "new")
+			if err := os.Chmod(filepath.Join(destination, "nested", "existing.txt"), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(destination, "nested"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(stage, "nested"), 0); err != nil {
+				t.Fatal(err)
+			}
+			result, err := publishStage(context.Background(), stage, destination, true, policy, nil)
+			if err != nil || result.Extracted+result.Skipped != 2 {
+				t.Fatalf("publish: %#v, %v", result, err)
+			}
+			for path, want := range map[string]fs.FileMode{"nested": 0o750, "nested/existing.txt": 0o640} {
+				info, err := os.Stat(filepath.Join(destination, path))
+				if err != nil || info.Mode().Perm() != want {
+					t.Fatalf("destination %s mode: %v, %v", path, info, err)
+				}
+			}
+			if _, err := os.Stat(stage); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("staging not removed: %v", err)
+			}
+		})
+	}
+}
+
 func TestPublishStageSkipsExistingRegularFiles(t *testing.T) {
 	root := t.TempDir()
 	stage := filepath.Join(root, "stage")
