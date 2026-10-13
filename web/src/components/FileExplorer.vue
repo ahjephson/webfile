@@ -677,8 +677,7 @@ async function restoreHashFile(path: string, request = ++hashFileRequest) {
 }
 
 async function navigatePreview(path: string) {
-	await navigateDetectedPreview(path)
-	writePathHash(currentPath.value, true, path)
+	if (await navigateDetectedPreview(path)) writePathHash(currentPath.value, true, path)
 }
 
 function setPreviewVisible(visible: boolean) {

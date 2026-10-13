@@ -2485,6 +2485,89 @@ test('fit mode responds to gallery viewport growth', async ({ page }) => {
   await expect.poll(() => image.evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(initialWidth)
 })
 
+test('gallery accepts consecutive swipes and reversals before animations finish', async ({ page, browserName }) => {
+  const entries = Array.from({ length: 5 }, (_, index) => ({
+    name: `rapid-${index + 1}.svg`, path: `/rapid-${index + 1}.svg`, is_dir: false,
+    size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--',
+  }))
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries } }))
+  await page.route('**/api/fs/content-type**', route => route.fulfill({ json: { content_type: 'image/png' } }))
+  await page.route(/\/api\/fs\/(download|thumbnail)\?/, route => route.fulfill({
+    contentType: 'image/svg+xml',
+    body: '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="teal"/></svg>',
+  }))
+  await page.goto('/')
+  await page.locator('[data-file-entry]').filter({ hasText: 'rapid-2.svg' }).dblclick()
+  const preview = page.getByLabel('File preview')
+  const track = preview.locator('[data-gallery-track]')
+  const surface = preview.locator('[data-gallery-gesture-surface]')
+  await expect(preview.getByRole('img', { name: 'rapid-2.svg', exact: true })).toHaveAttribute('data-image-loaded', 'true')
+  await expect(preview.locator('[data-gallery-adjacent="next"]')).toHaveCSS('visibility', 'visible')
+  const box = await surface.boundingBox()
+  if (!box) throw new Error('Gallery gesture surface is not visible')
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  // Keep both CSS completion and the fallback timers from finishing between
+  // gestures, so this exercises interruption rather than ordinary navigation.
+  await page.addStyleTag({ content: '[data-gallery-track][data-gallery-animating="true"] { transition-duration: 10s !important; }' })
+  await page.clock.install()
+  await page.clock.pauseAt(new Date(Date.now() + 100))
+  const session = browserName === 'chromium' ? await page.context().newCDPSession(page) : null
+  const swipe = async (direction: -1 | 1) => {
+    if (session) {
+      await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+      await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + direction * 180, y }] })
+      await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    } else {
+      await page.mouse.move(x, y)
+      await page.mouse.down()
+      await page.mouse.move(x + direction * 180, y, { steps: 3 })
+      await page.mouse.up()
+    }
+    await page.clock.runFor(32)
+  }
+  await swipe(-1)
+  await expect(track).toHaveAttribute('data-gallery-animating', 'true')
+  await expect(preview.getByRole('option', { name: 'Show rapid-3.svg' })).toHaveAttribute('aria-selected', 'true')
+  await swipe(-1)
+  await expect(track).toHaveAttribute('data-gallery-animating', 'true')
+  await expect(preview.getByRole('option', { name: 'Show rapid-4.svg' })).toHaveAttribute('aria-selected', 'true')
+  await swipe(1)
+  await expect(track).toHaveAttribute('data-gallery-animating', 'true')
+  await expect(preview.getByRole('option', { name: 'Show rapid-3.svg' })).toHaveAttribute('aria-selected', 'true')
+  await page.clock.runFor(1000)
+  await expect(preview.getByRole('img', { name: 'rapid-3.svg', exact: true })).toBeVisible()
+  await expect(track).toHaveAttribute('data-gallery-animating', 'false')
+  // Interrupt an edge snap-back too: its old timeout must not stop the next slide.
+  await preview.getByRole('option', { name: 'Show rapid-1.svg' }).click()
+  await expect(preview.getByRole('img', { name: 'rapid-1.svg', exact: true })).toHaveAttribute('data-image-loaded', 'true')
+  await swipe(1)
+  await expect(track).toHaveAttribute('data-gallery-animating', 'true')
+  await swipe(-1)
+  await expect(preview.getByRole('option', { name: 'Show rapid-2.svg' })).toHaveAttribute('aria-selected', 'true')
+  await page.clock.runFor(1000)
+  await expect(preview.getByRole('img', { name: 'rapid-2.svg', exact: true })).toBeVisible()
+  await session?.detach()
+  let releaseInspection!: () => void
+  const inspectionGate = new Promise<void>(resolve => { releaseInspection = resolve })
+  await page.route('**/api/fs/content-type**', async route => {
+    if (new URL(route.request().url()).searchParams.get('path') === '/rapid-3.svg') await inspectionGate
+    await route.fulfill({ json: { content_type: 'image/png' } })
+  })
+  const pendingInspection = page.waitForRequest(request => request.url().includes('/api/fs/content-type') && new URL(request.url()).searchParams.get('path') === '/rapid-3.svg')
+  await preview.getByRole('option', { name: 'Show rapid-3.svg' }).click()
+  await page.clock.runFor(1000)
+  await pendingInspection
+  await preview.getByRole('option', { name: 'Show rapid-5.svg' }).click()
+  await expect(preview.getByRole('img', { name: 'rapid-5.svg', exact: true })).toBeVisible()
+  const staleResponse = page.waitForResponse(response => response.url().includes('/api/fs/content-type') && new URL(response.url()).searchParams.get('path') === '/rapid-3.svg')
+  releaseInspection()
+  await (await staleResponse).finished()
+  await page.clock.runFor(32)
+  await expect(preview.getByRole('img', { name: 'rapid-5.svg', exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/file=rapid-5\.svg/)
+})
+
 test('gallery navigation keeps the decoded target constrained throughout the transition', async ({ page }) => {
   const entries = [
     { name: 'landscape.svg', path: '/landscape.svg', is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' },

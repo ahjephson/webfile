@@ -7,6 +7,7 @@ export function useFilePreview() {
   const path = ref('')
   const kind = ref<PreviewKind>('unsupported')
   const contentType = ref('')
+  let navigationRequest = 0
 
   async function detect(candidate: string) {
     let detectedKind = previewKindForPath(candidate)
@@ -21,6 +22,7 @@ export function useFilePreview() {
   }
 
   function show(candidate: string, detected: { kind: PreviewKind; contentType: string }) {
+    navigationRequest++
     path.value = candidate
     kind.value = detected.kind
     contentType.value = detected.contentType
@@ -28,11 +30,15 @@ export function useFilePreview() {
   }
 
   async function navigate(candidate: string) {
+    const request = ++navigationRequest
     const detected = await detect(candidate)
+    if (request !== navigationRequest) return false
     show(candidate, detected)
+    return true
   }
 
   function hide() {
+    navigationRequest++
     visible.value = false
   }
 

@@ -13,7 +13,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ back: []; close: []; navigate: [path: string] }>()
 
-type Point = { startX: number; startY: number; x: number; y: number; previousX: number; previousY: number; startedAt: number }
+type Point = { startX: number; startY: number; x: number; y: number; previousX: number; previousY: number; startedAt: number; offset: number }
 type ControlsGesture = { pointerId: number; startX: number; startY: number; x: number; y: number }
 type ThumbnailState = 'queued' | 'loading' | 'loaded' | 'failed'
 
@@ -23,6 +23,7 @@ const swipeAnimationMinMs = 220
 const swipeAnimationMaxMs = 380
 
 const root = ref<HTMLElement | null>(null)
+const currentPath = ref(props.path)
 const viewport = ref<HTMLElement | null>(null)
 const track = ref<HTMLElement | null>(null)
 const previewImage = ref<HTMLImageElement | null>(null)
@@ -58,20 +59,20 @@ let lastTap: { x: number; y: number; at: number } | null = null
 let pinchStartDistance = 0
 let pinchStartScale = 1
 let pinchUsed = false
-let navigationPending = false
+let navigationRequest = 0
 let thumbnailNeedsCenter = false
 let fullscreenControlsGesture: ControlsGesture | null = null
 
 const images = computed(() => props.entries.filter(entry => detectedImagePaths.value.includes(entry.path)))
-const imageIndex = computed(() => images.value.findIndex(entry => entry.path === props.path))
-const activeThumbnailPath = computed(() => transitionTargetPath.value ?? props.path)
+const imageIndex = computed(() => images.value.findIndex(entry => entry.path === currentPath.value))
+const activeThumbnailPath = computed(() => transitionTargetPath.value ?? currentPath.value)
 const activeThumbnailIndex = computed(() => images.value.findIndex(entry => entry.path === activeThumbnailPath.value))
 const previousEntry = computed(() => imageIndex.value > 0 ? images.value[imageIndex.value - 1] : undefined)
 const nextEntry = computed(() => imageIndex.value >= 0 && imageIndex.value < images.value.length - 1 ? images.value[imageIndex.value + 1] : undefined)
 const canPrevious = computed(() => Boolean(previousEntry.value))
 const canNext = computed(() => Boolean(nextEntry.value))
-const name = computed(() => props.path.split('/').pop() || props.path)
-const source = computed(() => api.previewUrl(props.path))
+const name = computed(() => currentPath.value.split('/').pop() || currentPath.value)
+const source = computed(() => api.previewUrl(currentPath.value))
 const zoomLevel = computed(() => `${Math.round(scale.value * 100)}%`)
 const thumbnailsLoaded = computed(() => Object.values(thumbnailStates.value).filter(value => value === 'loaded' || value === 'failed').length)
 const reducedMotion = computed(() => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
@@ -93,7 +94,12 @@ const trackStyle = computed<CSSProperties>(() => ({
 }))
 
 watch(() => props.path, async () => {
-  transitionTargetPath.value = null
+  // Our own navigation is committed synchronously, so the parent's echo must
+  // not clear a gesture that has already started on the next image.
+  if (props.path === currentPath.value) return
+  navigationRequest++
+  stopTrackAnimation()
+  currentPath.value = props.path
   restoreCurrentImage()
   swipeOffset.value = 0
   trackAnimating.value = false
@@ -132,6 +138,7 @@ onBeforeUnmount(() => {
   clearPendingTap()
   clearOriginals()
   thumbnailGeneration++
+  navigationRequest++
   if (navigationTimer !== null) clearTimeout(navigationTimer)
 })
 
@@ -147,7 +154,7 @@ function resetCurrentImage() {
 }
 
 function restoreCurrentImage() {
-  const metadata = imageMetadata.get(props.path)
+  const metadata = imageMetadata.get(currentPath.value)
   if (!metadata) {
     resetCurrentImage()
     return
@@ -167,7 +174,7 @@ async function detectGalleryImages() {
   const request = ++galleryDetection
   const files = props.entries.filter(entry => !entry.is_dir && entry.can_read !== false)
   const paths = new Set(files.filter(entry => previewKindForPath(entry.path) === 'image').map(entry => entry.path))
-  paths.add(props.path)
+  paths.add(currentPath.value)
   detectedImagePaths.value = files.filter(entry => paths.has(entry.path)).map(entry => entry.path)
   const unknown = files.filter(entry => previewKindForPath(entry.path) === 'unsupported')
   let cursor = 0
@@ -190,7 +197,7 @@ async function loadThumbnailCatalogue() {
   const generation = ++thumbnailGeneration
   const ordered = images.value.map(entry => entry.path)
   if (!ordered.length) return
-  const active = props.path
+  const active = currentPath.value
   const queue = [active, ...ordered.filter(path => path !== active)]
   const states: Record<string, ThumbnailState> = {}
   for (const path of ordered) states[path] = 'queued'
@@ -272,7 +279,7 @@ function onImageLoad(event: Event) {
   const image = event.currentTarget as HTMLImageElement
   naturalWidth.value = image.naturalWidth
   naturalHeight.value = image.naturalHeight
-  imageMetadata.set(props.path, { width: image.naturalWidth, height: image.naturalHeight })
+  imageMetadata.set(currentPath.value, { width: image.naturalWidth, height: image.naturalHeight })
   metadataRevision.value++
   fitImage()
   loaded.value = true
@@ -446,7 +453,9 @@ function onFullscreenControlsPointerCancel(event: PointerEvent) {
 }
 
 function onPointerDown(event: PointerEvent) {
-  if (trackAnimating.value || (event.pointerType === 'mouse' && event.button !== 0)) return
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  navigationRequest++
+  interruptTrackAnimation()
   if (event.pointerType === 'touch' || event.pointerType === 'pen') event.preventDefault()
   const point: Point = {
     startX: event.clientX,
@@ -456,9 +465,10 @@ function onPointerDown(event: PointerEvent) {
     previousX: event.clientX,
     previousY: event.clientY,
     startedAt: performance.now(),
+    offset: swipeOffset.value,
   }
   touchPointers.set(event.pointerId, point)
-  viewport.value?.setPointerCapture(event.pointerId)
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   if (touchPointers.size === 2) {
     pinchStartDistance = touchDistance()
     pinchStartScale = scale.value
@@ -487,7 +497,7 @@ function onPointerMove(event: PointerEvent) {
   const deltaX = point.x - point.startX
   const atBeginning = deltaX > 0 && !canPrevious.value
   const atEnd = deltaX < 0 && !canNext.value
-  swipeOffset.value = (atBeginning || atEnd) ? deltaX * 0.28 : deltaX
+  swipeOffset.value = point.offset + ((atBeginning || atEnd) ? deltaX * 0.28 : deltaX)
 }
 
 function onPointerUp(event: PointerEvent) {
@@ -520,6 +530,7 @@ function onPointerCancel(event: PointerEvent) {
 }
 
 function snapBack() {
+  stopTrackAnimation()
   if (Math.abs(swipeOffset.value) < 0.5) {
     swipeOffset.value = 0
     return
@@ -528,7 +539,31 @@ function snapBack() {
   transitionDurationMs.value = swipeTransitionDuration(swipeOffset.value, 0, width)
   trackAnimating.value = true
   swipeOffset.value = 0
-  setTimeout(() => { trackAnimating.value = false }, reducedMotion.value ? 0 : transitionDurationMs.value)
+  navigationTimer = setTimeout(stopTrackAnimation, reducedMotion.value ? 0 : transitionDurationMs.value)
+}
+
+function stopTrackAnimation() {
+  if (navigationTimer !== null) clearTimeout(navigationTimer)
+  navigationTimer = null
+  transitionTargetPath.value = null
+  trackAnimating.value = false
+}
+
+function interruptTrackAnimation() {
+  if (!trackAnimating.value) return
+  const width = viewport.value?.clientWidth ?? 1
+  const renderedOffset = track.value
+    ? new DOMMatrixReadOnly(getComputedStyle(track.value).transform).m41 + width
+    : swipeOffset.value
+  const target = transitionTargetPath.value
+  const targetOffset = target
+    ? (images.value.findIndex(entry => entry.path === target) > imageIndex.value ? -width : width)
+    : 0
+  finishAnimatedNavigation()
+  stopTrackAnimation()
+  // Rebase the three panels around the committed image without jumping the
+  // pixels currently on screen. The new pointer can drag immediately.
+  swipeOffset.value = renderedOffset - targetOffset
 }
 
 function swipeTransitionDuration(currentOffset: number, targetOffset: number, width: number) {
@@ -539,14 +574,18 @@ function swipeTransitionDuration(currentOffset: number, targetOffset: number, wi
 function finishAnimatedNavigation() {
   const path = transitionTargetPath.value
   if (!path) return
-  if (navigationTimer !== null) clearTimeout(navigationTimer)
-  navigationTimer = null
+  stopTrackAnimation()
+  currentPath.value = path
+  restoreCurrentImage()
+  syncActiveThumbnail()
+  preloadNearbyOriginals()
   emit('navigate', path)
 }
 
 function onTrackTransitionEnd(event: TransitionEvent) {
   if (event.target !== track.value || event.propertyName !== 'transform' || !trackAnimating.value) return
-  finishAnimatedNavigation()
+  if (transitionTargetPath.value) finishAnimatedNavigation()
+  else stopTrackAnimation()
 }
 
 function nextAnimationFrame() {
@@ -554,13 +593,13 @@ function nextAnimationFrame() {
 }
 
 async function animateNavigate(direction: -1 | 1) {
-  if (trackAnimating.value || navigationPending || (direction < 0 && !canPrevious.value) || (direction > 0 && !canNext.value)) return
+  interruptTrackAnimation()
+  if ((direction < 0 && !canPrevious.value) || (direction > 0 && !canNext.value)) return
   const entry = direction > 0 ? nextEntry.value : previousEntry.value
   if (!entry) return
-  navigationPending = true
+  const request = ++navigationRequest
   const ready = await ensureOriginalReady(entry.path)
-  navigationPending = false
-  if (!ready || (direction < 0 && previousEntry.value?.path !== entry.path) || (direction > 0 && nextEntry.value?.path !== entry.path)) return
+  if (request !== navigationRequest || !ready || (direction < 0 && previousEntry.value?.path !== entry.path) || (direction > 0 && nextEntry.value?.path !== entry.path)) return
   const width = viewport.value?.clientWidth ?? 1
   const targetOffset = direction > 0 ? -width : width
   transitionDurationMs.value = swipeTransitionDuration(swipeOffset.value, targetOffset, width)
@@ -575,7 +614,7 @@ async function animateNavigate(direction: -1 | 1) {
   await nextTick()
   track.value?.getBoundingClientRect()
   await nextAnimationFrame()
-  if (transitionTargetPath.value !== entry.path) return
+  if (request !== navigationRequest || transitionTargetPath.value !== entry.path) return
   swipeOffset.value = targetOffset
   if (navigationTimer !== null) clearTimeout(navigationTimer)
   navigationTimer = setTimeout(() => {
@@ -584,7 +623,8 @@ async function animateNavigate(direction: -1 | 1) {
 }
 
 function navigateTo(path: string) {
-  if (path === props.path) return
+  interruptTrackAnimation()
+  if (path === currentPath.value) return
   const targetIndex = images.value.findIndex(entry => entry.path === path)
   if (targetIndex === imageIndex.value - 1) animateNavigate(-1)
   else if (targetIndex === imageIndex.value + 1) animateNavigate(1)
@@ -673,7 +713,7 @@ function onKeyDown(event: KeyboardEvent) {
       <Button v-tooltip.bottom="'Back to folder'" icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="Back to folder" @click="emit('back')" />
       <div class="min-w-0">
         <div class="truncate font-semibold">{{ name }}</div>
-        <div class="truncate text-xs text-zinc-400">{{ path }}</div>
+        <div class="truncate text-xs text-zinc-400">{{ currentPath }}</div>
       </div>
       <div class="ml-auto flex items-center gap-1">
         <Button v-tooltip.bottom="'Zoom out'" icon="pi pi-search-minus" severity="secondary" text :disabled="scale <= 0.1" aria-label="Zoom out" @click="zoomBy(-0.25)" />
@@ -716,7 +756,14 @@ function onKeyDown(event: KeyboardEvent) {
       <Button v-tooltip.left="'Exit fullscreen'" icon="pi pi-times" severity="secondary" rounded class="border border-zinc-700 bg-black/65 shadow-lg" aria-label="Exit fullscreen" @click.stop="toggleFullscreen" />
     </div>
 
-    <div class="relative min-h-0 flex-1 overflow-hidden bg-black">
+    <div
+      class="gallery-image-viewport relative min-h-0 flex-1 overflow-hidden bg-black"
+      data-gallery-gesture-surface
+      @pointerdown="onPointerDown"
+      @pointermove="onPointerMove"
+      @pointerup="onPointerUp"
+      @pointercancel="onPointerCancel"
+    >
       <div
         ref="track"
         class="absolute inset-0 flex h-full min-h-0 max-h-full w-full will-change-transform"
@@ -734,10 +781,6 @@ function onKeyDown(event: KeyboardEvent) {
           class="gallery-image-viewport relative grid h-full min-h-0 max-h-full min-w-full cursor-grab place-items-center overflow-auto p-4 active:cursor-grabbing"
           data-image-viewport
           @wheel.prevent="zoomWithWheel"
-          @pointerdown="onPointerDown"
-          @pointermove="onPointerMove"
-          @pointerup="onPointerUp"
-          @pointercancel="onPointerCancel"
           @dblclick.prevent
         >
           <i v-if="!loaded && !mediaError" class="pi pi-spinner pi-spin col-start-1 row-start-1 text-2xl text-zinc-500" aria-label="Loading image" />
