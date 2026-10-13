@@ -17,6 +17,11 @@ type Point = { startX: number; startY: number; x: number; y: number; previousX: 
 type ControlsGesture = { pointerId: number; startX: number; startY: number; x: number; y: number }
 type ThumbnailState = 'queued' | 'loading' | 'loaded' | 'failed'
 
+const doubleTapDelay = 400
+const doubleTapDistance = 40
+const swipeAnimationMinMs = 220
+const swipeAnimationMaxMs = 380
+
 const root = ref<HTMLElement | null>(null)
 const viewport = ref<HTMLElement | null>(null)
 const track = ref<HTMLElement | null>(null)
@@ -35,6 +40,7 @@ const touchEnabled = ref(false)
 const thumbnailsVisible = ref(true)
 const swipeOffset = ref(0)
 const trackAnimating = ref(false)
+const transitionDurationMs = ref(swipeAnimationMaxMs)
 const transitionTargetPath = ref<string | null>(null)
 const detectedImagePaths = ref<string[]>([])
 const thumbnailStates = ref<Record<string, ThumbnailState>>({})
@@ -81,7 +87,9 @@ const imageStyle = computed<CSSProperties>(() => naturalWidth.value > 0 ? {
 })
 const trackStyle = computed<CSSProperties>(() => ({
   transform: `translate3d(calc(-100% + ${swipeOffset.value}px), 0, 0)`,
-  transition: trackAnimating.value && !reducedMotion.value ? 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)' : 'none',
+  transition: trackAnimating.value && !reducedMotion.value
+    ? `transform ${transitionDurationMs.value}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)`
+    : 'none',
 }))
 
 watch(() => props.path, async () => {
@@ -379,7 +387,7 @@ async function toggleActualSizeAt(clientX: number, clientY: number) {
 
 function handleTap(clientX: number, clientY: number) {
   const now = performance.now()
-  if (lastTap && now - lastTap.at <= 320 && Math.hypot(clientX - lastTap.x, clientY - lastTap.y) <= 32) {
+  if (lastTap && now - lastTap.at <= doubleTapDelay && Math.hypot(clientX - lastTap.x, clientY - lastTap.y) <= doubleTapDistance) {
     clearPendingTap()
     void toggleActualSizeAt(clientX, clientY)
     return
@@ -390,7 +398,7 @@ function handleTap(clientX: number, clientY: number) {
     singleTapTimer = null
     lastTap = null
     if (immersive.value) toggleThumbnails()
-  }, 320)
+  }, doubleTapDelay)
 }
 
 function toggleThumbnails() {
@@ -439,6 +447,7 @@ function onFullscreenControlsPointerCancel(event: PointerEvent) {
 
 function onPointerDown(event: PointerEvent) {
   if (trackAnimating.value || (event.pointerType === 'mouse' && event.button !== 0)) return
+  if (event.pointerType === 'touch' || event.pointerType === 'pen') event.preventDefault()
   const point: Point = {
     startX: event.clientX,
     startY: event.clientY,
@@ -484,6 +493,7 @@ function onPointerMove(event: PointerEvent) {
 function onPointerUp(event: PointerEvent) {
   const point = touchPointers.get(event.pointerId)
   if (!point) return
+  if (event.pointerType === 'touch' || event.pointerType === 'pen') event.preventDefault()
   const wasPinch = pinchUsed || touchPointers.size > 1
   touchPointers.delete(event.pointerId)
   if (touchPointers.size === 0) pinchUsed = false
@@ -500,7 +510,7 @@ function onPointerUp(event: PointerEvent) {
     return
   }
   snapBack()
-  if (Math.hypot(deltaX, deltaY) < 12 && duration < 400 && event.pointerType === 'touch') handleTap(point.x, point.y)
+  if (Math.hypot(deltaX, deltaY) < 12 && duration < 400 && (event.pointerType === 'touch' || event.pointerType === 'pen')) handleTap(point.x, point.y)
 }
 
 function onPointerCancel(event: PointerEvent) {
@@ -514,9 +524,16 @@ function snapBack() {
     swipeOffset.value = 0
     return
   }
+  const width = viewport.value?.clientWidth ?? 1
+  transitionDurationMs.value = swipeTransitionDuration(swipeOffset.value, 0, width)
   trackAnimating.value = true
   swipeOffset.value = 0
-  setTimeout(() => { trackAnimating.value = false }, reducedMotion.value ? 0 : 220)
+  setTimeout(() => { trackAnimating.value = false }, reducedMotion.value ? 0 : transitionDurationMs.value)
+}
+
+function swipeTransitionDuration(currentOffset: number, targetOffset: number, width: number) {
+  const remainingRatio = Math.min(1, Math.abs(targetOffset - currentOffset) / Math.max(1, width))
+  return Math.round(swipeAnimationMinMs + (swipeAnimationMaxMs - swipeAnimationMinMs) * remainingRatio)
 }
 
 function finishAnimatedNavigation() {
@@ -545,10 +562,12 @@ async function animateNavigate(direction: -1 | 1) {
   navigationPending = false
   if (!ready || (direction < 0 && previousEntry.value?.path !== entry.path) || (direction > 0 && nextEntry.value?.path !== entry.path)) return
   const width = viewport.value?.clientWidth ?? 1
+  const targetOffset = direction > 0 ? -width : width
+  transitionDurationMs.value = swipeTransitionDuration(swipeOffset.value, targetOffset, width)
   transitionTargetPath.value = entry.path
   syncActiveThumbnail()
   if (reducedMotion.value) {
-    swipeOffset.value = direction > 0 ? -width : width
+    swipeOffset.value = targetOffset
     finishAnimatedNavigation()
     return
   }
@@ -557,11 +576,11 @@ async function animateNavigate(direction: -1 | 1) {
   track.value?.getBoundingClientRect()
   await nextAnimationFrame()
   if (transitionTargetPath.value !== entry.path) return
-  swipeOffset.value = direction > 0 ? -width : width
+  swipeOffset.value = targetOffset
   if (navigationTimer !== null) clearTimeout(navigationTimer)
   navigationTimer = setTimeout(() => {
     finishAnimatedNavigation()
-  }, 350)
+  }, transitionDurationMs.value + 150)
 }
 
 function navigateTo(path: string) {
@@ -649,7 +668,7 @@ function onKeyDown(event: KeyboardEvent) {
 </script>
 
 <template>
-  <section ref="root" class="absolute inset-0 z-40 flex min-h-0 flex-col bg-zinc-950 text-zinc-100" aria-label="File preview" aria-roledescription="image gallery" :data-immersive="immersive">
+  <section ref="root" class="gallery-root absolute inset-0 z-40 flex min-h-0 flex-col bg-zinc-950 text-zinc-100" aria-label="File preview" aria-roledescription="image gallery" :data-immersive="immersive">
     <header v-show="!immersive" class="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-800 bg-zinc-900 px-3">
       <Button v-tooltip.bottom="'Back to folder'" icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="Back to folder" @click="emit('back')" />
       <div class="min-w-0">
@@ -703,6 +722,7 @@ function onKeyDown(event: KeyboardEvent) {
         class="absolute inset-0 flex h-full min-h-0 max-h-full w-full will-change-transform"
         :style="trackStyle"
         :data-gallery-animating="trackAnimating"
+        :data-gallery-transition-ms="transitionDurationMs"
         data-gallery-track
         @transitionend="onTrackTransitionEnd"
       >
@@ -711,13 +731,14 @@ function onKeyDown(event: KeyboardEvent) {
         </div>
         <div
           ref="viewport"
-          class="relative grid h-full min-h-0 max-h-full min-w-full touch-none cursor-grab place-items-center overflow-auto p-4 active:cursor-grabbing"
+          class="gallery-image-viewport relative grid h-full min-h-0 max-h-full min-w-full cursor-grab place-items-center overflow-auto p-4 active:cursor-grabbing"
           data-image-viewport
           @wheel.prevent="zoomWithWheel"
           @pointerdown="onPointerDown"
           @pointermove="onPointerMove"
           @pointerup="onPointerUp"
           @pointercancel="onPointerCancel"
+          @dblclick.prevent
         >
           <i v-if="!loaded && !mediaError" class="pi pi-spinner pi-spin col-start-1 row-start-1 text-2xl text-zinc-500" aria-label="Loading image" />
           <img
@@ -749,7 +770,7 @@ function onKeyDown(event: KeyboardEvent) {
         <span>Gallery</span>
         <span>{{ thumbnailsLoaded }} / {{ images.length }} thumbnails</span>
       </div>
-      <div ref="thumbnailStrip" class="gallery-thumbnail-strip flex h-16 gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain" style="padding-inline: calc(50% - 2.5rem)" role="listbox" aria-label="Image thumbnails" @wheel="scrollThumbnails">
+      <div ref="thumbnailStrip" class="gallery-thumbnail-strip flex min-h-14 gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain" style="padding-inline: calc(50% - 2.5rem)" role="listbox" aria-label="Image thumbnails" @wheel="scrollThumbnails">
         <button
           v-for="entry in images"
           :key="entry.path"
@@ -772,6 +793,14 @@ function onKeyDown(event: KeyboardEvent) {
 </template>
 
 <style scoped>
+.gallery-root {
+  touch-action: pan-x pan-y;
+}
+
+.gallery-image-viewport {
+  touch-action: none;
+}
+
 .gallery-fullscreen-controls {
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -785,6 +814,7 @@ function onKeyDown(event: KeyboardEvent) {
 .gallery-thumbnail-strip {
   scrollbar-color: rgb(82 82 91) transparent;
   scrollbar-width: thin;
+  touch-action: pan-x;
 }
 
 .gallery-thumbnail-strip::-webkit-scrollbar {

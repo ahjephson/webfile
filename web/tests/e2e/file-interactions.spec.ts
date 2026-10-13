@@ -2161,6 +2161,43 @@ test('an image is constrained and hidden until its fitted size is ready', async 
   await expect(page.getByLabel('Loading image')).toHaveCount(0)
 })
 
+test('image gallery reserves double tap for zoom and keeps immersive mode explicit', async ({ page }) => {
+  await page.route('**/api/fs/dir**', route => route.fulfill({
+    json: {
+      path: '/',
+      entries: [{ name: 'touch.svg', path: '/touch.svg', is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }],
+    },
+  }))
+  await page.route('**/api/fs/content-type**', route => route.fulfill({ json: { path: '/touch.svg', content_type: 'image/png' } }))
+  await page.route('**/api/fs/download**', route => route.fulfill({
+    contentType: 'image/svg+xml',
+    body: '<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1600"><rect width="2400" height="1600" fill="red"/></svg>',
+  }))
+
+  await page.goto('/')
+  await page.locator('[data-file-entry]').dblclick()
+  const preview = page.getByLabel('File preview')
+  const viewport = page.locator('[data-image-viewport]')
+  await expect(preview.getByRole('img', { name: 'touch.svg', exact: true })).toBeVisible()
+  await expect(preview).toHaveAttribute('data-immersive', 'false')
+  await expect.poll(() => viewport.evaluate(element => getComputedStyle(element).touchAction)).toBe('none')
+  await expect.poll(() => preview.evaluate(element => getComputedStyle(element).touchAction)).toBe('pan-x pan-y')
+  const thumbnailStrip = preview.locator('[data-thumbnail-strip] [role="listbox"]')
+  await expect.poll(() => thumbnailStrip.evaluate(element => getComputedStyle(element).touchAction)).toBe('pan-x')
+  await expect.poll(() => thumbnailStrip.evaluate(element => {
+    const thumbnail = element.querySelector<HTMLElement>('[role="option"]')
+    return thumbnail ? element.clientHeight >= thumbnail.offsetHeight : false
+  })).toBe(true)
+
+  await touchPoint(page, viewport)
+  await touchPoint(page, viewport)
+  await expect(page.getByLabel('Zoom level')).toHaveText('100%')
+  await expect(preview).toHaveAttribute('data-immersive', 'false')
+
+  await page.getByRole('button', { name: 'Enter fullscreen' }).click()
+  await expect(preview).toHaveAttribute('data-immersive', 'true')
+})
+
 test('image gallery preloads neighbours and supports swipe, pinch, and explicit fullscreen controls', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Multi-touch gesture injection requires Chromium CDP')
   const requestedImages = new Set<string>()
@@ -2386,7 +2423,8 @@ test('image gallery tracks a swipe and progressively loads an ordered thumbnail 
   })
   await expect.poll(() => track.evaluate(element => getComputedStyle(element).transform)).not.toBe(initialTransform)
   await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-  await expect(track).toHaveCSS('transition-duration', '0.22s')
+  await expect.poll(async () => Number(await track.getAttribute('data-gallery-transition-ms'))).toBeGreaterThanOrEqual(300)
+  await expect.poll(async () => Number.parseFloat(await track.evaluate(element => getComputedStyle(element).transitionDuration)) * 1000).toBeGreaterThanOrEqual(300)
   expect(await preview.getByRole('option', { name: 'Show gallery-21.svg' }).getAttribute('aria-selected')).toBe('true')
   await expect(preview.getByText('21 / 40')).toBeVisible()
   await expect(preview.getByRole('img', { name: 'gallery-21.svg', exact: true })).toBeVisible()
