@@ -181,6 +181,10 @@ body {
   background-color: var(--webfile-selection-bg) !important;
 }
 
+.webfile-sort-selected > .p-menu-item-content {
+  background-color: var(--webfile-selection-bg) !important;
+}
+
 .webfile-focus-tint {
   background-color: var(--webfile-selection-focus-bg) !important;
 }

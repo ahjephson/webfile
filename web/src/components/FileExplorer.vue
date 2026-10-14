@@ -98,13 +98,13 @@ const sortDirection = ref<SortDirection>('asc')
 const sortMenu = ref<any>(null)
 const sortItems = computed(() => [
   ...(['name', 'modified', 'size', 'type'] as SortField[]).map(field => ({
-    label: `Sort by ${field}`, icon: sortField.value === field ? 'pi pi-check' : undefined,
+    label: `Sort by ${field}`, class: sortField.value === field ? 'webfile-sort-selected' : undefined,
     command: () => chooseSort(field, sortDirection.value),
   })),
   { separator: true },
   ...(['asc', 'desc'] as SortDirection[]).map(direction => ({
     label: direction === 'asc' ? 'Ascending' : 'Descending',
-    icon: sortDirection.value === direction ? 'pi pi-check' : undefined,
+    class: sortDirection.value === direction ? 'webfile-sort-selected' : undefined,
     command: () => chooseSort(sortField.value, direction),
   })),
 ])
