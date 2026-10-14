@@ -90,6 +90,13 @@ jobs:
           cleanup() {
             if [[ -n "$webfile_pid" ]]; then
               kill "$webfile_pid" 2>/dev/null || true
+              for attempt in {1..50}; do
+                if ! kill -0 "$webfile_pid" 2>/dev/null; then
+                  break
+                fi
+                sleep 0.2
+              done
+              kill -KILL "$webfile_pid" 2>/dev/null || true
               wait "$webfile_pid" 2>/dev/null || true
             fi
           }
@@ -116,7 +123,7 @@ jobs:
             > /tmp/webfile-e2e.log 2>&1 &
           webfile_pid=$!
           wait_for_server http://127.0.0.1:8080/api/health /tmp/webfile-e2e.log
-          npm --prefix web run test:e2e
+          npm --prefix web run test:e2e -- --reporter=line --global-timeout=900000
           cleanup
           webfile_pid=''
 
@@ -132,8 +139,20 @@ jobs:
             cd web
             WEBFILE_E2E_PREFIX=/tools/webfile \
               npx playwright test tests/e2e/base-path.spec.ts \
-                --project=chromium-touch
+                --project=chromium-touch --reporter=line --global-timeout=120000
           )
+
+      - name: Preserve browser test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-diagnostics-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
+          path: |
+            web/test-results/
+            /tmp/webfile-e2e.log
+            /tmp/webfile-e2e-prefix.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
