@@ -52,6 +52,31 @@ test('search reports truncation and remains usable in a narrow viewport', async 
   await expect(page.getByRole('region', { name: 'Search results', exact: true })).toHaveCount(0)
 })
 
+test('renaming a nested search result preserves its folder and refreshes results', async ({ page }) => {
+  const fixture = await featureFixture(page, 'search-rename')
+  await fixture.mkdir(`${fixture.path}/nested`)
+  const original = `${fixture.path}/nested/report.txt`
+  const renamed = `${fixture.path}/nested/report-renamed.txt`
+  await fixture.write(original, 'search rename content')
+  await page.goto(`/?fixture=${encodeURIComponent(fixture.path)}#path=${encodeURIComponent(fixture.path)}`)
+  await expect(page.getByRole('button', { name: fixture.path.split('/').pop()!, exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Search beneath this folder', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Search filenames' }).fill('report')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('Search complete')
+  await page.getByRole('button', { name: 'List view', exact: true }).click()
+  await page.locator('[data-file-entry]').filter({ hasText: 'report.txt' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Rename…', exact: true }).click()
+  await page.getByRole('dialog').getByRole('textbox').fill('report-renamed.txt')
+  await page.getByRole('dialog').getByRole('button', { name: 'Rename', exact: true }).click()
+  const row = page.locator('[data-file-entry]').filter({ hasText: 'report-renamed.txt' })
+  await expect(row).toHaveCount(1)
+  await expect(row.locator('[data-result-location]')).toHaveText(`${fixture.path}/nested`)
+  expect(await fixture.read(renamed)).toBe('search rename content')
+  expect(await fixture.exists(original)).toBe(false)
+  expect(await fixture.exists(`${fixture.path}/report-renamed.txt`)).toBe(false)
+})
+
 test('search results distinguish duplicate names and retain normal sorting and selection', async ({ page }) => {
   await page.route('**/api/preferences', route => route.fulfill({ json: { view_mode: 'list' } }))
   const entries = ['a', 'b'].map((folder, index) => ({ name: 'report.txt', path: `/Files/${folder}/report.txt`, is_dir: false, size: index + 1, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }))

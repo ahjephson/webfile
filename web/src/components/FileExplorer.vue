@@ -917,7 +917,14 @@ async function onNameDialogSubmit(value: string) {
       createdPath = joinPath(currentPath.value, value)
       await api.mkdir(createdPath)
     } else if (renameTarget.value) {
-      await api.rename(renameTarget.value.path, joinPath(currentPath.value, value))
+      const source = renameTarget.value.path
+      const containingFolder = source.slice(0, source.lastIndexOf('/')) || '/'
+      await api.rename(source, joinPath(containingFolder, value))
+      if (searchRequest.value) {
+        clearSelection(); clearFocus()
+        await runSearch({ ...searchRequest.value })
+        return
+      }
     }
     await refresh(false)
     if (createdPath) {

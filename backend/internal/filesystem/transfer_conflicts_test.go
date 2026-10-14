@@ -3,6 +3,7 @@ package filesystem
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -53,6 +54,76 @@ func TestTransferDecisionsPreserveOrReplaceOnlyReviewedFiles(t *testing.T) {
 			data, _ = os.ReadFile(filepath.Join(root, "from", "item.txt"))
 			if string(data) != "new" {
 				t.Fatal("copy changed source")
+			}
+		})
+	}
+}
+
+func TestTransferMovesDirectoryWithoutChangingReadOnlyDescendants(t *testing.T) {
+	for _, keepBoth := range []bool{false, true} {
+		t.Run(fmt.Sprintf("keepBoth=%t", keepBoth), func(t *testing.T) {
+			service, root := testService(t)
+			source := filepath.Join(root, "folder")
+			locked := filepath.Join(source, "locked")
+			targetName := "folder"
+			if keepBoth {
+				targetName = "folder (copy)"
+			}
+			destination := filepath.Join(root, "to", targetName)
+			if err := os.MkdirAll(locked, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(root, "to"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(locked, "file.txt"), []byte("content"), 0o400); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(locked, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			defer os.Chmod(locked, 0o700)
+			defer os.Chmod(filepath.Join(destination, "locked"), 0o700)
+			before, err := os.Stat(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if keepBoth {
+				if err := os.Mkdir(filepath.Join(root, "to", "folder"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			transfer := service.NewTransfer("move", []string{"/Files/folder"}, "/Files/to")
+			if keepBoth {
+				var conflict *TransferConflict
+				if err := transfer.Run(context.Background(), nil); !errors.As(err, &conflict) {
+					t.Fatal(err)
+				}
+				if err := transfer.Decide(ConflictDecision{Revision: conflict.Revision, Choice: "keep_both"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var progress TransferProgress
+			if err := transfer.Run(context.Background(), func(p TransferProgress) { progress = p }); err != nil {
+				t.Fatal(err)
+			}
+			after, err := os.Stat(destination)
+			if err != nil || !os.SameFile(before, after) {
+				t.Fatalf("directory was not renamed: %v", err)
+			}
+			info, err := os.Stat(filepath.Join(destination, "locked"))
+			if err != nil || info.Mode().Perm() != 0o500 {
+				t.Fatalf("read-only directory mode changed: %v, %v", info, err)
+			}
+			data, err := os.ReadFile(filepath.Join(destination, "locked", "file.txt"))
+			if err != nil || string(data) != "content" {
+				t.Fatalf("moved content: %q, %v", data, err)
+			}
+			if _, err := os.Stat(source); !os.IsNotExist(err) {
+				t.Fatalf("source remains: %v", err)
+			}
+			if progress.ItemsDone != 3 || progress.ItemsTotal != 3 || progress.BytesDone != 7 || progress.BytesTotal != 7 {
+				t.Fatalf("progress=%#v", progress)
 			}
 		})
 	}

@@ -281,6 +281,36 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 			t.decision = nil
 		}
 		if sourceInfo.IsDir() {
+			// An absent destination can receive the whole directory without
+			// requiring write access to its descendants. Existing folders still
+			// follow the explicit merge path and review child conflicts.
+			if t.kind == "move" && choice != "merge" && sourceRoot.Name == targetRoot.Name {
+				bytes, items, err := measureTree(ctx, source)
+				if err != nil {
+					return err
+				}
+				t.service.videoQueue.cancelPath(ctx, item.source)
+				cached := t.service.collectCachedThumbnails(ctx, item.source)
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				err = moveReviewedItem(sourceRoot, targetRoot, source, target, sourceInfo)
+				if err == nil {
+					t.service.moveCachedThumbnails(context.WithoutCancel(ctx), cached, item.target)
+					t.bytes += bytes
+					t.items += items
+					t.queue = t.queue[1:]
+					emit(transferPhaseCopying, "Moved "+path.Base(item.source))
+					continue
+				}
+				if errors.Is(err, ErrConflict) {
+					t.forceReview = true
+					continue
+				}
+				if !errors.Is(err, unix.EXDEV) && !errors.Is(err, errRenameNoReplaceUnsupported) {
+					return err
+				}
+			}
 			if choice != "merge" {
 				root, e := os.OpenRoot(targetRoot.Path)
 				if e != nil {
