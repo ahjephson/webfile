@@ -14,6 +14,7 @@ import { resolvedTheme, setTheme, themeMode, type ThemeMode } from '@/theme'
 import { defaultPreferences, normalizePreferences, type UserPreferences } from '@/preferences'
 import { isEntryVisible } from '@/utils/entryVisibility'
 import { fileVisualForPath } from '@/utils/fileVisual'
+import { sortEntries, type SortField, type SortDirection } from '@/utils/sorting'
 import SettingsDialog from '@/components/SettingsDialog.vue'
 import { useRealtime } from '@/composables/useRealtime'
 import { useFilePreview } from '@/composables/useFilePreview'
@@ -92,6 +93,27 @@ const {
 const viewMode = ref<ViewMode>('list')
 const gridSize = ref<GridSize>('medium')
 const showHidden = ref(false)
+const sortField = ref<SortField>('name')
+const sortDirection = ref<SortDirection>('asc')
+const sortMenu = ref<any>(null)
+const sortItems = computed(() => [
+  ...(['name', 'modified', 'size', 'type'] as SortField[]).map(field => ({
+    label: `Sort by ${field}`, icon: sortField.value === field ? 'pi pi-check' : undefined,
+    command: () => chooseSort(field, sortDirection.value),
+  })),
+  { separator: true },
+  ...(['asc', 'desc'] as SortDirection[]).map(direction => ({
+    label: direction === 'asc' ? 'Ascending' : 'Descending',
+    icon: sortDirection.value === direction ? 'pi pi-check' : undefined,
+    command: () => chooseSort(sortField.value, direction),
+  })),
+])
+function chooseSort(field: SortField, direction?: SortDirection) {
+  sortDirection.value = direction ?? (sortField.value === field && sortDirection.value === 'asc' ? 'desc' : 'asc')
+  sortField.value = field
+  void savePreferences()
+  void nextTick(() => scrollFocusedIntoView())
+}
 const gridColumns = ref(1)
 const contextMenu = ref<any>(null)
 const actionsMenu = ref<any>(null)
@@ -239,7 +261,7 @@ async function cancelThumbnailJob(id: string) {
 
 const filteredEntries = computed(() => {
   const q = search.value.trim().toLocaleLowerCase()
-  return entries.value.filter(entry => {
+  return sortEntries(entries.value, sortField.value, sortDirection.value).filter(entry => {
     if (!isEntryVisible(entry, { showHidden: showHidden.value, hideInaccessible: userPreferences.value.hide_inaccessible })) return false
     return !q || entry.name.toLocaleLowerCase().includes(q)
   })
@@ -490,6 +512,8 @@ async function savePreferences() {
 function currentPreferences(): UserPreferences {
   return {
     ...userPreferences.value,
+    sort_field: sortField.value,
+    sort_direction: sortDirection.value,
     view_mode: viewMode.value,
     grid_size: gridSize.value,
     show_hidden: showHidden.value,
@@ -501,6 +525,8 @@ function applyPreferences(preferences: UserPreferences) {
   const wasLoaded = preferencesLoaded
   preferencesLoaded = false
   userPreferences.value = { ...preferences }
+  sortField.value = preferences.sort_field
+  sortDirection.value = preferences.sort_direction
   viewMode.value = preferences.view_mode
   gridSize.value = preferences.grid_size
   showHidden.value = preferences.show_hidden
@@ -1463,6 +1489,8 @@ function operationLabel(value: string) {
       <span class="h-6 w-px bg-zinc-800" />
       <Button v-tooltip.bottom="'Refresh'" icon="pi pi-refresh" size="small" severity="secondary" text aria-label="Refresh" @click="refresh(true)" />
       <span class="h-6 w-px bg-zinc-800" />
+      <Button v-tooltip.bottom="'Sort files'" icon="pi pi-sort-alt" size="small" severity="secondary" text aria-label="Sort files" @click="sortMenu.toggle($event)" />
+      <Menu ref="sortMenu" :model="sortItems" popup />
       <div v-if="filterVisible" class="w-64">
         <InputText ref="filterInput" v-model="search" size="small" fluid placeholder="Filter this folder" aria-label="Filter this folder" @keydown.escape="closeFilter" />
       </div>
@@ -1508,10 +1536,10 @@ function operationLabel(value: string) {
           <div><i class="pi pi-search mb-3 text-4xl" /><p>No matching files</p></div>
         </div>
         <div v-else class="flex h-full min-h-0 flex-col">
-          <div v-if="viewMode === 'list'" class="grid min-w-[46rem] shrink-0 grid-cols-[minmax(18rem,1fr)_8rem_13rem_8rem] border-b border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-            <span>Name</span><span>Size</span><span>Modified</span><span>Mode</span>
-          </div>
           <VirtualFileList
+            :sort-field="sortField"
+            :sort-direction="sortDirection"
+            @sort="chooseSort($event)"
             v-if="viewMode === 'list'"
             ref="listView"
             class="min-h-0 flex-1"

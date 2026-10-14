@@ -401,6 +401,14 @@ func (s *MainServer) putPreferences(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if prefs.SortField != "" && prefs.SortField != "name" && prefs.SortField != "size" && prefs.SortField != "modified" && prefs.SortField != "type" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid sort field"})
+		return
+	}
+	if prefs.SortDirection != "" && prefs.SortDirection != "asc" && prefs.SortDirection != "desc" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid sort direction"})
+		return
+	}
 	if prefs.ViewMode != "" && prefs.ViewMode != "list" && prefs.ViewMode != "grid" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "view_mode must be list or grid"})
 		return

@@ -3,6 +3,8 @@ import type { Preferences } from '@/types/files'
 export type UserPreferences = Required<Preferences>
 
 export const defaultPreferences: UserPreferences = {
+  sort_field: 'name',
+  sort_direction: 'asc',
   view_mode: 'list',
   grid_size: 'medium',
   show_hidden: false,
@@ -24,6 +26,8 @@ export function normalizePreferences(value: Preferences = {}): UserPreferences {
     ? value.editor_font_size!
     : defaultPreferences.editor_font_size
   return {
+    sort_field: ['modified', 'size', 'type'].includes(value.sort_field ?? '') ? value.sort_field! : 'name',
+    sort_direction: value.sort_direction === 'desc' ? 'desc' : 'asc',
     view_mode: value.view_mode === 'grid' ? 'grid' : 'list',
     grid_size: value.grid_size === 'small' || value.grid_size === 'large' ? value.grid_size : 'medium',
     show_hidden: value.show_hidden === true,

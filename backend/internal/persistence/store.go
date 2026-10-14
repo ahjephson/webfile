@@ -18,6 +18,8 @@ type SessionRecord struct {
 }
 
 type Preferences struct {
+	SortField             string `json:"sort_field,omitempty"`
+	SortDirection         string `json:"sort_direction,omitempty"`
 	ViewMode              string `json:"view_mode,omitempty"`
 	GridSize              string `json:"grid_size,omitempty"`
 	ShowHidden            bool   `json:"show_hidden,omitempty"`

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { FileEntry } from '@/types/files'
 import FileVisual from '@/components/FileVisual.vue'
 import LevelUpIcon from '@/components/LevelUpIcon.vue'
+import type { SortField, SortDirection } from '@/utils/sorting'
 
 const props = defineProps<{
   entries: FileEntry[]
@@ -11,6 +12,8 @@ const props = defineProps<{
   focusedPath: string
   selectionControlsVisible: boolean
   parentPath?: string
+  sortField?: SortField
+  sortDirection?: SortDirection
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +23,7 @@ const emit = defineEmits<{
   context: [entry: FileEntry, event: MouseEvent | PointerEvent]
   dropfiles: [entry: FileEntry, event: DragEvent]
   parent: [input: 'mouse' | 'touch']
+  sort: [field: SortField]
 }>()
 
 const viewport = ref<HTMLElement | null>(null)
@@ -159,6 +163,12 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
+    <div class="grid shrink-0 grid-cols-[minmax(18rem,1fr)_8rem_13rem_8rem] border-b border-zinc-800 px-3 py-2 text-xs text-zinc-500 overflow-x-auto" aria-label="File sorting">
+      <button v-for="column in [{ field: 'name', label: 'Name' }, { field: 'size', label: 'Size' }, { field: 'modified', label: 'Modified' }]" :key="column.field" class="text-left" :aria-label="`Sort by ${column.label}`" @click="emit('sort', column.field as SortField)">
+        {{ column.label }} <i v-if="sortField === column.field" class="pi text-[0.6rem]" :class="sortDirection === 'desc' ? 'pi-arrow-down' : 'pi-arrow-up'" />
+      </button>
+      <span>Permissions</span>
+    </div>
     <button
       v-if="parentPath"
       class="grid h-11 shrink-0 grid-cols-[minmax(18rem,1fr)_8rem_13rem_8rem] items-center border-b border-zinc-900 px-3 text-left text-sm hover:bg-zinc-900/70"

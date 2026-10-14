@@ -45,6 +45,8 @@ export interface FileDetails {
 }
 
 export interface Preferences {
+  sort_field?: 'name' | 'modified' | 'size' | 'type'
+  sort_direction?: 'asc' | 'desc'
   view_mode?: 'list' | 'grid'
   grid_size?: 'small' | 'medium' | 'large'
   show_hidden?: boolean
