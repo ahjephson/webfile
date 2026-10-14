@@ -367,6 +367,43 @@ exit 3
 	assertNoStaging(t, root)
 }
 
+func TestRunToolDrainsPasswordErrorWithSlowProgressConsumer(t *testing.T) {
+	root := t.TempDir()
+	finished := filepath.Join(root, "finished")
+	tool := writeTool(t, `#!/bin/sh
+set -eu
+printf ' 64%%\n' >&2
+head -c 66000 /dev/zero | tr '\000' x >&2
+printf '\nWrong password\n' >&2
+touch "`+finished+`"
+exit 2
+`)
+	target := New(Config{Executable: tool}, testResolver(t, filesystem.Root{Name: "Files", Path: root}))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := target.runTool(ctx, "", root, "", func(progress Progress) {
+		if !progress.PercentKnown || progress.Percent != 64 {
+			return
+		}
+		for {
+			if _, err := os.Stat(finished); err == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Error("archive tool did not finish writing its output")
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+		// Let the process exit while output is queued behind this callback.
+		time.Sleep(50 * time.Millisecond)
+	})
+	if !errors.Is(err, ErrIncorrectPassword) {
+		t.Fatalf("password error was lost while draining output: %v", err)
+	}
+}
+
 func TestPublishDirectoryFallbackPublishesRecursively(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "stage")

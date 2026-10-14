@@ -275,7 +275,11 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 		close(chunks)
 	}()
 	wait := make(chan error, 1)
-	go func() { wait <- cmd.Wait() }()
+	go func() {
+		// Wait closes the output pipes, so finish reading them first.
+		readers.Wait()
+		wait <- cmd.Wait()
+	}()
 
 	var output strings.Builder
 	promptSeen := false
@@ -288,6 +292,12 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 		case <-ctx.Done():
 			cancel()
 			_ = stdin.Close()
+			_ = stdout.Close()
+			_ = stderr.Close()
+			if chunks != nil {
+				for range chunks {
+				}
+			}
 			if wait != nil {
 				<-wait
 			}
