@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto'
 
 export async function featureFixture(page: Page, prefix: string) {
   await page.goto('/')
+  // Initial setup writes the normalized folder URL after loading preferences.
+  // Finish that setup before navigating this page to a fixture folder.
+  await expect(page).toHaveURL(/#path=/)
   const { csrf_token } = await (await page.request.get('/api/session')).json()
   const headers = { 'X-WebFile-CSRF': csrf_token }
   const listing = await (await page.request.get('/api/fs/dir?path=%2F')).json()

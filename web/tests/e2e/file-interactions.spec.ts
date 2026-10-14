@@ -64,18 +64,7 @@ async function longPressWithEmulatedMouse(page: Page, target: Locator, whileHeld
 }
 
 async function dispatchContextMenu(target: Locator) {
-  const box = await target.boundingBox()
-  if (!box) {
-    throw new Error('Context-menu target is not visible')
-  }
-
-  await target.dispatchEvent('contextmenu', {
-    bubbles: true,
-    cancelable: true,
-    button: 2,
-    clientX: box.x + box.width / 2,
-    clientY: box.y + box.height / 2,
-  })
+  await target.click({ button: 'right' })
 }
 
 async function dispatchContextMenuProbe(target: Locator) {
