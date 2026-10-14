@@ -60,7 +60,10 @@ and persistent application state.
   not trigger recursive folder-size calculations.
 - Search filenames beneath the current folder, with optional `*`/`?` wildcards,
   case sensitivity and file/folder filtering. Results stream from a live scan
-  and can be opened or located in their containing folder. Cancel stops the
+  into the normal list/grid view, with location information and a search banner.
+  The search dialog configures the scan; results use the usual selection,
+  sorting, previews and file actions. “Show in folder” in a result's context
+  menu opens its containing folder and selects the item. Cancel stops the
   scan. Each worker allows one search, bounded to 1,000 matches, 100,000 entries,
   64 levels and 30 seconds; hitting a limit clearly reports partial results.
   Hidden/excluded paths and symlink traversal are omitted by default, and no

@@ -14,6 +14,7 @@ const props = defineProps<{
   parentPath?: string
   sortField?: SortField
   sortDirection?: SortDirection
+  showLocation?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -27,6 +28,7 @@ const emit = defineEmits<{
 }>()
 
 const viewport = ref<HTMLElement | null>(null)
+const headerViewport = ref<HTMLElement | null>(null)
 const scrollTop = ref(0)
 const viewportHeight = ref(400)
 const rowHeight = 44
@@ -36,6 +38,8 @@ let ignoreTouchActivationUntil = 0
 let touchPointerUntil = 0
 
 const selected = computed(() => new Set(props.selectedPaths))
+const columnsStyle = computed(() => ({ gridTemplateColumns: props.showLocation ? 'minmax(18rem,1fr) minmax(16rem,1fr) 8rem 13rem 8rem' : 'minmax(18rem,1fr) 8rem 13rem 8rem' }))
+function containingFolder(entry: FileEntry) { return entry.path.slice(0, entry.path.lastIndexOf('/')) || '/' }
 const cut = computed(() => new Set(props.cutPaths))
 const startIndex = computed(() => Math.max(0, Math.floor(scrollTop.value / rowHeight) - overscan))
 const endIndex = computed(() => Math.min(props.entries.length, Math.ceil((scrollTop.value + viewportHeight.value) / rowHeight) + overscan))
@@ -56,6 +60,7 @@ watch(() => props.entries.length, () => {
 
 function onScroll() {
   scrollTop.value = viewport.value?.scrollTop ?? 0
+  if (headerViewport.value) headerViewport.value.scrollLeft = viewport.value?.scrollLeft ?? 0
 }
 
 function scrollToIndex(index: number) {
@@ -163,11 +168,15 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <div class="grid shrink-0 grid-cols-[minmax(18rem,1fr)_8rem_13rem_8rem] border-b border-zinc-800 px-3 py-2 text-xs text-zinc-500 overflow-x-auto" aria-label="File sorting">
-      <button v-for="column in [{ field: 'name', label: 'Name' }, { field: 'size', label: 'Size' }, { field: 'modified', label: 'Modified' }]" :key="column.field" class="text-left" :aria-label="`Sort by ${column.label}`" @click="emit('sort', column.field as SortField)">
+    <div ref="headerViewport" class="shrink-0 overflow-hidden border-b border-zinc-800" aria-label="File sorting">
+    <div class="grid px-3 py-2 text-xs text-zinc-500" :style="{ ...columnsStyle, minWidth: showLocation ? '65rem' : '49rem' }">
+      <button class="text-left" aria-label="Sort by Name" @click="emit('sort', 'name')">Name <i v-if="sortField === 'name'" class="pi text-[0.6rem]" :class="sortDirection === 'desc' ? 'pi-arrow-down' : 'pi-arrow-up'" /></button>
+      <span v-if="showLocation">Location</span>
+      <button v-for="column in [{ field: 'size', label: 'Size' }, { field: 'modified', label: 'Modified' }]" :key="column.field" class="text-left" :aria-label="`Sort by ${column.label}`" @click="emit('sort', column.field as SortField)">
         {{ column.label }} <i v-if="sortField === column.field" class="pi text-[0.6rem]" :class="sortDirection === 'desc' ? 'pi-arrow-down' : 'pi-arrow-up'" />
       </button>
       <span>Permissions</span>
+    </div>
     </div>
     <button
       v-if="parentPath"
@@ -183,17 +192,17 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
       <span class="text-zinc-500">—</span><span /><span />
     </button>
     <div ref="viewport" class="min-h-0 flex-1 overflow-auto overscroll-contain" data-file-viewport @scroll="onScroll">
-    <div class="relative min-w-[46rem] select-none" :style="{ height: `${totalHeight}px` }">
+    <div class="relative select-none" :style="{ height: `${totalHeight}px`, minWidth: showLocation ? '65rem' : '49rem' }">
       <div
         v-for="row in visible"
         :key="row.entry.path"
-        class="absolute left-0 right-0 grid cursor-default grid-cols-[minmax(18rem,1fr)_8rem_13rem_8rem] items-center border-b border-zinc-900 px-3 text-sm transition-opacity hover:bg-zinc-900/70"
+        class="absolute left-0 right-0 grid cursor-default items-center border-b border-zinc-900 px-3 text-sm transition-opacity hover:bg-zinc-900/70"
         :class="[
           focusedPath === row.entry.path && selected.has(row.entry.path) ? 'webfile-focus-tint' : selected.has(row.entry.path) ? 'webfile-selection-tint' : '',
           selected.has(row.entry.path) || focusedPath === row.entry.path ? 'outline outline-1 -outline-offset-1 outline-sky-500/70' : '',
           cut.has(row.entry.path) ? 'opacity-50' : '',
         ]"
-        :style="{ height: `${rowHeight}px`, transform: `translateY(${row.index * rowHeight}px)` }"
+        :style="{ ...columnsStyle, height: `${rowHeight}px`, transform: `translateY(${row.index * rowHeight}px)` }"
         :data-cut="cut.has(row.entry.path) ? 'true' : undefined"
         data-file-entry
         v-longpress="longPressEntry(row.entry)"
@@ -227,6 +236,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
           <FileVisual :entry="row.entry" />
           <span class="truncate" :title="row.entry.name">{{ row.entry.name }}</span>
         </div>
+        <span v-if="showLocation" class="truncate pr-3 text-xs text-zinc-500" :title="containingFolder(row.entry)" data-result-location>{{ containingFolder(row.entry) }}</span>
         <span class="text-zinc-400">{{ row.entry.is_dir && row.entry.size_status !== 'ready' ? '—' : formatBytes(row.entry.size) }}</span>
         <span class="text-zinc-400">{{ formatDate(row.entry.modified) }}</span>
         <span class="font-mono text-xs text-zinc-500">{{ row.entry.mode }}</span>

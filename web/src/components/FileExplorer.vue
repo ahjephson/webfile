@@ -9,7 +9,7 @@ import SplitButton from 'primevue/splitbutton'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '@/api/client'
-import type { ConflictDecision, FileEntry, FileOperation, VideoThumbnailJob } from '@/types/files'
+import type { ConflictDecision, FileEntry, FileOperation, SearchRequest, VideoThumbnailJob } from '@/types/files'
 import { resolvedTheme, setTheme, themeMode, type ThemeMode } from '@/theme'
 import { defaultPreferences, normalizePreferences, type UserPreferences } from '@/preferences'
 import { isEntryVisible } from '@/utils/entryVisibility'
@@ -23,6 +23,7 @@ import { useFilePreview } from '@/composables/useFilePreview'
 import { useExplorerSelection } from '@/composables/useExplorerSelection'
 import { useExplorerNavigation } from '@/composables/useExplorerNavigation'
 import { useFileOperations } from '@/composables/useFileOperations'
+import { useFilenameSearch } from '@/composables/useFilenameSearch'
 import NewDocumentDialog from '@/components/NewDocumentDialog.vue'
 import NameDialog from '@/components/NameDialog.vue'
 import ExtractDialog from '@/components/ExtractDialog.vue'
@@ -80,8 +81,26 @@ const error = ref('')
 const search = ref('')
 const filterVisible = ref(false)
 const recursiveSearchVisible = ref(false)
+const { request: searchRequest, results: searchResults, busy: searchBusy, message: searchMessage, error: searchError, scanned: searchScanned, skipped: searchSkipped, start: runSearch, cancel: cancelSearch, close: closeSearch } = useFilenameSearch()
+const viewingSearch = computed(() => searchRequest.value !== null)
+const viewEntries = computed(() => viewingSearch.value ? [...searchResults.value].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }) || a.path.localeCompare(b.path)) : entries.value)
+function startSearch(request: SearchRequest) {
+  recursiveSearchVisible.value = false
+  search.value = ''; clearSelection(); clearFocus(); loading.value = false
+  void runSearch(request)
+}
+function exitSearch() {
+  closeSearch(); search.value = ''; clearSelection(); clearFocus()
+  void refresh(true)
+}
+function refreshView() {
+  if (searchRequest.value) startSearch(searchRequest.value)
+  else void refresh(true)
+}
 async function locateSearchResult(entry: FileEntry, open = false) {
   recursiveSearchVisible.value = false
+  closeSearch(); search.value = ''
+  if (entry.name.startsWith('.')) showHidden.value = true
   navigateTo(entry.path.slice(0, entry.path.lastIndexOf('/')) || '/')
   if (!await refresh(false)) return
   if (!entries.value.some(current => current.path === entry.path)) { showError(new Error('This search result is no longer available')); return }
@@ -308,8 +327,8 @@ async function cancelThumbnailJob(id: string) {
 
 const filteredEntries = computed(() => {
   const q = search.value.trim().toLocaleLowerCase()
-  return sortEntries(entries.value, sortField.value, sortDirection.value).filter(entry => {
-    if (!isEntryVisible(entry, { showHidden: showHidden.value, hideInaccessible: userPreferences.value.hide_inaccessible })) return false
+  return sortEntries(viewEntries.value, sortField.value, sortDirection.value).filter(entry => {
+    if (!isEntryVisible(entry, { showHidden: viewingSearch.value ? searchRequest.value!.show_hidden : showHidden.value, hideInaccessible: userPreferences.value.hide_inaccessible })) return false
     return !q || entry.name.toLocaleLowerCase().includes(q)
   })
 })
@@ -361,9 +380,9 @@ async function queuePendingVideoThumbnails() {
   }
 }
 
-const selectedEntries = computed(() => entries.value.filter(entry => selectedPaths.value.has(entry.path)))
+const selectedEntries = computed(() => viewEntries.value.filter(entry => selectedPaths.value.has(entry.path)))
 const selectedOne = computed(() => selectedEntries.value.length === 1 ? selectedEntries.value[0] : null)
-const canMutate = computed(() => currentPath.value !== '/')
+const canMutate = computed(() => currentPath.value !== '/' && !viewingSearch.value)
 const canPaste = computed(() => canMutate.value && Boolean(fileClipboard.value?.paths.length))
 const cutPaths = computed(() => fileClipboard.value?.mode === 'move' ? fileClipboard.value.paths : [])
 const elevationLabel = computed(() => {
@@ -395,6 +414,7 @@ const contextItems = computed(() => {
       result.push({ separator: true })
     }
     result.push({ label: 'Open', icon: one.is_dir ? 'pi pi-folder-open' : 'pi pi-file-edit', disabled: !canOpenEntry(one), command: () => openEntry(one) })
+    if (viewingSearch.value) result.push({ label: 'Show in folder', icon: 'pi pi-folder-open', command: () => locateSearchResult(one) })
     result.push({ label: 'Download', icon: 'pi pi-download', disabled: !one.is_dir && one.can_read === false, command: () => download(one) })
     result.push({ label: 'Details', icon: 'pi pi-info-circle', command: () => toggleDetails(one) })
   }
@@ -475,6 +495,7 @@ onMounted(async () => {
 
 watch(currentPath, path => {
   if (!navigationReady) return
+  closeSearch()
   clearSelection()
   clearFocus(path)
   search.value = ''
@@ -642,12 +663,13 @@ function storeSessionExplorerState() {
 }
 
 async function refresh(showSpinner: boolean): Promise<boolean> {
+  if (viewingSearch.value) return true
   const requestedPath = currentPath.value
   if (showSpinner) loading.value = true
   error.value = ''
   try {
     const result = await api.list(requestedPath)
-    if (requestedPath !== currentPath.value) return false
+    if (requestedPath !== currentPath.value || viewingSearch.value) return false
     singleRootPath.value = result.single_root_path ?? ''
     if (requestedPath === '/' && singleRootPath.value && navigationReady) {
       navigateTo(singleRootPath.value, true)
@@ -669,6 +691,10 @@ async function refresh(showSpinner: boolean): Promise<boolean> {
 }
 
 function navigateTo(path: string, replaceHistory = false) {
+  const wasSearch = viewingSearch.value
+  closeSearch()
+  if (wasSearch) { clearSelection(); clearFocus(); search.value = '' }
+  if (wasSearch && path === currentPath.value) { void refresh(true); return }
   if (path === currentPath.value) return
   clearParentNavigationQueue()
   currentPath.value = path
@@ -676,6 +702,7 @@ function navigateTo(path: string, replaceHistory = false) {
 }
 
 function navigateHistoryAware(path: string): boolean {
+  if (viewingSearch.value) { navigateTo(path); return false }
   if (path === currentPath.value) return false
   if (goToPathInHistory(path)) return true
   navigateTo(path)
@@ -1501,7 +1528,7 @@ function operationLabel(value: string) {
       </div>
     </header>
 
-    <SearchDialog v-model:visible="recursiveSearchVisible" :path="currentPath" :show-hidden="showHidden" @open="locateSearchResult($event, true)" @locate="locateSearchResult($event)" />
+    <SearchDialog v-model:visible="recursiveSearchVisible" :path="currentPath" :show-hidden="showHidden" :initial="searchRequest" @search="startSearch" />
     <div v-if="error" class="webfile-alert-error border-b px-4 py-3 text-sm">{{ error }}</div>
 
     <div class="flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950 px-3 py-2">
@@ -1535,18 +1562,18 @@ function operationLabel(value: string) {
         />
       </div>
       <span class="h-6 w-px bg-zinc-800" />
-      <Button v-tooltip.bottom="'Refresh'" icon="pi pi-refresh" size="small" severity="secondary" text aria-label="Refresh" @click="refresh(true)" />
+      <Button v-tooltip.bottom="'Refresh'" icon="pi pi-refresh" size="small" severity="secondary" text aria-label="Refresh" @click="refreshView" />
       <span class="h-6 w-px bg-zinc-800" />
       <Button v-tooltip.bottom="'Sort files'" icon="pi pi-sort-alt" size="small" severity="secondary" text aria-label="Sort files" @click="sortMenu.toggle($event)" />
       <Menu ref="sortMenu" :model="sortItems" popup />
       <Button v-tooltip.bottom="'Search beneath this folder'" icon="pi pi-search-plus" size="small" severity="secondary" text aria-label="Search beneath this folder" :disabled="currentPath === '/'" @click="recursiveSearchVisible = true" />
       <div v-if="filterVisible" class="w-64">
-        <InputText ref="filterInput" v-model="search" size="small" fluid placeholder="Filter this folder" aria-label="Filter this folder" @keydown.escape="closeFilter" />
+        <InputText ref="filterInput" v-model="search" size="small" fluid :placeholder="viewingSearch ? 'Filter search results' : 'Filter this folder'" :aria-label="viewingSearch ? 'Filter search results' : 'Filter this folder'" @keydown.escape="closeFilter" />
       </div>
       <Button v-tooltip.bottom="filterVisible ? 'Close filter' : 'Filter (Ctrl+F)'" icon="pi pi-search" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': filterVisible }" :aria-label="filterVisible ? 'Close filter' : 'Open filter'" :aria-pressed="filterVisible" @click="toggleFilter" />
       <span class="h-6 w-px bg-zinc-800" />
       <div class="flex items-center gap-1">
-        <Button v-tooltip.bottom="showHidden ? 'Hide dot files' : 'Show dot files'" icon="pi pi-eye" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': showHidden }" :aria-label="showHidden ? 'Hide dot files' : 'Show dot files'" :aria-pressed="showHidden" @click="showHidden = !showHidden" />
+        <Button v-if="!viewingSearch" v-tooltip.bottom="showHidden ? 'Hide dot files' : 'Show dot files'" icon="pi pi-eye" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': showHidden }" :aria-label="showHidden ? 'Hide dot files' : 'Show dot files'" :aria-pressed="showHidden" @click="showHidden = !showHidden" />
         <span class="inline-flex overflow-hidden rounded-md border border-zinc-700">
           <button v-tooltip.bottom="'List view'" class="px-2.5 py-1.5" :class="viewMode === 'list' ? 'webfile-view-active' : 'text-zinc-400'" aria-label="List view" @click="viewMode = 'list'"><i class="pi pi-list" /></button>
           <SplitButton
@@ -1565,6 +1592,14 @@ function operationLabel(value: string) {
       </div>
     </div>
 
+    <section v-if="searchRequest" class="shrink-0 border-b border-zinc-800 px-4 py-3" aria-label="Search results">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="min-w-0"><h2 class="break-words text-sm font-semibold"><i class="pi pi-search mr-2" />Search results for “{{ searchRequest.query }}”</h2><p class="mt-1 break-all text-xs text-zinc-500">Beneath {{ searchRequest.path }} · {{ searchRequest.kind === 'all' ? 'Files and folders' : searchRequest.kind }}<span v-if="searchRequest.wildcard"> · Wildcards</span><span v-if="searchRequest.case_sensitive"> · Match case</span><span v-if="searchRequest.show_hidden"> · Including dotfiles</span></p></div>
+        <div class="flex flex-wrap gap-2"><Button v-if="searchBusy" label="Cancel search" size="small" severity="secondary" @click="cancelSearch" /><Button label="Refine search" size="small" severity="secondary" @click="recursiveSearchVisible = true" /><Button label="Back to folder" size="small" severity="secondary" @click="exitSearch" /></div>
+      </div>
+      <p class="mt-2 text-xs text-zinc-400" role="status"><i v-if="searchBusy" class="pi pi-spinner pi-spin mr-2" />{{ searchMessage }} · {{ searchResults.length }} results · {{ searchScanned }} entries checked<span v-if="searchSkipped"> · {{ searchSkipped }} inaccessible or unavailable entries skipped</span></p>
+      <p v-if="searchError" class="webfile-text-error mt-2 text-sm" role="alert">{{ searchError }}</p>
+    </section>
     <div class="flex min-h-0 flex-1">
       <div
         ref="fileViewHost"
@@ -1581,8 +1616,8 @@ function operationLabel(value: string) {
         </div>
 
         <div v-if="loading" class="grid h-full place-items-center"><ProgressSpinner class="h-10 w-10" /></div>
-        <div v-else-if="search && filteredEntries.length === 0" class="grid h-full place-items-center p-8 text-center text-zinc-500">
-          <div><i class="pi pi-search mb-3 text-4xl" /><p>No matching files</p></div>
+        <div v-else-if="(search || viewingSearch) && filteredEntries.length === 0" class="grid h-full place-items-center p-8 text-center text-zinc-500">
+          <div><i class="pi pi-search mb-3 text-4xl" /><p>{{ searchBusy ? 'Searching for files…' : 'No matching files' }}</p></div>
         </div>
         <div v-else class="flex h-full min-h-0 flex-col">
           <VirtualFileList
@@ -1597,7 +1632,8 @@ function operationLabel(value: string) {
             :cut-paths="cutPaths"
             :focused-path="focusedPath"
             :selection-controls-visible="selectionControlsVisible"
-            :parent-path="parentPath"
+            :parent-path="viewingSearch ? '' : parentPath"
+            :show-location="viewingSearch"
             @select="handleSelect"
             @focus="handleFocus"
             @activate="openEntry"
@@ -1616,7 +1652,8 @@ function operationLabel(value: string) {
             :selection-controls-visible="selectionControlsVisible"
             :size="gridSize"
             :thumbnail-pending-paths="[...pendingVideoThumbnailPaths]"
-            :parent-path="parentPath"
+            :parent-path="viewingSearch ? '' : parentPath"
+            :show-location="viewingSearch"
             @select="handleSelect"
             @focus="handleFocus"
             @activate="openEntry"

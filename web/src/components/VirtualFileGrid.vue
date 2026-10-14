@@ -13,6 +13,7 @@ const props = defineProps<{
   size: 'small' | 'medium' | 'large'
   thumbnailPendingPaths: string[]
   parentPath?: string
+  showLocation?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -43,7 +44,9 @@ const metrics = computed(() => ({
   medium: { cardMinWidth: 170, rowHeight: 176, cellHeight: 168 },
   large: { cardMinWidth: 238, rowHeight: 232, cellHeight: 224 },
 })[props.size])
-const rowHeight = computed(() => metrics.value.rowHeight)
+const locationHeight = computed(() => props.showLocation ? 32 : 0)
+const rowHeight = computed(() => metrics.value.rowHeight + locationHeight.value)
+function containingFolder(entry: FileEntry) { return entry.path.slice(0, entry.path.lastIndexOf('/')) || '/' }
 const columns = computed(() => Math.max(1, Math.floor((width.value + gap) / (metrics.value.cardMinWidth + gap))))
 const rowCount = computed(() => Math.ceil(props.entries.length / columns.value))
 const startRow = computed(() => Math.max(0, Math.floor(scrollTop.value / rowHeight.value) - overscanRows))
@@ -203,7 +206,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: columns })
           v-for="cell in row.entries"
           :key="cell.entry.path"
           class="group relative flex cursor-default flex-col items-center justify-center gap-1.5 overflow-hidden rounded-lg border border-transparent p-2 text-center transition-opacity hover:bg-zinc-900/70"
-          :style="{ height: `${metrics.cellHeight}px` }"
+          :style="{ height: `${metrics.cellHeight + locationHeight}px` }"
           :class="[
             focusedPath === cell.entry.path && selected.has(cell.entry.path) ? 'webfile-focus-tint' : selected.has(cell.entry.path) ? 'webfile-selection-tint' : '',
             selected.has(cell.entry.path) || focusedPath === cell.entry.path ? 'outline outline-1 outline-sky-500/70' : '',
@@ -238,6 +241,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: columns })
           </button>
           <FileVisual :entry="cell.entry" tile :tile-size="size" :thumbnail-enabled="!thumbnailPending.has(cell.entry.path)" />
           <span class="w-full truncate text-sm" :title="cell.entry.name">{{ cell.entry.name }}</span>
+          <span v-if="showLocation" class="line-clamp-2 w-full break-all text-xs text-zinc-500" :title="containingFolder(cell.entry)" data-result-location>{{ containingFolder(cell.entry) }}</span>
           <span class="h-[17px] w-full text-xs text-zinc-500">
             {{ !cell.entry.is_dir || cell.entry.size_status === 'ready' ? formatBytes(cell.entry.size) : '' }}
           </span>

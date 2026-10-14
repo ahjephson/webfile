@@ -502,7 +502,7 @@ for (const view of ['list', 'grid'] as const) {
     test('PrimeVue dismisses the menu on an outside click', async ({ page }) => {
       const checkbox = selectionButtons(page).first()
       const oppositeView = page.getByRole('button', { name: view === 'list' ? 'Grid view' : 'List view' })
-      const listHeader = page.locator('div.uppercase').filter({ hasText: 'Name' })
+      const listHeader = page.locator('[aria-label="File sorting"]')
 
       await entryFor(checkbox).click({ button: 'right' })
       const menu = page.locator('.p-contextmenu')
