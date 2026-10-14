@@ -51,6 +51,7 @@ func (s *Server) routes() {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 	s.mux.HandleFunc("GET /api/fs/dir", s.listDir)
+	s.mux.HandleFunc("POST /api/fs/search", s.search)
 	s.mux.HandleFunc("GET /api/fs/file", s.readFile)
 	s.mux.HandleFunc("GET /api/fs/content-type", s.contentType)
 	s.mux.HandleFunc("PUT /api/fs/file", s.writeFile)

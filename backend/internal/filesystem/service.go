@@ -54,6 +54,7 @@ type FileType struct {
 }
 
 type Service struct {
+	searchSlots       chan struct{}
 	resolver          *Resolver
 	editorMaxBytes    int64
 	thumbnailCache    thumbnailcache.Cache
@@ -75,6 +76,7 @@ func NewService(resolver *Resolver, editorMaxBytes int64) *Service {
 func NewServiceWithThumbnailOptions(resolver *Resolver, editorMaxBytes int64, options ThumbnailOptions) *Service {
 	options.applyDefaults()
 	service := &Service{
+		searchSlots:       make(chan struct{}, 1),
 		resolver:          resolver,
 		editorMaxBytes:    editorMaxBytes,
 		thumbnailCache:    options.Cache,

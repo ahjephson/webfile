@@ -18,6 +18,23 @@ export interface DirectoryResponse {
   single_root_path?: string
 }
 
+export interface SearchRequest {
+  path: string
+  query: string
+  wildcard: boolean
+  case_sensitive: boolean
+  kind: 'all' | 'files' | 'folders'
+  show_hidden: boolean
+}
+export interface SearchUpdate {
+  entry?: FileEntry
+  scanned: number
+  skipped: number
+  truncated: boolean
+  done: boolean
+  error?: string
+}
+
 export interface FileContent {
   path: string
   content: string

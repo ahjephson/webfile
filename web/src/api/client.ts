@@ -7,6 +7,8 @@ import type {
   Preferences,
   UploadSession,
   VideoThumbnailJob,
+  SearchRequest,
+  SearchUpdate,
 } from '@/types/files'
 import { appPath } from '@/base'
 
@@ -95,6 +97,36 @@ interface UploadChunkResponse extends UploadInitResponse {
 }
 
 export const api = {
+  async search(input: SearchRequest, update: (value: SearchUpdate) => void, signal: AbortSignal) {
+    const response = await fetch(appPath('/api/fs/search'), {
+      method: 'POST', signal,
+      headers: { 'Content-Type': 'application/json', 'X-WebFile-CSRF': csrfToken },
+      body: JSON.stringify(input),
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new ApiError(body.error ?? 'Search failed', response.status)
+    }
+    if (!response.body) throw new Error('Streaming search is unavailable')
+    const reader = response.body.getReader(), decoder = new TextDecoder()
+    let pending = '', finished = false
+    try {
+      while (true) {
+        const chunk = await reader.read()
+        pending += decoder.decode(chunk.value, { stream: !chunk.done })
+        let end: number
+        while ((end = pending.indexOf('\n')) >= 0) {
+          const line = pending.slice(0, end); pending = pending.slice(end + 1)
+          if (!line.trim()) continue
+          const value = JSON.parse(line) as SearchUpdate
+          if (value.error) throw new Error(value.error)
+          update(value); finished ||= value.done
+        }
+        if (chunk.done) break
+      }
+      if (!finished) throw new Error('Search connection ended before completion; results are partial')
+    } finally { await reader.cancel().catch(() => undefined); reader.releaseLock() }
+  },
   health() {
     return request<HealthStatus>('/api/health')
   },

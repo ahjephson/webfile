@@ -16,6 +16,7 @@ import { isEntryVisible } from '@/utils/entryVisibility'
 import { fileVisualForPath } from '@/utils/fileVisual'
 import { sortEntries, type SortField, type SortDirection } from '@/utils/sorting'
 import SettingsDialog from '@/components/SettingsDialog.vue'
+import SearchDialog from '@/components/SearchDialog.vue'
 import { useRealtime } from '@/composables/useRealtime'
 import { useFilePreview } from '@/composables/useFilePreview'
 import { useExplorerSelection } from '@/composables/useExplorerSelection'
@@ -77,6 +78,17 @@ const loading = ref(false)
 const error = ref('')
 const search = ref('')
 const filterVisible = ref(false)
+const recursiveSearchVisible = ref(false)
+async function locateSearchResult(entry: FileEntry, open = false) {
+  recursiveSearchVisible.value = false
+  navigateTo(entry.path.slice(0, entry.path.lastIndexOf('/')) || '/')
+  if (!await refresh(false)) return
+  if (!entries.value.some(current => current.path === entry.path)) { showError(new Error('This search result is no longer available')); return }
+  focusedPath.value = entry.path; replaceSelection([entry.path])
+  if (detailsVisible.value) detailsPath.value = entry.path
+  if (open) await openEntry(entry)
+  else void nextTick(scrollFocusedIntoView)
+}
 const filterInput = ref<any>(null)
 const selectionControlsVisible = ref(false)
 const {
@@ -1454,6 +1466,7 @@ function operationLabel(value: string) {
       </div>
     </header>
 
+    <SearchDialog v-model:visible="recursiveSearchVisible" :path="currentPath" :show-hidden="showHidden" @open="locateSearchResult($event, true)" @locate="locateSearchResult($event)" />
     <div v-if="error" class="webfile-alert-error border-b px-4 py-3 text-sm">{{ error }}</div>
 
     <div class="flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950 px-3 py-2">
@@ -1491,6 +1504,7 @@ function operationLabel(value: string) {
       <span class="h-6 w-px bg-zinc-800" />
       <Button v-tooltip.bottom="'Sort files'" icon="pi pi-sort-alt" size="small" severity="secondary" text aria-label="Sort files" @click="sortMenu.toggle($event)" />
       <Menu ref="sortMenu" :model="sortItems" popup />
+      <Button v-tooltip.bottom="'Search beneath this folder'" icon="pi pi-search-plus" size="small" severity="secondary" text aria-label="Search beneath this folder" :disabled="currentPath === '/'" @click="recursiveSearchVisible = true" />
       <div v-if="filterVisible" class="w-64">
         <InputText ref="filterInput" v-model="search" size="small" fluid placeholder="Filter this folder" aria-label="Filter this folder" @keydown.escape="closeFilter" />
       </div>
