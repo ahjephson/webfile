@@ -11,8 +11,18 @@ export function useFileOperations(onTerminal: (operation: FileOperation, previou
   const announcedTerminalStates = new Set<string>()
 
   async function load() {
+    const idsBeforeLoad = new Set(operations.value.map(operation => operation.id))
     try {
-      operations.value = (await api.operations()).operations
+      const loaded = (await api.operations()).operations
+      const current = new Map(operations.value.map(operation => [operation.id, operation]))
+      const loadedIds = new Set(loaded.map(operation => operation.id))
+      operations.value = [
+        ...operations.value.filter(operation => !idsBeforeLoad.has(operation.id) && !loadedIds.has(operation.id)),
+        ...loaded.map(operation => {
+          const existing = current.get(operation.id)
+          return existing && Date.parse(existing.updated_at) > Date.parse(operation.updated_at) ? existing : operation
+        }),
+      ].slice(0, 50)
     } catch {
       // Operation history is supplementary; realtime updates can still populate it.
     }

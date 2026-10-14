@@ -93,6 +93,7 @@ export interface UploadSession {
 export type OperationState = 'queued' | 'preparing' | 'awaiting_input' | 'running' | 'cancelling' | 'cleaning_up' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 
 export interface FileOperation {
+  input?: TransferConflict
   id: string
   kind: 'copy' | 'move' | 'delete' | 'extract' | 'archive' | 'upload' | string
   sources?: string[]
@@ -116,6 +117,21 @@ export interface FileOperation {
   started_at: string
   updated_at: string
   finished_at?: string
+}
+
+export interface TransferConflict {
+  revision: string
+  source: FileEntry
+  destination: FileEntry
+  category: 'files' | 'folders' | 'type_mismatch'
+  choices: ConflictChoice[]
+  changed: boolean
+}
+export type ConflictChoice = 'skip' | 'keep_both' | 'replace' | 'merge'
+export interface ConflictDecision {
+  revision: string
+  choice: ConflictChoice
+  apply_remaining: boolean
 }
 
 export type VideoThumbnailState = 'settling' | 'queued' | 'probing' | 'generating' | 'publishing' | 'ready' | 'failed' | 'cancelled'

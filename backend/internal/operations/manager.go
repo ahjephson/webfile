@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"sort"
@@ -35,29 +36,30 @@ const (
 )
 
 type Operation struct {
-	ID             string       `json:"id"`
-	Kind           string       `json:"kind"`
-	Sources        []string     `json:"sources,omitempty"`
-	Destination    string       `json:"destination,omitempty"`
-	State          State        `json:"state"`
-	Phase          string       `json:"phase,omitempty"`
-	Message        string       `json:"message,omitempty"`
-	Error          string       `json:"error,omitempty"`
-	ProgressDone   int64        `json:"progress_done"`
-	ProgressTotal  int64        `json:"progress_total"`
-	ProgressUnit   ProgressUnit `json:"progress_unit,omitempty"`
-	BytesDone      int64        `json:"bytes_done"`
-	BytesTotal     int64        `json:"bytes_total"`
-	BytesPerSecond *int64       `json:"bytes_per_second,omitempty"`
-	ItemsDone      int64        `json:"items_done"`
-	ItemsTotal     int64        `json:"items_total"`
-	QueuePosition  int          `json:"queue_position,omitempty"`
-	Cancellable    bool         `json:"cancellable"`
-	CleanupPolicy  string       `json:"cleanup_policy,omitempty"`
-	CleanupError   string       `json:"cleanup_error,omitempty"`
-	StartedAt      time.Time    `json:"started_at"`
-	UpdatedAt      time.Time    `json:"updated_at"`
-	FinishedAt     *time.Time   `json:"finished_at,omitempty"`
+	Input          json.RawMessage `json:"input,omitempty"`
+	ID             string          `json:"id"`
+	Kind           string          `json:"kind"`
+	Sources        []string        `json:"sources,omitempty"`
+	Destination    string          `json:"destination,omitempty"`
+	State          State           `json:"state"`
+	Phase          string          `json:"phase,omitempty"`
+	Message        string          `json:"message,omitempty"`
+	Error          string          `json:"error,omitempty"`
+	ProgressDone   int64           `json:"progress_done"`
+	ProgressTotal  int64           `json:"progress_total"`
+	ProgressUnit   ProgressUnit    `json:"progress_unit,omitempty"`
+	BytesDone      int64           `json:"bytes_done"`
+	BytesTotal     int64           `json:"bytes_total"`
+	BytesPerSecond *int64          `json:"bytes_per_second,omitempty"`
+	ItemsDone      int64           `json:"items_done"`
+	ItemsTotal     int64           `json:"items_total"`
+	QueuePosition  int             `json:"queue_position,omitempty"`
+	Cancellable    bool            `json:"cancellable"`
+	CleanupPolicy  string          `json:"cleanup_policy,omitempty"`
+	CleanupError   string          `json:"cleanup_error,omitempty"`
+	StartedAt      time.Time       `json:"started_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+	FinishedAt     *time.Time      `json:"finished_at,omitempty"`
 }
 
 type ProgressUpdate struct {
@@ -75,6 +77,21 @@ type ProgressUpdate struct {
 type Reporter struct {
 	manager *Manager
 	id      string
+}
+
+var ErrAwaitingInput = errors.New("task awaiting input")
+
+func (r Reporter) SetInput(input any) error {
+	data, err := json.Marshal(input)
+	if err != nil {
+		return err
+	}
+	r.manager.mu.Lock()
+	defer r.manager.mu.Unlock()
+	if rec := r.manager.records[r.id]; rec != nil {
+		rec.op.Input = data
+	}
+	return nil
 }
 
 func (r Reporter) ID() string {
@@ -117,12 +134,14 @@ type RunFunc func(context.Context, Reporter) error
 type CleanupFunc func(context.Context, Operation) error
 
 type TaskOptions struct {
+	InputHandler  func(json.RawMessage) error
 	Cancellable   bool
 	CleanupPolicy string
 	Cleanup       CleanupFunc
 }
 
 type record struct {
+	inputHandler     func(json.RawMessage) error
 	op               Operation
 	run              RunFunc
 	cleanup          CleanupFunc
@@ -167,6 +186,7 @@ func Open(databasePath string, maxKeep, maxConcurrent int) (*Manager, error) {
 	now := time.Now().UTC()
 	for _, operation := range stored {
 		if activeState(operation.State) {
+			operation.Input = nil
 			operation.State = StateInterrupted
 			operation.Phase = "interrupted"
 			operation.Message = "Interrupted by worker restart"
@@ -233,7 +253,7 @@ func (m *Manager) StartTask(kind string, sources []string, destination string, o
 		m.mu.Unlock()
 		return op
 	}
-	rec := &record{op: op, run: run, cleanup: options.Cleanup}
+	rec := &record{op: op, run: run, cleanup: options.Cleanup, inputHandler: options.InputHandler}
 	m.records[id] = rec
 	m.queue = append(m.queue, id)
 	m.refreshQueuePositionsLocked()
@@ -293,6 +313,24 @@ func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 		return
 	}
 	cancelled := errors.Is(err, context.Canceled) || rec.op.State == StateCancelling || ctx.Err() != nil
+	if !cancelled && errors.Is(err, ErrAwaitingInput) && rec.inputHandler != nil && len(rec.op.Input) > 0 {
+		if rec.cancel != nil {
+			rec.cancel()
+		}
+		rec.cancel = nil
+		rec.op.State = StateAwaitingInput
+		rec.op.Phase = "conflict"
+		rec.op.Message = "Waiting for your decision"
+		rec.op.UpdatedAt = time.Now().UTC()
+		resetTransferRate(rec)
+		m.persistLocked(rec, true)
+		m.broadcastLocked(rec.op)
+		m.running--
+		m.runningKinds[kind]--
+		m.scheduleLocked()
+		m.mu.Unlock()
+		return
+	}
 	cleanup := rec.cleanup
 	if cancelled && cleanup != nil {
 		rec.op.State = StateCleaningUp
@@ -320,6 +358,7 @@ func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 		}
 	}
 	if rec != nil {
+		rec.op.Input = nil
 		now := time.Now().UTC()
 		rec.op.UpdatedAt = now
 		rec.op.FinishedAt = timePointer(now)
@@ -399,7 +438,8 @@ func (m *Manager) Cancel(id string) bool {
 		m.mu.Unlock()
 		return false
 	}
-	if rec.op.State == StateQueued {
+	if rec.op.State == StateQueued || rec.op.State == StateAwaitingInput && rec.cancel == nil && !rec.external {
+		rec.op.Input = nil
 		now := time.Now().UTC()
 		rec.op.State = StateCancelled
 		rec.op.Phase = "cancelled"
@@ -487,6 +527,29 @@ func (m *Manager) Get(id string) (Operation, bool) {
 		return Operation{}, false
 	}
 	return cloneOperation(rec.op), true
+}
+
+func (m *Manager) SubmitInput(id string, data json.RawMessage) (Operation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec := m.records[id]
+	if m.closed || rec == nil || rec.op.State != StateAwaitingInput || rec.cancel != nil || rec.inputHandler == nil {
+		return Operation{}, errors.New("task is not waiting for a decision")
+	}
+	if err := rec.inputHandler(data); err != nil {
+		return Operation{}, err
+	}
+	rec.op.Input = nil
+	rec.op.State = StateQueued
+	rec.op.Phase = "queued"
+	rec.op.Message = "Decision accepted; queued to continue"
+	rec.op.UpdatedAt = time.Now().UTC()
+	m.queue = append(m.queue, id)
+	m.persistLocked(rec, true)
+	m.broadcastLocked(rec.op)
+	m.refreshQueuePositionsLocked()
+	m.scheduleLocked()
+	return cloneOperation(rec.op), nil
 }
 
 func (m *Manager) MarkArtifactDownloaded(id string) (Operation, bool) {
@@ -626,7 +689,8 @@ func (m *Manager) Close(ctx context.Context) error {
 	m.closed = true
 	now := time.Now().UTC()
 	for _, rec := range m.records {
-		if rec.op.State == StateQueued {
+		if rec.op.State == StateQueued || rec.op.State == StateAwaitingInput && rec.cancel == nil {
+			rec.op.Input = nil
 			rec.op.State = StateInterrupted
 
 			rec.op.Phase = "interrupted"
@@ -850,6 +914,7 @@ func terminalState(state State) bool {
 
 func cloneOperation(op Operation) Operation {
 	out := op
+	out.Input = append(json.RawMessage(nil), op.Input...)
 	out.Sources = append([]string(nil), op.Sources...)
 	if op.BytesPerSecond != nil {
 		rate := *op.BytesPerSecond

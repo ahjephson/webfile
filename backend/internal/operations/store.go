@@ -205,6 +205,14 @@ ON CONFLICT(id) DO UPDATE SET
 			return err
 		}
 	}
+	if len(operation.Input) > 0 {
+		_, err = tx.Exec(`INSERT INTO task_checkpoints(task_id,name,value_json,updated_at) VALUES(?,'input',?,?) ON CONFLICT(task_id,name) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`, operation.ID, string(operation.Input), formatTime(operation.UpdatedAt))
+	} else {
+		_, err = tx.Exec(`DELETE FROM task_checkpoints WHERE task_id=? AND name='input'`, operation.ID)
+	}
+	if err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -215,8 +223,8 @@ func (s *Store) List(limit int) ([]Operation, error) {
 	rows, err := s.db.Query(`
 SELECT id, kind, sources_json, destination, state, phase, message, error,
        progress_done, progress_total, progress_unit, bytes_done, bytes_total, items_done, items_total, queue_position, cancellable,
-       cleanup_policy, cleanup_error, started_at, updated_at, finished_at
-FROM tasks
+       cleanup_policy, cleanup_error, started_at, tasks.updated_at, finished_at, COALESCE(checkpoint.value_json,'')
+FROM tasks LEFT JOIN task_checkpoints checkpoint ON tasks.id=checkpoint.task_id AND checkpoint.name='input'
 ORDER BY started_at DESC
 LIMIT ?`, limit)
 	if err != nil {
@@ -231,16 +239,20 @@ LIMIT ?`, limit)
 		var startedAt string
 		var updatedAt string
 		var finishedAt sql.NullString
+		var input string
 		if err := rows.Scan(
 			&operation.ID, &operation.Kind, &sources, &operation.Destination, &state, &operation.Phase,
 			&operation.Message, &operation.Error, &operation.ProgressDone, &operation.ProgressTotal,
 			&operation.ProgressUnit, &operation.BytesDone, &operation.BytesTotal,
 			&operation.ItemsDone, &operation.ItemsTotal, &operation.QueuePosition, &operation.Cancellable, &operation.CleanupPolicy,
-			&operation.CleanupError, &startedAt, &updatedAt, &finishedAt,
+			&operation.CleanupError, &startedAt, &updatedAt, &finishedAt, &input,
 		); err != nil {
 			return nil, err
 		}
 		operation.State = State(state)
+		if input != "" {
+			operation.Input = json.RawMessage(input)
+		}
 		if err := json.Unmarshal([]byte(sources), &operation.Sources); err != nil {
 			return nil, err
 		}

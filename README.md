@@ -55,6 +55,16 @@ and persistent application state.
 ### File manager
 
 - Browse, filter and navigate directories.
+- Sort by name, modified time, size or type in either direction, with folders
+  first and the choice saved per user. Sorting uses the loaded listing; it does
+  not trigger recursive folder-size calculations.
+- Search filenames beneath the current folder, with optional `*`/`?` wildcards,
+  case sensitivity and file/folder filtering. Results stream from a live scan
+  and can be opened or located in their containing folder. Cancel stops the
+  scan. Each worker allows one search, bounded to 1,000 matches, 100,000 entries,
+  64 levels and 30 seconds; hitting a limit clearly reports partial results.
+  Hidden/excluded paths and symlink traversal are omitted by default, and no
+  search catalogue is created.
 - Create folders and text/code files.
 - Multi-select: Ctrl/Cmd, Shift ranges, Ctrl/Cmd+A and explicit touch selection
   mode.
@@ -65,6 +75,14 @@ and persistent application state.
   with transparent buffered fallback.
 - Drag/drop local files to upload.
 - Conflict-safe operations: existing destinations are not silently overwritten.
+- Copy/move conflicts offer Skip, Keep both, explicit Replace for regular files,
+  or Merge folders. File/folder mismatches cannot be replaced. Decisions can be
+  applied to remaining conflicts of the same type within that task. Changed
+  destinations require fresh review, and skipped move sources remain in place.
+  Waiting tasks release their worker slot and can be reviewed after reconnect;
+  worker restarts interrupt them rather than replaying previous decisions.
+  Replacement requires filesystem support for atomic rename exchange; an
+  unsupported filesystem reports an error without falling back to overwrite.
 - Regular file downloads. Folder downloads are prepared as cancellable 7-Zip
   archive tasks and become downloadable when creation completes.
 - Delete permanently removes files and folders using native filesystem

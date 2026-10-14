@@ -17,6 +17,7 @@ const emit = defineEmits<{
   'clear-history': []
   'remove-history': [operation: FileOperation]
   download: [operation: FileOperation]
+  resolve: [operation: FileOperation]
   'cancel-thumbnail': [id: string]
 }>()
 
@@ -223,6 +224,7 @@ function formatDate(value?: string) {
                 <div class="mt-1 truncate text-xs capitalize text-zinc-500">{{ operation.message || phaseLabel(operation) }}</div>
               </div>
               <span class="webfile-status-processing rounded px-2 py-0.5 text-xs capitalize">{{ stateLabel(operation) }}</span>
+              <Button v-if="operation.input && operation.state === 'awaiting_input'" label="Review conflict" size="small" severity="warn" @click="emit('resolve', operation)" />
             </div>
             <div class="mt-3">
               <div v-if="operation.state === 'queued'" class="flex items-center justify-between gap-3 text-xs text-zinc-500">

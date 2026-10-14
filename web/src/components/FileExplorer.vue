@@ -9,7 +9,7 @@ import SplitButton from 'primevue/splitbutton'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '@/api/client'
-import type { FileEntry, FileOperation, VideoThumbnailJob } from '@/types/files'
+import type { ConflictDecision, FileEntry, FileOperation, VideoThumbnailJob } from '@/types/files'
 import { resolvedTheme, setTheme, themeMode, type ThemeMode } from '@/theme'
 import { defaultPreferences, normalizePreferences, type UserPreferences } from '@/preferences'
 import { isEntryVisible } from '@/utils/entryVisibility'
@@ -17,6 +17,7 @@ import { fileVisualForPath } from '@/utils/fileVisual'
 import { sortEntries, type SortField, type SortDirection } from '@/utils/sorting'
 import SettingsDialog from '@/components/SettingsDialog.vue'
 import SearchDialog from '@/components/SearchDialog.vue'
+import ConflictDialog from '@/components/ConflictDialog.vue'
 import { useRealtime } from '@/composables/useRealtime'
 import { useFilePreview } from '@/composables/useFilePreview'
 import { useExplorerSelection } from '@/composables/useExplorerSelection'
@@ -166,6 +167,8 @@ const operationsVisible = ref(false)
 const taskAttention = ref(false)
 const settingsVisible = ref(false)
 const settingsSaving = ref(false)
+const conflictVisible = ref(false), conflictBusy = ref(false), conflictError = ref(''), conflictOperationId = ref('')
+const shownConflicts = new Set<string>()
 const userPreferences = ref<UserPreferences>({ ...defaultPreferences })
 const thumbnailJobs = ref<VideoThumbnailJob[]>([])
 const pendingVideoThumbnailPaths = ref<Set<string>>(new Set())
@@ -201,6 +204,38 @@ const {
   clearHistory: clearFinishedOperations,
   removeHistory: removeFinishedOperation,
 } = useFileOperations(onOperationTerminal)
+
+const conflictOperation = computed(() => operations.value.find(operation => operation.id === conflictOperationId.value && operation.state === 'awaiting_input' && operation.input)
+  ?? operations.value.find(operation => operation.state === 'awaiting_input' && operation.input) ?? null)
+watch(conflictOperation, operation => {
+  if (!operation?.input) { conflictVisible.value = false; return }
+  if (!shownConflicts.has(`${operation.id}:${operation.input.revision}`)) openConflict(operation)
+})
+function openConflict(operation: FileOperation) {
+  if (!operation.input) return
+  shownConflicts.add(`${operation.id}:${operation.input.revision}`)
+  conflictOperationId.value = operation.id; conflictError.value = ''; conflictVisible.value = true
+}
+async function resolveConflict(decision: ConflictDecision) {
+  const operation = conflictOperation.value
+  if (!operation || conflictBusy.value) return
+  conflictBusy.value = true; conflictError.value = ''
+  try {
+    await api.resolveConflict(operation.id, decision)
+    await loadOperations()
+  } catch (err) {
+    conflictError.value = err instanceof Error ? err.message : String(err)
+    await loadOperations()
+  } finally { conflictBusy.value = false }
+}
+async function cancelConflictTask() {
+  const operation = conflictOperation.value
+  if (!operation || conflictBusy.value) return
+  conflictBusy.value = true; conflictError.value = ''
+  try { await api.cancelOperation(operation.id); await loadOperations() }
+  catch (err) { conflictError.value = err instanceof Error ? err.message : String(err) }
+  finally { conflictBusy.value = false }
+}
 
 const {
   start: startRealtime,
@@ -1607,9 +1642,10 @@ function operationLabel(value: string) {
       :submit-label="nameDialogMode === 'folder' ? 'Create' : 'Rename'"
       @submit="onNameDialogSubmit"
     />
+    <ConflictDialog v-model:visible="conflictVisible" :operation="conflictOperation" :busy="conflictBusy" :error="conflictError" @submit="resolveConflict" @cancel="cancelConflictTask" />
     <SettingsDialog v-model:visible="settingsVisible" :preferences="currentPreferences()" :saving="settingsSaving" @save="saveSettings" />
     <EditorDialog v-if="editorVisible" :visible="editorVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" :preferences="userPreferences" @update:visible="setEditorVisible" @saved="onEditorSaved" />
-    <FilePreview :visible="previewVisible" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="entries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
+    <FilePreview :visible="previewVisible" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="filteredEntries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
     <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTargets.length === 1 ? extractTargets[0].name : `${extractTargets.length} archives`" :destination="extractDestination" :busy="extractBusy" :existing-files="userPreferences.extract_existing_files" @extract="prepareExtraction" />
     <ArchivePasswordDialog v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="extractBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @cancel="cancelPasswordPrompt" @after-hide="onArchivePasswordAfterHide" />
     <DestinationDialog
@@ -1621,6 +1657,6 @@ function operationLabel(value: string) {
       :hide-inaccessible="userPreferences.hide_inaccessible"
       @submit="submitTransfer"
     />
-    <OperationsPanel v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @cancel="requestOperationCancellation" @reorder="reorderOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" @download="downloadOperation" />
+    <OperationsPanel v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @cancel="requestOperationCancellation" @resolve="openConflict" @reorder="reorderOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" @download="downloadOperation" />
   </section>
 </template>

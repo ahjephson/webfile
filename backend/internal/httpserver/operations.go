@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -53,14 +54,30 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "copy_chunk_mib must be 1, 4, 16 or 64"})
 			return
 		}
+		transfer := s.files.NewTransfer(req.Kind, req.Sources, req.Destination)
 		op := s.ops.StartTask(req.Kind, req.Sources, req.Destination, operations.TaskOptions{
 			Cancellable:   true,
 			CleanupPolicy: "The incomplete item is removed. Items completed before cancellation are retained.",
+			InputHandler: func(data json.RawMessage) error {
+				var decision filesystem.ConflictDecision
+				if err := json.Unmarshal(data, &decision); err != nil {
+					return err
+				}
+				return transfer.Decide(decision)
+			},
 		}, func(ctx context.Context, reporter operations.Reporter) error {
 			ctx = filesystem.WithCopyChunkSize(ctx, req.CopyChunkMiB*1024*1024)
-			return s.files.CopyMove(ctx, req.Kind, req.Sources, req.Destination, func(p filesystem.TransferProgress) {
+			err := transfer.Run(ctx, func(p filesystem.TransferProgress) {
 				reporter.UpdatePhase(p.Phase, p.BytesDone, p.BytesTotal, p.ItemsDone, p.ItemsTotal, p.Message)
 			})
+			var conflict *filesystem.TransferConflict
+			if errors.As(err, &conflict) {
+				if err := reporter.SetInput(conflict); err != nil {
+					return err
+				}
+				return operations.ErrAwaitingInput
+			}
+			return err
 		})
 		writeJSON(w, http.StatusAccepted, op)
 
@@ -292,6 +309,21 @@ func (s *Server) submitOperationPassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+func (s *Server) submitOperationInput(w http.ResponseWriter, r *http.Request) {
+	var decision filesystem.ConflictDecision
+	if err := decodeJSON(r, &decision); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	data, _ := json.Marshal(decision)
+	operation, err := s.ops.SubmitInput(r.PathValue("id"), data)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, operation)
 }
 
 func (s *Server) invalidateDestination(destination string) {

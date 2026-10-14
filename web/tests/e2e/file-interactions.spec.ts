@@ -2486,6 +2486,7 @@ test('fit mode responds to gallery viewport growth', async ({ page }) => {
 })
 
 test('gallery accepts consecutive swipes and reversals before animations finish', async ({ page, browserName }) => {
+  await page.route('**/api/preferences', route => route.fulfill({ json: { sort_field: 'name', sort_direction: 'asc' } }))
   const entries = Array.from({ length: 5 }, (_, index) => ({
     name: `rapid-${index + 1}.svg`, path: `/rapid-${index + 1}.svg`, is_dir: false,
     size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--',
@@ -2569,6 +2570,7 @@ test('gallery accepts consecutive swipes and reversals before animations finish'
 })
 
 test('gallery navigation keeps the decoded target constrained throughout the transition', async ({ page }) => {
+  await page.route('**/api/preferences', route => route.fulfill({ json: { sort_field: 'name', sort_direction: 'asc' } }))
   const entries = [
     { name: 'landscape.svg', path: '/landscape.svg', is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' },
     { name: 'portrait-next.svg', path: '/portrait-next.svg', is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' },

@@ -9,6 +9,7 @@ import type {
   VideoThumbnailJob,
   SearchRequest,
   SearchUpdate,
+  ConflictDecision,
 } from '@/types/files'
 import { appPath } from '@/base'
 
@@ -97,6 +98,11 @@ interface UploadChunkResponse extends UploadInitResponse {
 }
 
 export const api = {
+  resolveConflict(id: string, decision: ConflictDecision) {
+    return request<FileOperation>(`/api/fs/operations/${encodeURIComponent(id)}/input`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(decision),
+    })
+  },
   async search(input: SearchRequest, update: (value: SearchUpdate) => void, signal: AbortSignal) {
     const response = await fetch(appPath('/api/fs/search'), {
       method: 'POST', signal,
