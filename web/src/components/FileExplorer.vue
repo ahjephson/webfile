@@ -767,6 +767,7 @@ function navigateTo(path: string, replaceHistory = false) {
   if (wasSearch) { clearSelection(); clearFocus(); search.value = '' }
   if (wasSearch && path === currentPath.value) { void refresh(true); return }
   if (path === currentPath.value) return
+  hashFileRequest++
   clearParentNavigationQueue()
   currentPath.value = path
   writePathHash(path, replaceHistory)
@@ -828,9 +829,9 @@ async function openEntry(entry: FileEntry, input: 'mouse' | 'touch' = 'mouse') {
   await openFile(entry.path, true)
 }
 
-async function openFile(path: string, addHistory: boolean, request?: number) {
+async function openFile(path: string, addHistory: boolean, request = ++hashFileRequest) {
 	const detected = await detectPreview(path)
-	if (request !== undefined && request !== hashFileRequest) return
+	if (explorerDisposed || request !== hashFileRequest) return
 	if (addHistory) writePathHash(currentPath.value, false, path)
 	if (detected.kind !== 'text') {
 		editorVisible.value = false
@@ -1011,6 +1012,7 @@ async function onNameDialogSubmit(value: string) {
 }
 
 function createDocument(name: string) {
+  hashFileRequest++
   editorPath.value = joinPath(currentPath.value, name)
   editorIsNew.value = true
   editorVisible.value = true

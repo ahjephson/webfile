@@ -22,6 +22,71 @@ async function mockFolder(page: Page, entries = [file('notes.txt')]) {
   await page.routeWebSocket('**/api/fs/ws', () => {})
 }
 
+test('a late file-open response cannot replace a newer dirty document', async ({ page }) => {
+  await mockFolder(page, [file('first.txt'), file('second.txt')])
+  let release!: () => void
+  let held = false
+  const pending = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/fs/content-type**', async route => {
+    if (new URL(route.request().url()).searchParams.get('path') === '/docs/first.txt') {
+      held = true
+      await pending
+    }
+    return route.fulfill({ json: { content_type: 'text/plain' } })
+  })
+  await page.goto('/#path=%2Fdocs')
+  await expect(page).toHaveURL(/#path=%2Fdocs$/)
+  await page.locator('[data-file-entry]').filter({ hasText: 'first.txt' }).dblclick()
+  await expect.poll(() => held).toBe(true)
+  await page.locator('[data-file-entry]').filter({ hasText: 'second.txt' }).dblclick()
+  await page.getByRole('textbox', { name: 'Editor content' }).focus()
+  await page.keyboard.type('UNSAVED_SECOND')
+  const response = page.waitForResponse(response => response.url().includes('/api/fs/content-type?') && new URL(response.url()).searchParams.get('path') === '/docs/first.txt')
+  release()
+  await response
+  await page.waitForLoadState('networkidle')
+  await expect(page.locator('.view-lines')).toContainText('UNSAVED_SECOND')
+  await expect(page).toHaveURL(/file=second\.txt$/)
+  await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible()
+})
+
+for (const action of ['navigate', 'new document']) {
+  test(`a pending file open cannot undo ${action}`, async ({ page }) => {
+    await mockFolder(page)
+    let release!: () => void
+    let held = false
+    const pending = new Promise<void>(resolve => { release = resolve })
+    await page.route('**/api/fs/content-type**', async route => {
+      held = true
+      await pending
+      return route.fulfill({ json: { content_type: 'text/plain' } })
+    })
+    await page.goto('/#path=%2Fdocs')
+    await expect(page).toHaveURL(/#path=%2Fdocs$/)
+    await page.locator('[data-file-entry]').dblclick()
+    await expect.poll(() => held).toBe(true)
+    if (action === 'navigate') {
+      await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('button', { name: 'Files', exact: true }).click()
+      await expect(page).toHaveURL(/#path=%2F$/)
+    } else {
+      await page.getByRole('button', { name: 'New file', exact: true }).click()
+      await page.getByLabel('Filename', { exact: true }).fill('new.txt')
+      await page.getByRole('button', { name: 'Open editor', exact: true }).click()
+      await page.getByRole('textbox', { name: 'Editor content' }).focus()
+      await page.keyboard.type('UNSAVED_NEW')
+    }
+    release()
+    await page.waitForLoadState('networkidle')
+    if (action === 'navigate') {
+      await expect(page.getByLabel('Text editor', { exact: true })).toHaveCount(0)
+      await expect(page).toHaveURL(/#path=%2F$/)
+    } else {
+      await expect(page.locator('.view-lines')).toContainText('UNSAVED_NEW')
+      await expect(page.getByText('New file — save to create', { exact: true })).toBeVisible()
+    }
+  })
+}
+
 for (const fail of [false, true]) {
   test(`destination browser ignores late ${fail ? 'errors' : 'listings'} after navigating and reopening`, async ({ page }) => {
     await mockFolder(page)
