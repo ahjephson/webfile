@@ -22,6 +22,66 @@ async function mockFolder(page: Page, entries = [file('notes.txt')]) {
   await page.routeWebSocket('**/api/fs/ws', () => {})
 }
 
+test('repeated elevation changes keep the folder and exactly one realtime connection', async ({ page }) => {
+  await mockFolder(page)
+  let elevated = false, sockets = 0, closed = 0
+  const session = () => ({ authenticated: true, mode: 'pam', user: { username: 'audit', uid: 1000 },
+    elevation_available: true, elevated, elevation_expires_at: new Date(Date.now() + 60_000).toISOString() })
+  await page.route('**/api/session', route => route.fulfill({ json: session() }))
+  await page.route('**/api/elevation', route => {
+    elevated = route.request().method() === 'POST'
+    return elevated ? route.fulfill({ json: session() }) : route.fulfill({ status: 204 })
+  })
+  await page.routeWebSocket('**/api/fs/ws', socket => {
+    sockets++
+    socket.onClose(() => { closed++ })
+  })
+  await page.goto('/#path=%2Fdocs')
+  await expect(page).toHaveURL(/#path=%2Fdocs$/)
+  for (let round = 0; round < 3; round++) {
+    await page.getByRole('button', { name: 'Elevate access', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Elevate access' })
+    await dialog.locator('input[type="password"]').fill('test password')
+    await dialog.getByRole('button', { name: 'Elevate access', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Drop elevated access', exact: true })).toBeVisible()
+    await expect.poll(() => sockets).toBe(round * 2 + 2)
+    await page.getByRole('button', { name: 'Drop elevated access', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Elevate access', exact: true })).toBeVisible()
+    await expect.poll(() => sockets).toBe(round * 2 + 3)
+    await expect(page).toHaveURL(/#path=%2Fdocs$/)
+  }
+  await page.waitForLoadState('networkidle')
+  expect(sockets - closed).toBe(1)
+  expect(sockets).toBe(7)
+})
+
+test('elevation expiry preserves dirty editor text and reconnects with ordinary access', async ({ page }) => {
+  await mockFolder(page)
+  let sessionReads = 0, fileReads = 0, sockets = 0
+  const expires = new Date(Date.now() + 5_000).toISOString()
+  await page.route('**/api/session', route => route.fulfill({ json: {
+    authenticated: true, mode: 'pam', user: { username: 'audit', uid: 1000, gid: 1000 }, csrf_token: 'audit',
+    elevation_available: true, elevated: ++sessionReads === 1, elevation_expires_at: expires,
+  } }))
+  await page.route('**/api/fs/file**', route => {
+    fileReads++
+    return route.fulfill({ json: { content: 'original', etag: 'original' } })
+  })
+  await page.routeWebSocket('**/api/fs/ws', () => { sockets++ })
+  await page.goto('/#path=%2Fdocs&file=notes.txt')
+  await page.getByRole('textbox', { name: 'Editor content' }).focus()
+  await page.keyboard.type('UNSAVED_EXPIRY')
+  await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible()
+  await expect.poll(() => sessionReads, { timeout: 10_000 }).toBe(2)
+  await page.waitForLoadState('networkidle')
+  await expect(page.locator('.view-lines')).toContainText('UNSAVED_EXPIRY')
+  await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled()
+  await expect.poll(() => sockets).toBe(2)
+  expect(fileReads).toBe(1)
+  await expect(page).toHaveURL(/#path=%2Fdocs&file=notes\.txt$/)
+})
+
 test('a late file-open response cannot replace a newer dirty document', async ({ page }) => {
   await mockFolder(page, [file('first.txt'), file('second.txt')])
   let release!: () => void

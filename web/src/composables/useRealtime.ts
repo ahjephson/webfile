@@ -59,14 +59,17 @@ export function useRealtime(options: {
   function ensureConnected() {
     if (!active || socket) return
 
-    socket = new WebSocket(appWebSocketURL('/api/fs/ws'))
-    socket.onopen = () => {
+    const connection = new WebSocket(appWebSocketURL('/api/fs/ws'))
+    socket = connection
+    connection.onopen = () => {
+      if (socket !== connection) return
       connected.value = true
       retryDelayMs = 500
       sendSubscription()
       options.onConnected?.()
     }
-    socket.onmessage = event => {
+    connection.onmessage = event => {
+      if (socket !== connection) return
       let message: ServerMessage
       try {
         message = JSON.parse(event.data as string) as ServerMessage
@@ -81,8 +84,9 @@ export function useRealtime(options: {
         options.onThumbnailJob?.(message.thumbnail_job)
       }
     }
-    socket.onerror = () => socket?.close()
-    socket.onclose = () => {
+    connection.onerror = () => connection.close()
+    connection.onclose = () => {
+      if (socket !== connection) return
       connected.value = false
       socket = null
       if (active) scheduleReconnect()

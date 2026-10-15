@@ -18,7 +18,6 @@ const sessionError = ref('')
 const elevationVisible = ref(false)
 const elevationBusy = ref(false)
 const elevationError = ref('')
-const explorerVersion = ref(0)
 let elevationTimer: number | null = null
 
 onMounted(refreshSession)
@@ -35,12 +34,11 @@ function scheduleElevationExpiry() {
   const delay = Math.max(0, Date.parse(session.value.elevation_expires_at) - Date.now())
   elevationTimer = window.setTimeout(async () => {
     await refreshSession()
-    explorerVersion.value++
   }, delay + 250)
 }
 
 async function refreshSession() {
-  checking.value = true
+  checking.value = session.value === null
   sessionError.value = ''
   loginError.value = ''
   try {
@@ -106,7 +104,6 @@ async function elevate(password: string) {
   try {
     session.value = await api.elevate(password)
     elevationVisible.value = false
-    explorerVersion.value++
     scheduleElevationExpiry()
   } catch (err) {
     elevationError.value = err instanceof Error ? err.message : String(err)
@@ -118,7 +115,6 @@ async function elevate(password: string) {
 async function dropElevation() {
   await api.dropElevation()
   session.value = await api.session()
-  explorerVersion.value++
   scheduleElevationExpiry()
 }
 
@@ -160,7 +156,7 @@ function requestElevation() {
     />
     <FileExplorer
       v-else
-      :key="explorerVersion"
+      :key="`${session.mode}:${session.user?.uid}:${session.user?.username}`"
       :username="session.user?.username ?? ''"
       :show-logout="session.mode === 'pam' || Boolean(session.logout_url)"
       :elevation-available="session.elevation_available === true"

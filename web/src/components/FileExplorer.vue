@@ -266,6 +266,7 @@ async function cancelConflictTask() {
 
 const {
   start: startRealtime,
+  stop: stopRealtime,
   setDirectory: setRealtimeDirectory,
   connected: watchConnected,
   cancelOperation: cancelRealtimeOperation,
@@ -515,6 +516,18 @@ watch(currentPath, path => {
 }, { flush: 'post' })
 
 watch(currentPath, () => { void scrollBreadcrumbToEnd() }, { flush: 'post' })
+
+watch(() => props.elevated, () => {
+  if (!navigationReady) return
+  hashFileRequest++
+  closeSearch()
+  stopRealtime()
+  startRealtime(currentPath.value)
+  queuedVideoThumbnailVersions.clear()
+  thumbnailJobs.value = []
+  void refresh(true)
+  // The new connection reloads task and thumbnail state for its worker.
+})
 
 watch([viewMode, gridSize], () => {
   if (preferencesLoaded) void savePreferences()
