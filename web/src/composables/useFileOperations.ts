@@ -5,6 +5,11 @@ import type { FileOperation } from '@/types/files'
 const activeStates = ['queued', 'preparing', 'awaiting_input', 'running', 'cancelling', 'cleaning_up']
 const terminalStates = ['completed', 'failed', 'cancelled']
 
+function retainOperations(operations: FileOperation[]): FileOperation[] {
+  let history = 0
+  return operations.filter(operation => activeStates.includes(operation.state) || history++ < 50)
+}
+
 export function useFileOperations(onTerminal: (operation: FileOperation, previous?: FileOperation) => void) {
   const operations = ref<FileOperation[]>([])
   const activeOperations = computed(() => operations.value.filter(operation => activeStates.includes(operation.state)))
@@ -16,13 +21,13 @@ export function useFileOperations(onTerminal: (operation: FileOperation, previou
       const loaded = (await api.operations()).operations
       const current = new Map(operations.value.map(operation => [operation.id, operation]))
       const loadedIds = new Set(loaded.map(operation => operation.id))
-      operations.value = [
+      operations.value = retainOperations([
         ...operations.value.filter(operation => !idsBeforeLoad.has(operation.id) && !loadedIds.has(operation.id)),
         ...loaded.map(operation => {
           const existing = current.get(operation.id)
           return existing && Date.parse(existing.updated_at) > Date.parse(operation.updated_at) ? existing : operation
         }),
-      ].slice(0, 50)
+      ])
     } catch {
       // Operation history is supplementary; realtime updates can still populate it.
     }
@@ -32,7 +37,7 @@ export function useFileOperations(onTerminal: (operation: FileOperation, previou
     const previous = operations.value.find(item => item.id === operation.id)
     if (previous && Date.parse(previous.updated_at) > Date.parse(operation.updated_at)) return
     if (previous && terminalStates.includes(previous.state) && !terminalStates.includes(operation.state)) return
-    operations.value = [operation, ...operations.value.filter(item => item.id !== operation.id)].slice(0, 50)
+    operations.value = retainOperations([operation, ...operations.value.filter(item => item.id !== operation.id)])
     if (previous?.state === operation.state || !terminalStates.includes(operation.state)) return
     const terminalKey = `${operation.id}:${operation.state}`
     if (announcedTerminalStates.has(terminalKey)) return

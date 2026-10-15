@@ -3,6 +3,13 @@ import { expect, test, type Page } from '@playwright/test'
 const modified = '2000-01-01T00:00:00Z'
 const file = (name: string, folder = '/docs') => ({ name, path: `${folder}/${name}`, is_dir: false, size: 12, modified, mode: '-rw-r--r--' })
 
+const task = (id: string, state = 'running') => ({
+  id, kind: 'copy', sources: [`/docs/${id}.txt`], state, phase: state,
+  message: `task ${id}`, bytes_done: 1, bytes_total: 10, items_done: 0, items_total: 1,
+  progress_done: 1, progress_total: 10, progress_unit: 'bytes', cancellable: state === 'running',
+  started_at: modified, updated_at: modified,
+})
+
 async function mockFolder(page: Page, entries = [file('notes.txt')]) {
   await page.route('**/api/session', route => route.fulfill({ json: { authenticated: true, mode: 'none', user: { username: 'audit' } } }))
   await page.route('**/api/preferences', route => route.fulfill({ json: { view_mode: 'list', theme: 'dark' } }))
@@ -13,6 +20,23 @@ async function mockFolder(page: Page, entries = [file('notes.txt')]) {
   await page.route('**/api/fs/thumbnails/jobs', route => route.fulfill({ json: { jobs: [] } }))
   await page.routeWebSocket('**/api/fs/ws', () => {})
 }
+
+test('task history limits retain every active task on load and realtime updates', async ({ page }) => {
+  await mockFolder(page)
+  const active = Array.from({ length: 55 }, (_, index) => task(`active-${index}`))
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: active } }))
+  let send = (_message: unknown) => {}
+  await page.routeWebSocket('**/api/fs/ws', socket => { send = message => socket.send(JSON.stringify(message)) })
+  await page.goto('/#path=%2Fdocs')
+  await expect(page).toHaveURL(/#path=%2Fdocs$/)
+  await page.getByRole('button', { name: 'Open tasks' }).click()
+  const tasks = page.getByRole('complementary')
+  await expect(tasks.getByRole('button', { name: 'Collapse Active (55)' })).toBeVisible()
+  for (let index = 0; index < 60; index++) send({ type: 'operation-updated', operation: task(`history-${index}`, 'completed') })
+  await expect(tasks.getByRole('button', { name: 'Collapse History (50)' })).toBeVisible()
+  await expect(tasks.getByRole('button', { name: 'Collapse Active (55)' })).toBeVisible()
+  await expect(tasks.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(55)
+})
 
 test('Save As into another folder survives reload and closes into that folder', async ({ page }) => {
   await mockFolder(page)
