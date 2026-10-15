@@ -36,12 +36,13 @@ type uploadRecord struct {
 
 type UploadManager struct {
 	mu       sync.Mutex
+	active   map[string]context.CancelFunc
 	resolver *Resolver
 	baseDir  string
 }
 
 func NewUploadManager(resolver *Resolver, baseDir string) *UploadManager {
-	return &UploadManager{resolver: resolver, baseDir: baseDir}
+	return &UploadManager{resolver: resolver, baseDir: baseDir, active: make(map[string]context.CancelFunc)}
 }
 
 func (m *UploadManager) Init(ctx context.Context, virtualDir, filename string, size, sourceModified int64) (UploadSession, error) {
@@ -72,6 +73,9 @@ func (m *UploadManager) Init(ctx context.Context, virtualDir, filename string, s
 	id := uploadID(virtualPath, size, sourceModified)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.active[id] != nil {
+		return UploadSession{}, ErrConflict
+	}
 	if rec, err := m.readRecordLocked(id); err == nil {
 		if rec.Path != virtualPath || rec.Size != size || rec.SourceModified != sourceModified {
 			return UploadSession{}, ErrConflict
@@ -128,6 +132,9 @@ func (m *UploadManager) Append(ctx context.Context, id string, offset int64, src
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.active[id] != nil {
+		return UploadSession{}, false, ErrConflict
+	}
 	rec, err := m.readRecordLocked(id)
 	if err != nil {
 		return UploadSession{}, false, err
@@ -153,20 +160,34 @@ func (m *UploadManager) Append(ctx context.Context, id string, offset int64, src
 		_ = f.Close()
 		return UploadSession{}, false, err
 	}
-	written, err := io.CopyN(f, src, length)
+	ctx, cancel := context.WithCancel(ctx)
+	m.active[id] = cancel
+	defer delete(m.active, id)
+	stopClose := context.AfterFunc(ctx, func() {
+		if closer, ok := src.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	})
+	defer func() { stopClose(); cancel() }()
+	// Keep one writer per upload, but do not hold the manager lock while
+	// reading a network body. Cancel can remove staging and cancel this read.
+	m.mu.Unlock()
+	written, err := func() (int64, error) {
+		defer m.mu.Lock()
+		defer f.Close()
+		written, err := io.CopyN(f, &uploadContextReader{ctx: ctx, reader: src}, length)
+		if err != nil {
+			return written, err
+		}
+		if err := f.Sync(); err != nil {
+			return written, err
+		}
+		return written, f.Close()
+	}()
+	if ctx.Err() != nil {
+		return UploadSession{}, false, ctx.Err()
+	}
 	if err != nil {
-		_ = f.Close()
-		return UploadSession{}, false, err
-	}
-	if written != length {
-		_ = f.Close()
-		return UploadSession{}, false, io.ErrUnexpectedEOF
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return UploadSession{}, false, err
-	}
-	if err := f.Close(); err != nil {
 		return UploadSession{}, false, err
 	}
 	rec.Offset = current + written
@@ -206,8 +227,23 @@ func (m *UploadManager) Cancel(id string) error {
 	if err != nil {
 		return err
 	}
+	if cancel := m.active[id]; cancel != nil {
+		cancel()
+	}
 	_ = os.Remove(filepath.Join(m.baseDir, rec.TempName))
 	return os.Remove(m.recordPath(id))
+}
+
+type uploadContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *uploadContextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }
 
 func (m *UploadManager) ensureDir() error {

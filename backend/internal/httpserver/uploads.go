@@ -2,9 +2,11 @@ package httpserver
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"webfile/internal/filesystem"
 	"webfile/internal/operations"
@@ -46,7 +48,8 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	length := r.ContentLength
-	upload, complete, err := s.uploads.Append(r.Context(), id, offset, r.Body, length)
+	body := cancellableUploadBody{ReadCloser: r.Body, response: http.NewResponseController(w)}
+	upload, complete, err := s.uploads.Append(r.Context(), id, offset, body, length)
 	if err != nil {
 		var offsetErr *filesystem.UploadOffsetError
 		if errors.As(err, &offsetErr) {
@@ -71,6 +74,18 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	op := s.ops.UpsertExternal(upload.OperationID, "upload", []string{upload.Path}, upload.Path, state,
 		upload.Offset, upload.Size, itemsDone, 1, message, "")
 	writeJSON(w, http.StatusOK, map[string]any{"upload": upload, "complete": complete, "operation": op})
+}
+
+type cancellableUploadBody struct {
+	io.ReadCloser
+	response *http.ResponseController
+}
+
+func (b cancellableUploadBody) Close() error {
+	// Server request bodies can hold their read lock while waiting for the
+	// client. A deadline releases that read before Close takes the same lock.
+	_ = b.response.SetReadDeadline(time.Now())
+	return b.ReadCloser.Close()
 }
 
 func (s *Server) cancelUpload(w http.ResponseWriter, r *http.Request) {

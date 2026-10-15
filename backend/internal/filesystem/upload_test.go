@@ -4,10 +4,96 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
+
+type enteredUploadReader struct {
+	io.ReadCloser
+	entered chan struct{}
+}
+
+func (r *enteredUploadReader) Read(p []byte) (int, error) {
+	select {
+	case <-r.entered:
+	default:
+		close(r.entered)
+	}
+	return r.ReadCloser.Read(p)
+}
+
+func TestStalledUploadCanBeCancelledWithoutBlockingOtherUploads(t *testing.T) {
+	root := t.TempDir()
+	resolver, err := NewResolver([]Root{{Name: "Files", Path: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := NewUploadManager(resolver, t.TempDir())
+	upload, err := manager.Init(context.Background(), "/Files", "slow.bin", 4, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, writer := io.Pipe()
+	entered := make(chan struct{})
+	finished := make(chan error, 1)
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		_, _, err := manager.Append(context.Background(), upload.ID, 0, &enteredUploadReader{reader, entered}, 4)
+		finished <- err
+	}()
+	t.Cleanup(func() { _ = writer.Close(); _ = reader.Close(); workers.Wait() })
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("upload never started reading")
+	}
+	independent := make(chan error, 1)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		_, err := manager.Init(context.Background(), "/Files", "independent.bin", 4, 2)
+		independent <- err
+	}()
+	select {
+	case err := <-independent:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stalled body blocked independent upload initialization")
+	}
+	cancelled := make(chan error, 1)
+	workers.Add(1)
+	go func() { defer workers.Done(); cancelled <- manager.Cancel(upload.ID) }()
+	select {
+	case err := <-cancelled:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stalled body blocked cancellation")
+	}
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("append error = %v; want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled upload kept reading its body")
+	}
+	if _, err := os.Stat(filepath.Join(root, "slow.bin")); !os.IsNotExist(err) {
+		t.Fatalf("cancelled upload was published: %v", err)
+	}
+	if _, err := os.Stat(manager.recordPath(upload.ID)); !os.IsNotExist(err) {
+		t.Fatalf("cancelled metadata was recreated: %v", err)
+	}
+}
 
 func TestUploadPreservesTrailingFilenameSpace(t *testing.T) {
 	root := t.TempDir()
