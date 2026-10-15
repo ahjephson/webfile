@@ -48,7 +48,7 @@ func (m *UploadManager) Init(ctx context.Context, virtualDir, filename string, s
 	if err := ctx.Err(); err != nil {
 		return UploadSession{}, err
 	}
-	filename = filepath.Base(strings.TrimSpace(filename))
+	filename = filepath.Base(filename)
 	if filename == "" || filename == "." || filename == string(filepath.Separator) {
 		return UploadSession{}, ErrInvalidPath
 	}

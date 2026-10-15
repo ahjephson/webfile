@@ -9,6 +9,28 @@ import (
 	"testing"
 )
 
+func TestUploadPreservesTrailingFilenameSpace(t *testing.T) {
+	root := t.TempDir()
+	resolver, err := NewResolver([]Root{{Name: "Files", Path: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := NewUploadManager(resolver, t.TempDir())
+	session, err := manager.Init(context.Background(), "/Files", "report ", 4, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, complete, err := manager.Append(context.Background(), session.ID, 0, bytes.NewBufferString("data"), 4); err != nil || !complete {
+		t.Fatalf("complete=%v err=%v", complete, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "report ")); err != nil || string(data) != "data" {
+		t.Fatalf("uploaded file: %q %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "report")); !os.IsNotExist(err) {
+		t.Fatalf("filename was trimmed: %v", err)
+	}
+}
+
 func TestUploadManagerResumesAndCompletes(t *testing.T) {
 	root := t.TempDir()
 	resolver, err := NewResolver([]Root{{Name: "Files", Path: root}})

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -194,10 +193,10 @@ type peerUIDContextKey struct{}
 
 type Authorizer struct {
 	mu     sync.RWMutex
-	tokens map[uint32]string
+	tokens map[string]uint32
 }
 
-func NewAuthorizer() *Authorizer { return &Authorizer{tokens: make(map[uint32]string)} }
+func NewAuthorizer() *Authorizer { return &Authorizer{tokens: make(map[string]uint32)} }
 
 func (a *Authorizer) Issue(uid uint32) (string, error) {
 	data := make([]byte, 32)
@@ -206,9 +205,15 @@ func (a *Authorizer) Issue(uid uint32) (string, error) {
 	}
 	token := hex.EncodeToString(data)
 	a.mu.Lock()
-	a.tokens[uid] = token
+	a.tokens[token] = uid
 	a.mu.Unlock()
 	return token, nil
+}
+
+func (a *Authorizer) Revoke(token string) {
+	a.mu.Lock()
+	delete(a.tokens, token)
+	a.mu.Unlock()
 }
 
 func (a *Authorizer) Handler(next http.Handler) http.Handler {
@@ -216,9 +221,9 @@ func (a *Authorizer) Handler(next http.Handler) http.Handler {
 		uid, ok := r.Context().Value(peerUIDContextKey{}).(uint32)
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		a.mu.RLock()
-		expected := a.tokens[uid]
+		expectedUID, issued := a.tokens[token]
 		a.mu.RUnlock()
-		if !ok || expected == "" || len(token) != len(expected) || subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+		if !ok || !issued || uid != expectedUID {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

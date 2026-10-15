@@ -24,16 +24,18 @@ import (
 )
 
 type Process struct {
-	Identity identity.Identity
-	Socket   string
-	Cmd      *exec.Cmd
-	Proxy    *httputil.ReverseProxy
-	remote   bool
+	Identity   identity.Identity
+	Socket     string
+	Cmd        *exec.Cmd
+	Proxy      *httputil.ReverseProxy
+	remote     bool
+	cacheToken string
 }
 
 type Manager struct {
 	mu             sync.Mutex
 	workers        map[uint32]*Process
+	elevatedTokens map[string]string
 	executable     string
 	configPath     string
 	workerDir      string
@@ -46,6 +48,7 @@ type Manager struct {
 func NewManager(executable, configPath, workerDir, launcherSocket, cacheSocket string, cacheAuth *thumbnailcache.Authorizer) *Manager {
 	return &Manager{
 		workers:        map[uint32]*Process{},
+		elevatedTokens: make(map[string]string),
 		executable:     executable,
 		configPath:     configPath,
 		workerDir:      workerDir,
@@ -64,7 +67,10 @@ func (m *Manager) Ensure(ctx context.Context, id identity.Identity) (*Process, e
 	if p := m.workers[id.UID]; p != nil && p.alive() {
 		return p, nil
 	}
-	delete(m.workers, id.UID)
+	if previous := m.workers[id.UID]; previous != nil {
+		m.cacheAuth.Revoke(previous.cacheToken)
+		delete(m.workers, id.UID)
+	}
 	cacheToken, err := m.cacheAuth.Issue(id.UID)
 	if err != nil {
 		return nil, fmt.Errorf("issue thumbnail cache capability: %w", err)
@@ -79,8 +85,10 @@ func (m *Manager) Ensure(ctx context.Context, id identity.Identity) (*Process, e
 		p, err = m.startLocalLocked(ctx, id, cacheToken)
 	}
 	if err != nil {
+		m.cacheAuth.Revoke(cacheToken)
 		return nil, err
 	}
+	p.cacheToken = cacheToken
 	m.workers[id.UID] = p
 	return p, nil
 }
@@ -105,8 +113,18 @@ func (m *Manager) Elevate(ctx context.Context, id identity.Identity, password st
 	}
 	socket, err := launcher.ClientElevate(ctx, m.launcherSocket, id.Username, password, token, cacheToken)
 	if err != nil {
+		m.cacheAuth.Revoke(cacheToken)
 		return nil, "", err
 	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		m.cacheAuth.Revoke(cacheToken)
+		_ = launcher.ClientDropElevation(ctx, m.launcherSocket, token)
+		return nil, "", errors.New("worker manager is closed")
+	}
+	m.elevatedTokens[token] = cacheToken
+	m.mu.Unlock()
 	return &Process{Identity: id, Socket: socket, Proxy: proxyForSocket(socket), remote: true}, token, nil
 }
 
@@ -114,7 +132,15 @@ func (m *Manager) DropElevation(ctx context.Context, token string) error {
 	if token == "" || m.launcherSocket == "" {
 		return nil
 	}
-	return launcher.ClientDropElevation(ctx, m.launcherSocket, token)
+	err := launcher.ClientDropElevation(ctx, m.launcherSocket, token)
+	if err == nil {
+		m.mu.Lock()
+		cacheToken := m.elevatedTokens[token]
+		delete(m.elevatedTokens, token)
+		m.mu.Unlock()
+		m.cacheAuth.Revoke(cacheToken)
+	}
+	return err
 }
 
 func (p *Process) alive() bool {
@@ -138,12 +164,17 @@ func (m *Manager) Close() error {
 	m.closed = true
 	var first error
 	for uid, p := range m.workers {
+		m.cacheAuth.Revoke(p.cacheToken)
 		if p.Cmd != nil && p.Cmd.Process != nil && p.Cmd.ProcessState == nil {
 			if err := p.Cmd.Process.Signal(syscall.SIGTERM); err != nil && first == nil {
 				first = err
 			}
 		}
 		delete(m.workers, uid)
+	}
+	for token, cacheToken := range m.elevatedTokens {
+		m.cacheAuth.Revoke(cacheToken)
+		delete(m.elevatedTokens, token)
 	}
 	return first
 }
@@ -217,6 +248,7 @@ func (m *Manager) startLocalLocked(ctx context.Context, id identity.Identity, ca
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if current := m.workers[uid]; current == process {
+			m.cacheAuth.Revoke(process.cacheToken)
 			delete(m.workers, uid)
 		}
 	}(id.UID, p)

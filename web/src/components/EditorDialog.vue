@@ -106,8 +106,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown, true)
 })
 
-watch(() => [props.visible, props.path, props.isNew] as const, async ([visible, path, isNew]) => {
+watch([() => props.visible, () => props.path], async ([visible, path]) => {
   if (!visible) return
+  const isNew = props.isNew
   currentPath.value = path
   language.value = languageForPath(path)
   markdownPreview.value = props.preferences.editor_markdown_preview && language.value === 'markdown'
@@ -137,6 +138,8 @@ watch(() => [props.visible, props.path, props.isNew] as const, async ([visible, 
 }, { immediate: true })
 
 async function save(options?: { force?: boolean; path?: string; createOnly?: boolean }) {
+  if (saving.value) return
+  const submittedContent = content.value
   saving.value = true
   error.value = ''
   try {
@@ -144,20 +147,20 @@ async function save(options?: { force?: boolean; path?: string; createOnly?: boo
     const createOnly = options?.createOnly ?? newDocument.value
     let result
     try {
-      result = await api.saveFile(target, content.value, {
+      result = await api.saveFile(target, submittedContent, {
         etag: etag.value,
         createOnly,
         force: options?.force,
       })
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 404 && !createOnly)) throw err
-      result = await api.saveFile(target, content.value, { createOnly: true })
+      result = await api.saveFile(target, submittedContent, { createOnly: true })
     }
     currentPath.value = target
     saveAsPath.value = target
     newDocument.value = false
     etag.value = result.etag
-    original.value = content.value
+    original.value = submittedContent
     conflict.value = false
     emit('saved', target)
   } catch (err) {
@@ -176,13 +179,19 @@ async function overwrite() {
 }
 
 async function saveAs() {
-  const target = saveAsPath.value.trim()
-  if (!target) return
+  const target = saveAsPath.value
+  if (!target.trim()) return
   await save({ path: target, createOnly: true })
 }
 
+function confirmDiscard() {
+  return !dirty.value || window.confirm('Discard unsaved changes?')
+}
+
+defineExpose({ confirmDiscard, currentPath })
+
 async function close() {
-  if (dirty.value && !window.confirm('Discard unsaved changes?')) return
+  if (!confirmDiscard()) return
   await editorRef.value?.closeSearch()
   if (document.fullscreenElement === editorRoot.value) {
     await document.exitFullscreen()

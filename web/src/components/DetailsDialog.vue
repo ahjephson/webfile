@@ -15,6 +15,7 @@ const emit = defineEmits<{
 const details = ref<FileDetails | null>(null)
 const loading = ref(false)
 let sizePoll: number | null = null
+let loadRequest = 0
 
 const permissionRows = [
   { label: 'Owner', read: 0o400, write: 0o200, execute: 0o100 },
@@ -22,26 +23,31 @@ const permissionRows = [
   { label: 'Other', read: 0o004, write: 0o002, execute: 0o001 },
 ]
 
-watch(() => [props.visible, props.path] as const, ([visible]) => {
+watch([() => props.visible, () => props.path], ([visible]) => {
+  loadRequest++
   stopSizePoll()
   if (visible && props.path) void load(true)
 }, { immediate: true })
 
-onBeforeUnmount(stopSizePoll)
+onBeforeUnmount(() => { loadRequest++; stopSizePoll() })
 
 async function load(refresh: boolean) {
+  const request = ++loadRequest
+  const path = props.path
+  const current = () => request === loadRequest && props.visible && props.path === path
   if (!details.value || refresh) loading.value = true
   try {
-    const result = await api.details(props.path, refresh)
+    const result = await api.details(path, refresh)
+    if (!current()) return
     details.value = result
     if (result.is_dir && result.size_status === 'ready') emit('size-ready', { path: result.path, size: result.size })
     if (result.is_dir && (result.size_status === 'calculating' || result.size_refreshing)) {
       sizePoll = window.setTimeout(() => void load(false), 500)
     }
   } catch (err) {
-    emit('error', err instanceof Error ? err.message : String(err))
+    if (current()) emit('error', err instanceof Error ? err.message : String(err))
   } finally {
-    loading.value = false
+    if (current()) loading.value = false
   }
 }
 

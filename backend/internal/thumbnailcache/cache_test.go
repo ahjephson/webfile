@@ -3,10 +3,42 @@ package thumbnailcache
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestCapabilitiesForConcurrentElevatedWorkersAreIndependent(t *testing.T) {
+	authorizer := NewAuthorizer()
+	first, err := authorizer.Issue(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := authorizer.Issue(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := authorizer.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	check := func(token string, uid uint32, want int) {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/cache/test", nil)
+		request = request.WithContext(context.WithValue(request.Context(), peerUIDContextKey{}, uid))
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != want {
+			t.Fatalf("uid=%d status=%d want=%d", uid, response.Code, want)
+		}
+	}
+	check(first, 0, http.StatusNoContent)
+	check(second, 0, http.StatusNoContent)
+	check(first, 1000, http.StatusUnauthorized)
+	check("unissued", 0, http.StatusUnauthorized)
+	authorizer.Revoke(first)
+	check(first, 0, http.StatusUnauthorized)
+	check(second, 0, http.StatusNoContent)
+}
 
 func TestStorePersistsAcrossInstancesWithOneAtomicFile(t *testing.T) {
 	dir := t.TempDir()

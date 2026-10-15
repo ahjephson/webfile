@@ -52,7 +52,7 @@ func CleanVirtual(v string) string {
 	if v == "" {
 		return "/"
 	}
-	return path.Clean("/" + strings.TrimSpace(v))
+	return path.Clean("/" + v)
 }
 
 func SplitVirtual(v string) (rootName, rel string, err error) {
@@ -99,6 +99,37 @@ func (r *Resolver) ResolveExisting(v string) (Root, string, error) {
 		return Root{}, "", os.ErrNotExist
 	}
 	return root, resolved, nil
+}
+
+// OpenExisting keeps path traversal anchored to the configured root even if a
+// directory is replaced by a symlink after ResolveExisting returns.
+func (r *Resolver) OpenExisting(v string) (*os.File, error) {
+	root, absolute, err := r.ResolveExisting(v)
+	if err != nil {
+		return nil, err
+	}
+	fs, err := os.OpenRoot(root.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer fs.Close()
+	relative, err := filepath.Rel(root.Path, absolute)
+	if err != nil {
+		return nil, err
+	}
+	return fs.Open(relative)
+}
+
+// ValidatePath checks an absolute destination against the root and its excluded
+// paths without requiring the destination or its parents to exist yet.
+func (r Root) ValidatePath(candidate string) error {
+	if err := ensureWithin(r.Path, candidate); err != nil {
+		return err
+	}
+	if isExcludedPath(r, candidate) {
+		return os.ErrNotExist
+	}
+	return nil
 }
 
 // ResolveEntry resolves a path without following the final path component.

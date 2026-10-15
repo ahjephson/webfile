@@ -110,10 +110,10 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 	if err != nil {
 		return ExtractResult{}, err
 	}
-	_, destinationAbs, err := e.resolver.ResolveExisting(destinationPath)
+	destinationRoot, destinationAbs, err := e.resolver.ResolveExisting(destinationPath)
 	destinationExists := err == nil
 	if errors.Is(err, fs.ErrNotExist) {
-		_, destinationAbs, err = e.resolver.ResolveForCreate(destinationPath)
+		destinationRoot, destinationAbs, err = e.resolver.ResolveForCreate(destinationPath)
 	}
 	if err != nil {
 		return ExtractResult{}, err
@@ -187,8 +187,26 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 			_ = removeStage(stage)
 			return ExtractResult{}, runErr
 		}
-		return publishStage(ctx, stage, destinationAbs, destinationExists, options.ExistingFiles, report)
+		return publishStage(ctx, stage, destinationAbs, destinationExists, options.ExistingFiles, report, func() error {
+			return validateExtractionPaths(stage, destinationRoot, destinationAbs)
+		})
 	}
+}
+
+func validateExtractionPaths(stage string, root filesystem.Root, destination string) error {
+	return filepath.WalkDir(stage, func(current string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(stage, current)
+		if err != nil {
+			return err
+		}
+		if err := root.ValidatePath(filepath.Join(destination, relative)); err != nil {
+			return fmt.Errorf("archive destination is excluded or outside its root: %s: %w", relative, err)
+		}
+		return nil
+	})
 }
 
 func (e *Extractor) PasswordRequired(ctx context.Context, archivePath string) (bool, error) {
@@ -440,7 +458,7 @@ func sanitizeToolError(output string) string {
 	return message
 }
 
-func publishStage(ctx context.Context, stage, destination string, destinationExists bool, policy ExistingFilePolicy, report ProgressReporter) (result ExtractResult, err error) {
+func publishStage(ctx context.Context, stage, destination string, destinationExists bool, policy ExistingFilePolicy, report ProgressReporter, checks ...func() error) (result ExtractResult, err error) {
 	defer func() {
 		if stage != "" {
 			_ = removeStage(stage)
@@ -452,6 +470,11 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 	count, err := validateStage(stage)
 	if err != nil {
 		return ExtractResult{}, err
+	}
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return ExtractResult{}, err
+		}
 	}
 	conflicts, err := preflight(stage, destination, policy)
 	if err != nil {

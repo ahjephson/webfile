@@ -36,6 +36,7 @@ import VirtualFileList from '@/components/VirtualFileList.vue'
 import VirtualFileGrid from '@/components/VirtualFileGrid.vue'
 
 const EditorDialog = defineAsyncComponent(() => import('@/components/EditorDialog.vue'))
+const editorDialog = ref<{ confirmDiscard: () => boolean; currentPath: string } | null>(null)
 
 type ViewMode = 'list' | 'grid'
 type GridSize = 'small' | 'medium' | 'large'
@@ -205,6 +206,8 @@ let refreshRequest = 0
 let invalidationRefreshRunning = false
 let invalidationRefreshPending = false
 let explorerDisposed = false
+let acceptedHashLocation: { url: string; state: { webfilePosition?: number } | null } | null = null
+let historyRestorePending = false
 let hashFileRequest = 0
 let breadcrumbResizeObserver: ResizeObserver | null = null
 let preferencesLoaded = false
@@ -559,6 +562,23 @@ function readInternalHashFile(): string | null {
 
 function writePathHash(path: string, replace = false, file: string | null = null) {
   writeRawPathHash(path, replace, file, toVisiblePath(path))
+  rememberHashLocation()
+}
+
+function rememberHashLocation() {
+  acceptedHashLocation = { url: window.location.href, state: window.history.state }
+}
+
+function restoreHashLocation() {
+  if (!acceptedHashLocation) return
+  const targetPosition = acceptedHashLocation.state?.webfilePosition
+  const currentPosition = window.history.state?.webfilePosition
+  if (typeof targetPosition === 'number' && typeof currentPosition === 'number' && targetPosition !== currentPosition) {
+    historyRestorePending = true
+    window.history.go(targetPosition - currentPosition)
+  } else {
+    window.history.replaceState(acceptedHashLocation.state, '', acceptedHashLocation.url)
+  }
 }
 
 async function scrollBreadcrumbToEnd() {
@@ -640,14 +660,26 @@ function applyHashPath() {
 }
 
 async function applyHashLocation() {
+  if (historyRestorePending) {
+    if (window.location.href !== acceptedHashLocation?.url) return
+    historyRestorePending = false
+  }
   const request = ++hashFileRequest
   const path = readHashPath()
   const internalPath = path ? toInternalPath(path) : null
   const pathChanged = Boolean(internalPath && internalPath !== currentPath.value)
+  const file = readInternalHashFile()
+  if (editorVisible.value && editorDialog.value && (pathChanged || file !== editorDialog.value.currentPath)) {
+    if (!editorDialog.value.confirmDiscard()) {
+      restoreHashLocation()
+      return
+    }
+    editorVisible.value = false
+  }
+  rememberHashLocation()
   if (pathChanged && internalPath) {
     currentPath.value = internalPath
   }
-  const file = readInternalHashFile()
   if (path && internalPath && path !== toVisiblePath(internalPath)) {
     writePathHash(internalPath, true, file)
   }
@@ -976,6 +1008,9 @@ function setEditorVisible(visible: boolean) {
     return
   }
   if (editorVisible.value && readHashFile()) {
+    // The editor already confirmed this close. Unmount before history events
+    // arrive so browser navigation does not prompt for the same discard again.
+    editorVisible.value = false
     window.history.back()
     return
   }
@@ -1713,7 +1748,7 @@ function operationLabel(value: string) {
     />
     <ConflictDialog v-model:visible="conflictVisible" :operation="conflictOperation" :busy="conflictBusy" :error="conflictError" @submit="resolveConflict" @cancel="cancelConflictTask" />
     <SettingsDialog v-model:visible="settingsVisible" :preferences="currentPreferences()" :saving="settingsSaving" @save="saveSettings" />
-    <EditorDialog v-if="editorVisible" :visible="editorVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" :preferences="userPreferences" @update:visible="setEditorVisible" @saved="onEditorSaved" />
+    <EditorDialog v-if="editorVisible" ref="editorDialog" :visible="editorVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" :preferences="userPreferences" @update:visible="setEditorVisible" @saved="onEditorSaved" />
     <FilePreview :visible="previewVisible" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="filteredEntries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
     <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTargets.length === 1 ? extractTargets[0].name : `${extractTargets.length} archives`" :destination="extractDestination" :busy="extractBusy" :existing-files="userPreferences.extract_existing_files" @extract="prepareExtraction" />
     <ArchivePasswordDialog v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="extractBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @cancel="cancelPasswordPrompt" @after-hide="onArchivePasswordAfterHide" />

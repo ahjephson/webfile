@@ -192,23 +192,20 @@ func (s *Service) ReadText(ctx context.Context, virtualPath string) (FileContent
 	if err := ctx.Err(); err != nil {
 		return FileContent{}, err
 	}
-	_, abs, err := s.resolver.ResolveExisting(virtualPath)
+	file, st, err := s.OpenDownload(ctx, virtualPath)
 	if err != nil {
 		return FileContent{}, err
 	}
-	st, err := os.Stat(abs)
-	if err != nil {
-		return FileContent{}, err
-	}
-	if st.IsDir() {
-		return FileContent{}, errors.New("cannot edit a directory")
-	}
+	defer file.Close()
 	if st.Size() > s.editorMaxBytes {
 		return FileContent{}, ErrTooLarge
 	}
-	data, err := os.ReadFile(abs)
+	data, err := io.ReadAll(io.LimitReader(file, s.editorMaxBytes+1))
 	if err != nil {
 		return FileContent{}, err
+	}
+	if int64(len(data)) > s.editorMaxBytes {
+		return FileContent{}, ErrTooLarge
 	}
 	return FileContent{
 		Path:     CleanVirtual(virtualPath),
@@ -222,11 +219,7 @@ func (s *Service) DetectContentType(ctx context.Context, virtualPath string) (Fi
 	if err := ctx.Err(); err != nil {
 		return FileType{}, err
 	}
-	_, abs, err := s.resolver.ResolveExisting(virtualPath)
-	if err != nil {
-		return FileType{}, err
-	}
-	file, err := os.Open(abs)
+	file, _, err := s.OpenDownload(ctx, virtualPath)
 	if err != nil {
 		return FileType{}, err
 	}
@@ -242,7 +235,7 @@ func (s *Service) DetectContentType(ctx context.Context, virtualPath string) (Fi
 	if looksLikeText(sample) && contentType == "application/octet-stream" {
 		contentType = "text/plain; charset=utf-8"
 	}
-	if extensionType := mime.TypeByExtension(filepath.Ext(abs)); strings.HasPrefix(extensionType, "video/") && contentType == "application/octet-stream" {
+	if extensionType := mime.TypeByExtension(filepath.Ext(virtualPath)); strings.HasPrefix(extensionType, "video/") && contentType == "application/octet-stream" {
 		contentType = extensionType
 	}
 	return FileType{Path: CleanVirtual(virtualPath), ContentType: contentType}, nil
@@ -420,11 +413,7 @@ func (s *Service) OpenDownload(ctx context.Context, virtualPath string) (*os.Fil
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	_, abs, err := s.resolver.ResolveExisting(virtualPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	f, err := os.Open(abs)
+	f, err := s.resolver.OpenExisting(virtualPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -433,9 +422,9 @@ func (s *Service) OpenDownload(ctx context.Context, virtualPath string) (*os.Fil
 		_ = f.Close()
 		return nil, nil, err
 	}
-	if st.IsDir() {
+	if !st.Mode().IsRegular() {
 		_ = f.Close()
-		return nil, nil, errors.New("path is a directory; prepare it as an archive task")
+		return nil, nil, errors.New("only regular files can be downloaded")
 	}
 	return f, st, nil
 }
