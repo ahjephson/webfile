@@ -203,6 +203,7 @@ const uploadInput = ref<HTMLInputElement | null>(null)
 const draggingOver = ref(false)
 let invalidateTimer: number | null = null
 let refreshRequest = 0
+let latestDirectoryRefresh: { path: string; promise: Promise<boolean> } | null = null
 let invalidationRefreshRunning = false
 let invalidationRefreshPending = false
 let explorerDisposed = false
@@ -716,16 +717,28 @@ async function refreshInvalidatedDirectory() {
   }
 }
 
-async function refresh(showSpinner: boolean): Promise<boolean> {
-  if (viewingSearch.value) return true
+function refresh(showSpinner: boolean): Promise<boolean> {
+  if (viewingSearch.value) return Promise.resolve(true)
   const request = ++refreshRequest
   const requestedPath = currentPath.value
+  const promise = loadDirectory(request, requestedPath, showSpinner)
+  latestDirectoryRefresh = { path: requestedPath, promise }
+  return promise
+}
+
+function waitForLatestDirectoryRefresh(path: string): Promise<boolean> {
+  if (explorerDisposed || path !== currentPath.value || viewingSearch.value || latestDirectoryRefresh?.path !== path) return Promise.resolve(false)
+  return latestDirectoryRefresh.promise
+}
+
+async function loadDirectory(request: number, requestedPath: string, showSpinner: boolean): Promise<boolean> {
   if (showSpinner) loading.value = true
   error.value = ''
   try {
     const result = await api.list(requestedPath)
-    // A newer read owns this view; supersession is not a failed initial load.
-    if (request !== refreshRequest) return !explorerDisposed && requestedPath === currentPath.value
+    // Callers that select or open an entry must wait until the owning read has
+    // applied its listing, even when their own request was superseded.
+    if (request !== refreshRequest) return waitForLatestDirectoryRefresh(requestedPath)
     if (explorerDisposed || requestedPath !== currentPath.value || viewingSearch.value) return false
     singleRootPath.value = result.single_root_path ?? ''
     if (requestedPath === '/' && singleRootPath.value && navigationReady) {
@@ -740,10 +753,11 @@ async function refresh(showSpinner: boolean): Promise<boolean> {
     storeSessionPath(requestedPath)
     return true
   } catch (err) {
-    if (request === refreshRequest && !explorerDisposed && requestedPath === currentPath.value) error.value = messageOf(err)
+    if (request !== refreshRequest) return waitForLatestDirectoryRefresh(requestedPath)
+    if (!explorerDisposed && requestedPath === currentPath.value) error.value = messageOf(err)
     return false
   } finally {
-    if (showSpinner) loading.value = false
+    if (request === refreshRequest) loading.value = false
   }
 }
 

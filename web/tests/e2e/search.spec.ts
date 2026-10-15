@@ -1,6 +1,49 @@
 import { expect, test } from '@playwright/test'
 import { featureFixture } from './feature-fixture'
 
+for (const olderResult of ['success', 'error'] as const) {
+  test(`Show in folder waits for the newest listing after an older ${olderResult}`, async ({ page }) => {
+    const entry = { name: 'report.txt', path: '/Files/nested/report.txt', is_dir: false, size: 12, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }
+    let releaseOlder!: () => void
+    let releaseNewer!: () => void
+    const older = new Promise<void>(resolve => { releaseOlder = resolve })
+    const newer = new Promise<void>(resolve => { releaseNewer = resolve })
+    let targetReads = 0
+    await page.route('**/api/preferences', route => route.fulfill({ json: { view_mode: 'list' } }))
+    await page.route('**/api/fs/dir**', async route => {
+      const path = new URL(route.request().url()).searchParams.get('path')
+      if (path === '/Files/nested') {
+        const read = ++targetReads
+        await (read === 1 ? older : newer)
+        if (read === 1 && olderResult === 'error') return route.fulfill({ status: 500, json: { error: 'superseded listing failed' } })
+        return route.fulfill({ json: { path, entries: [entry] } })
+      }
+      await route.fulfill({ json: { path, entries: [{ name: 'nested', path: '/Files/nested', is_dir: true, size: 0, modified: entry.modified, mode: 'drwxr-xr-x' }] } })
+    })
+    await page.route('**/api/fs/search', route => route.fulfill({
+      contentType: 'application/x-ndjson',
+      body: [JSON.stringify({ entry, scanned: 1, skipped: 0 }), JSON.stringify({ done: true, scanned: 1, skipped: 0 })].join('\n') + '\n',
+    }))
+    await page.goto('/#path=%2FFiles')
+    await expect(page).toHaveURL(/#path=%2FFiles$/)
+    await page.getByRole('button', { name: 'Show selection controls', exact: true }).click()
+    await page.getByRole('button', { name: 'Search beneath this folder', exact: true }).click()
+    await page.getByRole('textbox', { name: 'Search filenames' }).fill('report')
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+    await expect(page.getByRole('status')).toContainText('Search complete')
+    await page.locator('[data-file-entry]').filter({ hasText: 'report.txt' }).click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Show in folder', exact: true }).click()
+    await expect.poll(() => targetReads).toBe(2)
+    const olderResponse = page.waitForResponse(response => new URL(response.url()).searchParams.get('path') === '/Files/nested')
+    releaseOlder()
+    await olderResponse
+    releaseNewer()
+    await expect(page.getByRole('button', { name: 'Unselect report.txt', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByText('This search result is no longer available', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('superseded listing failed', { exact: true })).toHaveCount(0)
+  })
+}
+
 test('recursive search finds files beneath folders and locates the selected result', async ({ page }) => {
   const fixture = await featureFixture(page, 'search')
   await fixture.mkdir(`${fixture.path}/nested`)
