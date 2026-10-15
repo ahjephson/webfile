@@ -130,8 +130,22 @@ func (m *UploadManager) Append(ctx context.Context, id string, offset int64, src
 	if length < 0 {
 		return UploadSession{}, false, errors.New("content length is required")
 	}
+	var cancel context.CancelFunc
+	var stopClose func() bool
+	var bodyClosed chan struct{}
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	defer func() {
+		m.mu.Unlock()
+		if stopClose != nil {
+			stopped := stopClose()
+			cancel()
+			if !stopped {
+				// Close may access the HTTP response controller. Finish it
+				// before the handler returns, without blocking other uploads.
+				<-bodyClosed
+			}
+		}
+	}()
 	if m.active[id] != nil {
 		return UploadSession{}, false, ErrConflict
 	}
@@ -160,15 +174,16 @@ func (m *UploadManager) Append(ctx context.Context, id string, offset int64, src
 		_ = f.Close()
 		return UploadSession{}, false, err
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel = context.WithCancel(ctx)
 	m.active[id] = cancel
 	defer delete(m.active, id)
-	stopClose := context.AfterFunc(ctx, func() {
+	bodyClosed = make(chan struct{})
+	stopClose = context.AfterFunc(ctx, func() {
+		defer close(bodyClosed)
 		if closer, ok := src.(io.Closer); ok {
 			_ = closer.Close()
 		}
 	})
-	defer func() { stopClose(); cancel() }()
 	// Keep one writer per upload, but do not hold the manager lock while
 	// reading a network body. Cancel can remove staging and cancel this read.
 	m.mu.Unlock()
