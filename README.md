@@ -471,30 +471,45 @@ unit/PAM/tmpfiles files, restarts both services and restores the complete prior
 installation if the new service does not start successfully.
 `/etc/webfile/webfile.json` is never overwritten by an update.
 
-`.github/workflows/release.yml` builds and tests tagged releases, audits
-production frontend dependencies, scans the Go source and compiled binary,
-runs the Chromium/WebKit browser suite, and publishes the package + checksum.
+`.github/workflows/validate.yml` validates branch and PR candidates in separate
+production, Chromium and WebKit jobs. It audits dependencies, scans the Go source
+and compiled binary, and retains the tested package with a source/hash manifest.
+`.github/workflows/release.yml` publishes that package after verifying successful
+validation of the exact tagged `main` commit; it does not rebuild it.
 Frontend dependencies are reproducibly installed from the committed
 `web/package-lock.json` with `npm ci`.
 
 Release tags use bare semantic versions such as `1.0.0`, without a `v` prefix.
-After validating and committing a release on `main`, create and push an
-annotated tag:
+Set `RELEASE_VERSION` and prepare matching `RELEASE_NOTES_<version>.md` before
+final validation. Run the shared scripts locally first (in native WSL for
+Windows-hosted development):
 
 ```bash
-make test-production
-make package VERSION=1.0.0
+COMMIT=local-validation bash scripts/validate-production.sh
+bash scripts/validate-browser.sh chromium-touch
+bash scripts/validate-browser.sh webkit-ipad
+```
+
+After local checks pass, commit the candidate and push it to `main` from the
+authoritative checkout when authorized. Wait for all three CI jobs to pass at that exact
+commit, then create and push its annotated tag separately:
+
+```bash
+git push origin main
+# Wait for successful validation of the exact main commit before tagging.
 git tag -a 1.0.0 -m "WebFile 1.0.0"
-git push origin main 1.0.0
+git push origin 1.0.0
 ```
 
 Pushing the tag starts the release workflow. Every future release build should
 have a matching version tag and a `RELEASE_NOTES_<version>.md` file committed
 before that tag is created. The workflow uses that file as the GitHub Release
 description and includes all versioned release notes in the package. An
-existing tag can be rebuilt from the Actions page by running **Release Linux
-binary** manually and supplying its version; the workflow verifies that the
-tag already exists and publishes or replaces the matching package assets.
+validated tag can be published from the Actions page by running **Release Linux
+binary** manually and supplying its version. Missing or mismatched validation
+blocks publication, and existing published assets are not replaced. Candidate
+artifacts expire after 30 days; rerun validation if necessary. See
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the complete local-first process.
 
 ## Repository layout
 

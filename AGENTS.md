@@ -208,6 +208,15 @@ under `$HOME/code/webfile/dist`.
 
 ### Committing and pushing
 
+For releases and changes to release tooling, read `RELEASE_CHECKLIST.md` and
+perform the full shared production, Chromium and WebKit validation scripts in
+native WSL before any push or CI trigger. Focused tests alone are insufficient.
+Inspect the package checksum/metadata, workflow lint and artifact-provenance
+guards as applicable. Report the local results. Push the candidate commit first
+only when authorized, wait for successful CI validation of that exact `main`
+commit, then create/push its tag separately. Never use a tag-triggered build as
+the first complete validation pass.
+
 After WSL validates the synchronized candidate tree, create an unsigned
 conventional commit in the authoritative Windows checkout:
 

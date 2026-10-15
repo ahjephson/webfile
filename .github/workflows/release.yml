@@ -7,25 +7,28 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing bare semantic-version tag to build and publish
+        description: Validated bare semantic-version tag to publish
         required: true
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  linux-amd64:
-    name: Build and publish Linux AMD64
+  publish:
+    name: Publish tested Linux package
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check out release tag
         uses: actions/checkout@v7
@@ -33,159 +36,53 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
-      - name: Validate release tag
-        id: release
+      - name: Find successful validation for this main commit
+        id: validation
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Release tag must be a bare semantic version such as 1.1.0." >&2
+          if [[ ! "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+             [[ "$(cat RELEASE_VERSION)" != "$RELEASE_TAG" ]]; then
+            echo 'Tag must match the version validated in RELEASE_VERSION.' >&2
             exit 1
           fi
-
-          tag_commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{}")"
-          head_commit="$(git rev-parse HEAD)"
-          if [[ "$tag_commit" != "$head_commit" ]]; then
-            echo "Checked-out commit does not match tag $RELEASE_TAG." >&2
+          source_commit="$(git rev-parse HEAD)"
+          if [[ "$(git rev-parse "refs/tags/$RELEASE_TAG^{}")" != "$source_commit" ]]; then
+            echo 'Checked-out commit does not match the release tag.' >&2
             exit 1
           fi
-
-          echo "commit=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes build-essential libpam0g-dev 7zip
-
-      - name: Build and validate production package
-        env:
-          VERSION: ${{ env.RELEASE_TAG }}
-          COMMIT: ${{ steps.release.outputs.commit }}
-        run: ./scripts/package.sh
-
-      - name: Install browser engines
-        working-directory: web
-        run: npx playwright install --with-deps chromium webkit
-
-      - name: Run browser workflow tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          go -C backend build -o ../dist/webfile-e2e ./cmd/webfile
-
-          webfile_pid=''
-          cleanup() {
-            if [[ -n "$webfile_pid" ]]; then
-              kill "$webfile_pid" 2>/dev/null || true
-              for attempt in {1..50}; do
-                if ! kill -0 "$webfile_pid" 2>/dev/null; then
-                  break
-                fi
-                sleep 0.2
-              done
-              kill -KILL "$webfile_pid" 2>/dev/null || true
-              wait "$webfile_pid" 2>/dev/null || true
-            fi
-          }
-          trap cleanup EXIT
-
-          wait_for_server() {
-            local health_url="$1"
-            local log_file="$2"
-            for attempt in {1..50}; do
-              if curl --fail --silent "$health_url" >/dev/null; then
-                return 0
-              fi
-              if ! kill -0 "$webfile_pid" 2>/dev/null; then
-                cat "$log_file"
-                return 1
-              fi
-              sleep 0.2
-            done
-            cat "$log_file"
-            return 1
-          }
-
-          ./dist/webfile-e2e serve -config webfile.dev.json \
-            > /tmp/webfile-e2e.log 2>&1 &
-          webfile_pid=$!
-          wait_for_server http://127.0.0.1:8080/api/health /tmp/webfile-e2e.log
-          npm --prefix web run test:e2e -- --reporter=line --global-timeout=900000
-          cleanup
-          webfile_pid=''
-
-          ./dist/webfile-e2e serve -config webfile.dev.json \
-            --http 127.0.0.1:8080 \
-            --public-url http://127.0.0.1:8080/tools/webfile \
-            > /tmp/webfile-e2e-prefix.log 2>&1 &
-          webfile_pid=$!
-          wait_for_server \
-            http://127.0.0.1:8080/tools/webfile/api/health \
-            /tmp/webfile-e2e-prefix.log
-          (
-            cd web
-            WEBFILE_E2E_PREFIX=/tools/webfile \
-              npx playwright test tests/e2e/base-path.spec.ts \
-                --project=chromium-touch --reporter=line --global-timeout=120000
-          )
-
-      - name: Preserve browser test diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: browser-diagnostics-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
-          path: |
-            web/test-results/
-            /tmp/webfile-e2e.log
-            /tmp/webfile-e2e-prefix.log
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: webfile-${{ env.RELEASE_TAG }}-linux-amd64
-          path: |
-            dist/webfile-${{ env.RELEASE_TAG }}-linux-amd64.tar.gz
-            dist/webfile-${{ env.RELEASE_TAG }}-linux-amd64.tar.gz.sha256
-          if-no-files-found: error
-
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          archive="dist/webfile-$RELEASE_TAG-linux-amd64.tar.gz"
-          checksum="$archive.sha256"
-          release_notes="RELEASE_NOTES_$RELEASE_TAG.md"
-
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            if [[ -f "$release_notes" ]]; then
-              gh release edit "$RELEASE_TAG" --notes-file "$release_notes"
-            fi
-            gh release upload "$RELEASE_TAG" "$archive" "$checksum" --clobber
-          elif [[ -f "$release_notes" ]]; then
-            gh release create "$RELEASE_TAG" "$archive" "$checksum" \
-              --verify-tag \
-              --notes-file "$release_notes" \
-              --title "WebFile $RELEASE_TAG"
-          else
-            gh release create "$RELEASE_TAG" "$archive" "$checksum" \
-              --verify-tag \
-              --generate-notes \
-              --title "WebFile $RELEASE_TAG"
+          git merge-base --is-ancestor "$source_commit" origin/main
+          validation_run="$(gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/validate.yml/runs" \
+            -f head_sha="$source_commit" -f branch=main -f status=success \
+            | python3 scripts/release-artifact.py select-run --commit "$source_commit")"
+          if [[ ! "$validation_run" =~ ^[0-9]+$ ]]; then
+            echo 'No successful main validation for this exact commit. Validate before tagging.' >&2
+            exit 1
           fi
+          echo "run=$validation_run" >> "$GITHUB_OUTPUT"
+          echo "commit=$source_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Download previously tested package
+        env:
+          VALIDATION_RUN: ${{ steps.validation.outputs.run }}
+          SOURCE_COMMIT: ${{ steps.validation.outputs.commit }}
+        run: |
+          gh run download "$VALIDATION_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "release-candidate-$SOURCE_COMMIT" --dir dist/tested-release
+
+      - name: Verify version, source commit and package hashes
+        env:
+          SOURCE_COMMIT: ${{ steps.validation.outputs.commit }}
+        run: |
+          python3 scripts/release-artifact.py verify --directory dist/tested-release \
+            --version "$RELEASE_TAG" --commit "$SOURCE_COMMIT"
+
+      - name: Publish verified package without rebuilding
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            "dist/tested-release/webfile-$RELEASE_TAG-linux-amd64.tar.gz" \
+            "dist/tested-release/webfile-$RELEASE_TAG-linux-amd64.tar.gz.sha256" \
+            --verify-tag --notes-file "RELEASE_NOTES_$RELEASE_TAG.md" \
+            --title "WebFile $RELEASE_TAG"

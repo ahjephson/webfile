@@ -1,0 +1,72 @@
+name: Validate release candidate
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  production:
+    name: Production package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install production dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential libpam0g-dev 7zip
+      - name: Validate and package
+        env:
+          COMMIT: ${{ github.sha }}
+        run: |
+          python3 -m unittest discover -s scripts -p test_release_artifact.py
+          bash scripts/validate-production.sh
+      - name: Record package provenance
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          python3 scripts/release-artifact.py create --directory dist \
+            --version "$(cat RELEASE_VERSION)" --commit "$SOURCE_COMMIT"
+      - name: Preserve tested package
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: |
+            dist/webfile-*-linux-amd64.tar.gz
+            dist/webfile-*-linux-amd64.tar.gz.sha256
+            dist/release-candidate.json
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
+  chromium:
+    name: Chromium
+    uses: ./.github/workflows/browser-validation.yml
+    with:
+      project: chromium-touch
+      engine: chromium
+
+  webkit:
+    name: WebKit
+    uses: ./.github/workflows/browser-validation.yml
+    with:
+      project: webkit-ipad
+      engine: webkit

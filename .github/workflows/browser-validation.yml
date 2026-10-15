@@ -1,0 +1,55 @@
+name: Browser validation
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        required: true
+        type: string
+      engine:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: ${{ inputs.engine }} workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install browser dependencies
+        env:
+          ENGINE: ${{ inputs.engine }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes 7zip
+          npm --prefix web ci --no-audit --no-fund
+          cd web
+          npx playwright install --with-deps "$ENGINE"
+      - name: Validate browser workflows and mounted path
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: bash scripts/validate-browser.sh "$PROJECT"
+      - name: Preserve browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-diagnostics-${{ inputs.project }}-${{ github.run_attempt }}
+          path: |
+            dist/validation/${{ inputs.project }}/*.log
+            dist/validation/${{ inputs.project }}/*.json
+            dist/validation/${{ inputs.project }}/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
