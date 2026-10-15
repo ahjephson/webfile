@@ -20,7 +20,7 @@ watch(() => props.visible, visible => {
 })
 
 function submit() {
-  const value = name.value.trim()
+  const value = name.value
   if (!value) return
   emit('create', value)
   emit('update:visible', false)
@@ -52,7 +52,7 @@ function submit() {
       </div>
       <div class="flex justify-end gap-2">
         <Button label="Cancel" severity="secondary" text @click="emit('update:visible', false)" />
-        <Button label="Open editor" type="submit" :disabled="!name.trim()" />
+        <Button label="Open editor" type="submit" :disabled="!name" />
       </div>
     </form>
   </Dialog>
