@@ -273,6 +273,12 @@ func (s *Service) WriteText(ctx context.Context, virtualPath string, content []b
 	if err != nil {
 		return FileContent{}, err
 	}
+	release, err := lockEditorDirectory(ctx, abs)
+	if err != nil {
+		return FileContent{}, err
+	}
+	defer release()
+	var savedInfo os.FileInfo
 
 	if createOnly {
 		f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -299,7 +305,28 @@ func (s *Service) WriteText(ctx context.Context, virtualPath string, content []b
 			return FileContent{}, ErrConflict
 		}
 		if hasMultipleLinks(st) {
-			if err := writeLinkedFile(abs, content); err != nil {
+			file, err := os.OpenFile(abs, os.O_WRONLY, 0)
+			if err != nil {
+				return FileContent{}, err
+			}
+			defer file.Close()
+			// Hard-link aliases can have different containing directories.
+			// Lock their shared inode too, then recheck the ETag under that lock.
+			if err := lockEditorFile(ctx, file); err != nil {
+				return FileContent{}, err
+			}
+			st, err = file.Stat()
+			if err != nil {
+				return FileContent{}, err
+			}
+			if ifMatch != "" && ifMatch != etag(st) {
+				return FileContent{}, ErrConflict
+			}
+			if err := writeLinkedFile(file, content); err != nil {
+				return FileContent{}, err
+			}
+			savedInfo, err = file.Stat()
+			if err != nil {
 				return FileContent{}, err
 			}
 			goto saved
@@ -331,15 +358,17 @@ func (s *Service) WriteText(ctx context.Context, virtualPath string, content []b
 	}
 
 saved:
-	st, err := os.Stat(abs)
-	if err != nil {
-		return FileContent{}, err
+	if savedInfo == nil {
+		savedInfo, err = os.Stat(abs)
+		if err != nil {
+			return FileContent{}, err
+		}
 	}
 	return FileContent{
 		Path:     CleanVirtual(virtualPath),
 		Content:  string(content),
-		Modified: st.ModTime(),
-		ETag:     etag(st),
+		Modified: savedInfo.ModTime(),
+		ETag:     etag(savedInfo),
 	}, nil
 }
 

@@ -3,11 +3,14 @@
 package filesystem
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -17,24 +20,50 @@ func hasMultipleLinks(info fs.FileInfo) bool {
 	return ok && stat.Nlink > 1
 }
 
-func writeLinkedFile(path string, content []byte) error {
-	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+func lockEditorDirectory(ctx context.Context, path string) (func(), error) {
+	directory, err := os.Open(filepath.Dir(path))
 	if err != nil {
-		return err
+		return nil, err
 	}
+	if err := lockEditorFile(ctx, directory); err != nil {
+		_ = directory.Close()
+		return nil, err
+	}
+	// A directory lock stays valid when an atomic save replaces the file inode,
+	// and is shared by normal and elevated workers using the same directory.
+	return func() { _ = directory.Close() }, nil
+}
+
+func lockEditorFile(ctx context.Context, file *os.File) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EINTR) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func writeLinkedFile(file *os.File, content []byte) error {
 	if _, err := file.WriteAt(content, 0); err != nil {
-		_ = file.Close()
 		return err
 	}
 	if err := file.Truncate(int64(len(content))); err != nil {
-		_ = file.Close()
 		return err
 	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	return file.Close()
+	return file.Sync()
 }
 
 func copyReplacementMetadata(source string, target *os.File, info fs.FileInfo) error {
