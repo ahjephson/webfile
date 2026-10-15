@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 const modified = '2000-01-01T00:00:00Z'
 const file = (name: string, folder = '/docs') => ({ name, path: `${folder}/${name}`, is_dir: false, size: 12, modified, mode: '-rw-r--r--' })
+const folder = (name: string, parent = '/docs') => ({ ...file(name, parent), is_dir: true, mode: 'drwxr-xr-x' })
 
 const task = (id: string, state = 'running') => ({
   id, kind: 'copy', sources: [`/docs/${id}.txt`], state, phase: state,
@@ -19,6 +20,41 @@ async function mockFolder(page: Page, entries = [file('notes.txt')]) {
   await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [] } }))
   await page.route('**/api/fs/thumbnails/jobs', route => route.fulfill({ json: { jobs: [] } }))
   await page.routeWebSocket('**/api/fs/ws', () => {})
+}
+
+for (const fail of [false, true]) {
+  test(`destination browser ignores late ${fail ? 'errors' : 'listings'} after navigating and reopening`, async ({ page }) => {
+    await mockFolder(page)
+    let hold = false, held = false
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    await page.route('**/api/fs/dir**', async route => {
+      const path = new URL(route.request().url()).searchParams.get('path')!
+      const delayed = hold && path === '/docs'
+      if (delayed) { held = true; await pending }
+      if (delayed && fail) return route.fulfill({ status: 500, json: { error: 'stale destination error' } })
+      return route.fulfill({ json: { path, entries: path === '/' ? [folder('current-root', '')] : [file('notes.txt'), folder('stale-folder')] } })
+    })
+    await page.goto('/#path=%2Fdocs')
+    await expect(page).toHaveURL(/#path=%2Fdocs$/)
+    hold = true
+    await page.locator('[data-file-entry]').filter({ hasText: 'notes.txt' }).click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Copy to…', exact: true }).click()
+    await expect.poll(() => held).toBe(true)
+    const dialog = page.getByRole('dialog', { name: 'Copy to…' })
+    await dialog.getByRole('button', { name: 'Roots', exact: true }).click()
+    await expect(dialog.getByRole('button', { name: 'current-root', exact: true })).toBeVisible()
+    const response = page.waitForResponse(response => response.url().includes('/api/fs/dir?') && new URL(response.url()).searchParams.get('path') === '/docs')
+    release()
+    await response
+    await expect(dialog.getByRole('button', { name: 'current-root', exact: true })).toBeVisible()
+    await expect(dialog.getByText('stale destination error', { exact: true })).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    hold = false
+    await page.locator('[data-file-entry]').filter({ hasText: 'notes.txt' }).click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Copy to…', exact: true }).click()
+    await expect(dialog.getByRole('button', { name: 'stale-folder', exact: true })).toBeVisible()
+  })
 }
 
 test('task history limits retain every active task on load and realtime updates', async ({ page }) => {

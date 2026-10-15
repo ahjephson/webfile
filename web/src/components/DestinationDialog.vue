@@ -31,6 +31,7 @@ const focusedPath = ref('')
 const singleRootPath = ref('')
 const newFolderVisible = ref(false)
 const createError = ref('')
+let loadRequest = 0
 
 const folders = computed(() => entries.value.filter(entry => entry.is_dir && isEntryVisible(entry, {
   showHidden: props.showHidden, hideInaccessible: props.hideInaccessible,
@@ -59,30 +60,36 @@ const crumbs = computed(() => {
 const destinationPath = computed(() => focusedPath.value || current.value)
 
 watch(() => props.visible, visible => {
+  loadRequest++
   if (!visible) return
   current.value = props.initialPath || '/'
   createError.value = ''
   void load()
 })
 
-async function load() {
+async function load(): Promise<boolean> {
+  const request = ++loadRequest
+  const path = current.value
   loading.value = true
   error.value = ''
   focusedPath.value = ''
   try {
-    const response = await api.list(current.value)
+    const response = await api.list(path)
+    if (!props.visible || request !== loadRequest) return false
     singleRootPath.value = response.single_root_path ?? ''
-    if (current.value === '/' && singleRootPath.value) {
+    if (path === '/' && singleRootPath.value) {
       current.value = singleRootPath.value
-      await load()
-      return
+      return await load()
     }
     entries.value = response.entries
+    return true
   } catch (err) {
+    if (!props.visible || request !== loadRequest) return false
     error.value = err instanceof Error ? err.message : String(err)
     entries.value = []
+    return false
   } finally {
-    loading.value = false
+    if (request === loadRequest) loading.value = false
   }
 }
 
@@ -106,14 +113,15 @@ function joinPath(base: string, name: string) {
 }
 
 async function createFolder(name: string) {
+  const request = loadRequest
   const path = joinPath(current.value, name)
   createError.value = ''
   try {
     await api.mkdir(path)
-    await load()
-    focusedPath.value = path
+    if (!props.visible || request !== loadRequest) return
+    if (await load()) focusedPath.value = path
   } catch (err) {
-    createError.value = err instanceof Error ? err.message : String(err)
+    if (props.visible && request === loadRequest) createError.value = err instanceof Error ? err.message : String(err)
   }
 }
 
