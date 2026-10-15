@@ -395,6 +395,11 @@ func recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
+				// net/http uses this sentinel to abort an incomplete response.
+				// Let the server close the stream instead of appending JSON.
+				if recovered == http.ErrAbortHandler {
+					panic(recovered)
+				}
 				slog.Error("panic", slog.Any("panic", recovered))
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			}
