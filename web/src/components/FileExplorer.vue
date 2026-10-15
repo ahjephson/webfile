@@ -201,6 +201,10 @@ const extractTargets = ref<FileEntry[]>([])
 const uploadInput = ref<HTMLInputElement | null>(null)
 const draggingOver = ref(false)
 let invalidateTimer: number | null = null
+let refreshRequest = 0
+let invalidationRefreshRunning = false
+let invalidationRefreshPending = false
+let explorerDisposed = false
 let hashFileRequest = 0
 let breadcrumbResizeObserver: ResizeObserver | null = null
 let preferencesLoaded = false
@@ -265,7 +269,10 @@ const {
   onInvalidate: path => {
     if (path !== currentPath.value) return
     if (invalidateTimer !== null) window.clearTimeout(invalidateTimer)
-    invalidateTimer = window.setTimeout(() => void refresh(false), 120)
+    invalidateTimer = window.setTimeout(() => {
+      invalidateTimer = null
+      if (path === currentPath.value) void refreshInvalidatedDirectory()
+    }, 120)
   },
   onOperation: handleOperationUpdate,
   onThumbnailJob: updateThumbnailJob,
@@ -515,6 +522,7 @@ watch(showHidden, () => { if (preferencesLoaded) void savePreferences() })
 watch([selectedPaths, focusedPath, detailsVisible, detailsPath], storeSessionExplorerState, { flush: 'sync' })
 
 onBeforeUnmount(() => {
+  explorerDisposed = true
   if (invalidateTimer !== null) window.clearTimeout(invalidateTimer)
   window.removeEventListener('keydown', onGlobalKeyDown)
   window.removeEventListener('popstate', applyHashPath)
@@ -662,14 +670,31 @@ function storeSessionExplorerState() {
   })
 }
 
+async function refreshInvalidatedDirectory() {
+  invalidationRefreshPending = true
+  if (invalidationRefreshRunning) return
+  invalidationRefreshRunning = true
+  try {
+    while (invalidationRefreshPending && !explorerDisposed) {
+      invalidationRefreshPending = false
+      await refresh(false)
+    }
+  } finally {
+    invalidationRefreshRunning = false
+  }
+}
+
 async function refresh(showSpinner: boolean): Promise<boolean> {
   if (viewingSearch.value) return true
+  const request = ++refreshRequest
   const requestedPath = currentPath.value
   if (showSpinner) loading.value = true
   error.value = ''
   try {
     const result = await api.list(requestedPath)
-    if (requestedPath !== currentPath.value || viewingSearch.value) return false
+    // A newer read owns this view; supersession is not a failed initial load.
+    if (request !== refreshRequest) return !explorerDisposed && requestedPath === currentPath.value
+    if (explorerDisposed || requestedPath !== currentPath.value || viewingSearch.value) return false
     singleRootPath.value = result.single_root_path ?? ''
     if (requestedPath === '/' && singleRootPath.value && navigationReady) {
       navigateTo(singleRootPath.value, true)
@@ -683,7 +708,7 @@ async function refresh(showSpinner: boolean): Promise<boolean> {
     storeSessionPath(requestedPath)
     return true
   } catch (err) {
-    if (requestedPath === currentPath.value) error.value = messageOf(err)
+    if (request === refreshRequest && !explorerDisposed && requestedPath === currentPath.value) error.value = messageOf(err)
     return false
   } finally {
     if (showSpinner) loading.value = false

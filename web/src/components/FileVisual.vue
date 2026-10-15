@@ -40,14 +40,22 @@ const videoSpriteStyle = computed(() => ({
   transition: 'none',
 }))
 
-watch(() => [props.entry.path, props.entry.size, props.entry.modified] as const, async ([path]) => {
+watch([
+  () => props.entry.path,
+  () => props.entry.size,
+  () => props.entry.modified,
+  () => props.entry.is_dir,
+  () => props.entry.can_read,
+], async ([path], _previous, onCleanup) => {
+  let stale = false
+  onCleanup(() => { stale = true })
   stopVideoAnimation()
   detectedContentType.value = ''
   thumbnailFailed.value = false
   if (props.entry.is_dir || props.entry.can_read === false || fileVisualForPath(path).known) return
   try {
     const result = await api.contentType(path)
-    if (props.entry.path === path) detectedContentType.value = result.content_type
+    if (!stale) detectedContentType.value = result.content_type
   } catch {
     // Keep the generic file icon when type detection is unavailable.
   }
