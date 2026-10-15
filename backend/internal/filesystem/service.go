@@ -424,7 +424,16 @@ func (s *Service) Delete(ctx context.Context, virtualPath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, abs, err := s.resolver.ResolveEntry(virtualPath)
+	configured, abs, err := s.resolver.ResolveEntry(virtualPath)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(configured.Path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	relative, err := filepath.Rel(configured.Path, abs)
 	if err != nil {
 		return err
 	}
@@ -434,7 +443,9 @@ func (s *Service) Delete(ctx context.Context, virtualPath string) error {
 		return err
 	}
 	cached := s.collectCachedThumbnails(ctx, virtualPath)
-	if err := os.RemoveAll(abs); err != nil {
+	// Resolve every component beneath the open root at deletion time as well;
+	// a parent can change after the initial resolver and thumbnail reads.
+	if err := root.RemoveAll(relative); err != nil {
 		return err
 	}
 	s.deleteCachedThumbnails(context.WithoutCancel(ctx), cached)
