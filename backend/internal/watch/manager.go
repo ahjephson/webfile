@@ -31,6 +31,10 @@ type Options struct {
 	PollInterval time.Duration
 }
 
+const watchMask = syscall.IN_CREATE | syscall.IN_DELETE | syscall.IN_MOVED_FROM |
+	syscall.IN_MOVED_TO | syscall.IN_CLOSE_WRITE | syscall.IN_ATTRIB |
+	syscall.IN_DELETE_SELF | syscall.IN_MOVE_SELF
+
 type Event struct {
 	Kind string    `json:"kind"`
 	At   time.Time `json:"at"`
@@ -81,9 +85,9 @@ func New(options ...Options) (*Manager, error) {
 		interval: opts.PollInterval,
 	}
 	go m.loop()
-	if opts.Polling != PollingDisabled {
-		go m.pollLoop()
-	}
+	// Even without content polling, retry watches whose directory was removed
+	// or renamed. Inotify follows the old inode rather than its original path.
+	go m.pollLoop()
 	return m, nil
 }
 
@@ -108,15 +112,7 @@ func (m *Manager) Subscribe(dir string) (<-chan Event, func(), error) {
 
 	state := m.dirs[dir]
 	if state == nil {
-		const mask = syscall.IN_CREATE |
-			syscall.IN_DELETE |
-			syscall.IN_MOVED_FROM |
-			syscall.IN_MOVED_TO |
-			syscall.IN_CLOSE_WRITE |
-			syscall.IN_ATTRIB |
-			syscall.IN_DELETE_SELF |
-			syscall.IN_MOVE_SELF
-		wd, watchErr := syscall.InotifyAddWatch(m.fd, dir, mask)
+		wd, watchErr := syscall.InotifyAddWatch(m.fd, dir, watchMask)
 		poll := m.polling == PollingAlways || m.polling == PollingAuto && (watchErr != nil || pollingRecommended(dir))
 		if watchErr != nil && !poll {
 			return nil, nil, fmt.Errorf("watch %s: %w", dir, watchErr)
@@ -182,12 +178,21 @@ func (m *Manager) pollLoop() {
 func (m *Manager) pollDirectories() {
 	m.mu.Lock()
 	directories := make(map[string]string, len(m.dirs))
+	unwatched := make(map[string]*dirState)
 	for dir, state := range m.dirs {
+		if state.wd < 0 {
+			unwatched[dir] = state
+		}
 		if state.poll {
 			directories[dir] = state.fingerprint
 		}
 	}
 	m.mu.Unlock()
+	for dir, state := range unwatched {
+		if m.restoreWatch(dir, state) {
+			m.Invalidate(dir, "invalidate")
+		}
+	}
 
 	for dir, previous := range directories {
 		fingerprint, err := directoryFingerprint(dir)
@@ -267,19 +272,52 @@ func (m *Manager) loop() {
 				m.invalidateAll("watch-overflow")
 				continue
 			}
-			m.invalidateWD(wd)
+			m.invalidateWD(wd, mask)
 		}
 	}
 }
 
-func (m *Manager) invalidateWD(wd int) {
+func (m *Manager) invalidateWD(wd int, mask uint32) {
 	m.mu.Lock()
 	dir := m.byWD[wd]
+	state := m.dirs[dir]
+	lost := mask&(syscall.IN_MOVE_SELF|syscall.IN_DELETE_SELF|syscall.IN_IGNORED) != 0
+	if lost && state != nil && state.wd == wd {
+		delete(m.byWD, wd)
+		state.wd = -1
+		if mask&syscall.IN_IGNORED == 0 {
+			_, _ = syscall.InotifyRmWatch(m.fd, uint32(wd))
+		}
+	}
 	m.mu.Unlock()
 	if dir == "" {
 		return
 	}
 	m.markDirty(dir, "invalidate")
+	if lost && m.restoreWatch(dir, state) {
+		m.Invalidate(dir, "invalidate")
+	}
+}
+
+func (m *Manager) restoreWatch(dir string, expected *dirState) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	select {
+	case <-m.closed:
+		return false
+	default:
+	}
+	state := m.dirs[dir]
+	if state == nil || state != expected || state.wd >= 0 {
+		return false
+	}
+	wd, err := syscall.InotifyAddWatch(m.fd, dir, watchMask)
+	if err != nil {
+		return false
+	}
+	state.wd = wd
+	m.byWD[wd] = dir
+	return true
 }
 
 func (m *Manager) markDirty(dir, kind string) {
