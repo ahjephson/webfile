@@ -1033,7 +1033,17 @@ function setEditorVisible(visible: boolean) {
 
 function onEditorSaved(path: string) {
   editorIsNew.value = false
-  if (readInternalHashFile() !== path) writePathHash(currentPath.value, false, path)
+  const folder = path.slice(0, path.lastIndexOf('/')) || '/'
+  if (currentPath.value !== folder) {
+    clearParentNavigationQueue()
+    currentPath.value = folder
+  }
+  if (readInternalHashFile() !== path) {
+    // Close uses Back, so a Save As must leave its containing folder directly
+    // behind the new document rather than the previous document's URL.
+    if (readHashFile()) writePathHash(folder, true)
+    writePathHash(folder, false, path)
+  }
   void refresh(false)
 }
 

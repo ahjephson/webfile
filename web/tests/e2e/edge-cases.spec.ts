@@ -14,6 +14,35 @@ async function mockFolder(page: Page, entries = [file('notes.txt')]) {
   await page.routeWebSocket('**/api/fs/ws', () => {})
 }
 
+test('Save As into another folder survives reload and closes into that folder', async ({ page }) => {
+  await mockFolder(page)
+  let saved = ''
+  const opened: string[] = []
+  await page.route('**/api/fs/file**', route => {
+    const path = new URL(route.request().url()).searchParams.get('path')!
+    if (route.request().method() === 'GET') {
+      opened.push(path)
+      return route.fulfill({ json: { content: path === saved ? 'edited' : 'original', etag: 'original' } })
+    }
+    if (path === '/docs/notes.txt') return route.fulfill({ status: 412, json: { error: 'changed' } })
+    saved = path
+    return route.fulfill({ json: { content: 'edited', etag: 'new' } })
+  })
+  await page.goto('/#path=%2Fdocs&file=notes.txt')
+  await page.getByRole('textbox', { name: 'Editor content' }).fill('edited')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  const conflict = page.getByRole('dialog', { name: 'The target changed' })
+  await conflict.getByRole('textbox').fill('/elsewhere/saved.txt')
+  await conflict.getByRole('button', { name: 'Save as', exact: true }).click()
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/#path=%2Felsewhere&file=saved\.txt$/)
+  await page.reload()
+  await expect(page.locator('.view-lines')).toContainText('edited')
+  expect(opened.at(-1)).toBe('/elsewhere/saved.txt')
+  await page.getByRole('button', { name: 'Close editor', exact: true }).click()
+  await expect(page).toHaveURL(/#path=%2Felsewhere$/)
+})
+
 for (const action of ['rename', 'folder', 'document'] as const) {
   for (const name of [' spaced.txt ', '   ']) {
     test(`${action} preserves the exact filename ${JSON.stringify(name)}`, async ({ page }) => {
