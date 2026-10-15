@@ -79,6 +79,11 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 		if err != nil {
 			return err
 		}
+		if kind == "move" {
+			if err := root.validateMoveSource(ctx, abs); err != nil {
+				return err
+			}
+		}
 		bytes, items, err := measureTree(ctx, abs)
 		if err != nil {
 			return err

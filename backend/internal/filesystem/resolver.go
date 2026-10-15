@@ -1,8 +1,10 @@
 package filesystem
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -128,6 +130,46 @@ func (r Root) ValidatePath(candidate string) error {
 	}
 	if isExcludedPath(r, candidate) {
 		return os.ErrNotExist
+	}
+	return nil
+}
+
+// Moving an ancestor would change the root-relative identity of an excluded
+// path. Require users to move visible entries individually instead.
+func (r Root) validateMoveSource(ctx context.Context, source string) error {
+	if len(r.ExcludedPaths) == 0 {
+		return ctx.Err()
+	}
+	root, err := os.OpenRoot(r.Path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	relative, err := filepath.Rel(r.Path, source)
+	if err != nil {
+		return err
+	}
+	info, err := root.Lstat(relative)
+	if err != nil || !info.IsDir() {
+		return err
+	}
+	for _, excluded := range r.ExcludedPaths {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		candidate := filepath.Join(r.Path, filepath.FromSlash(strings.TrimPrefix(excluded, "/")))
+		if !isSameOrDescendant(source, candidate) {
+			continue
+		}
+		relative, err := filepath.Rel(r.Path, candidate)
+		if err != nil {
+			return err
+		}
+		if _, err := root.Lstat(relative); err == nil {
+			return fmt.Errorf("%w: directory contains an excluded path; move visible items individually", fs.ErrPermission)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
 	}
 	return nil
 }

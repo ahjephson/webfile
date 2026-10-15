@@ -103,9 +103,14 @@ func (t *Transfer) initialize(ctx context.Context) error {
 		if IsConfiguredRootPath(source) {
 			return fmt.Errorf("configured roots cannot be copied or moved")
 		}
-		_, absolute, err := t.service.resolver.ResolveEntry(source)
+		root, absolute, err := t.service.resolver.ResolveEntry(source)
 		if err != nil {
 			return err
+		}
+		if t.kind == "move" {
+			if err := root.validateMoveSource(ctx, absolute); err != nil {
+				return err
+			}
 		}
 		if seen[absolute] {
 			return fmt.Errorf("duplicate source item")
@@ -281,6 +286,11 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 			t.decision = nil
 		}
 		if sourceInfo.IsDir() {
+			if t.kind == "move" {
+				if err := sourceRoot.validateMoveSource(ctx, source); err != nil {
+					return err
+				}
+			}
 			// An absent destination can receive the whole directory without
 			// requiring write access to its descendants. Existing folders still
 			// follow the explicit merge path and review child conflicts.

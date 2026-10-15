@@ -372,6 +372,9 @@ func (s *Service) Rename(ctx context.Context, from, to string) error {
 	if fromRoot.Name != toRoot.Name {
 		return errors.New("rename cannot cross configured roots; use the move operation")
 	}
+	if err := fromRoot.validateMoveSource(ctx, fromAbs); err != nil {
+		return err
+	}
 	from = CleanVirtual(from)
 	s.videoQueue.cancelPath(ctx, from)
 	if err := ctx.Err(); err != nil {
