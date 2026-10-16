@@ -10,6 +10,14 @@ function retainOperations(operations: FileOperation[]): FileOperation[] {
   return operations.filter(operation => activeStates.includes(operation.state) || history++ < 50)
 }
 
+function updatedAfter(left: FileOperation, right: FileOperation): boolean {
+  const milliseconds = Date.parse(left.updated_at) - Date.parse(right.updated_at)
+  if (milliseconds !== 0) return milliseconds > 0
+  // Go timestamps can distinguish events within the same JavaScript millisecond.
+  const fraction = (value: string) => (value.match(/\.(\d+)(?:Z|[+-]\d{2}:\d{2})$/)?.[1] ?? '').padEnd(9, '0')
+  return fraction(left.updated_at) > fraction(right.updated_at)
+}
+
 export function useFileOperations(onTerminal: (operation: FileOperation, previous?: FileOperation) => void) {
   const operations = ref<FileOperation[]>([])
   const activeOperations = computed(() => operations.value.filter(operation => activeStates.includes(operation.state)))
@@ -28,7 +36,7 @@ export function useFileOperations(onTerminal: (operation: FileOperation, previou
         ...operations.value.filter(operation => !idsBeforeLoad.has(operation.id) && !loadedIds.has(operation.id)),
         ...loaded.map(operation => {
           const existing = current.get(operation.id)
-          return existing && Date.parse(existing.updated_at) > Date.parse(operation.updated_at) ? existing : operation
+          return existing && updatedAfter(existing, operation) ? existing : operation
         }),
       ])
     } catch {
@@ -38,8 +46,11 @@ export function useFileOperations(onTerminal: (operation: FileOperation, previou
 
   function update(operation: FileOperation) {
     const previous = operations.value.find(item => item.id === operation.id)
-    if (previous && Date.parse(previous.updated_at) > Date.parse(operation.updated_at)) return
-    if (previous && terminalStates.includes(previous.state) && !terminalStates.includes(operation.state)) return
+    if (previous && updatedAfter(previous, operation)) return
+    if (previous && terminalStates.includes(previous.state) && !terminalStates.includes(operation.state)) {
+      if (previous.kind !== 'upload' || operation.kind !== 'upload' || !activeStates.includes(operation.state) || !updatedAfter(operation, previous)) return
+      for (const state of terminalStates) announcedTerminalStates.delete(`${operation.id}:${state}`)
+    }
     operations.value = retainOperations([operation, ...operations.value.filter(item => item.id !== operation.id)])
     if (previous?.state === operation.state || !terminalStates.includes(operation.state)) return
     const terminalKey = `${operation.id}:${operation.state}`
