@@ -56,9 +56,14 @@ func (e *Extractor) CreateFolderArchive(ctx context.Context, virtualPath, output
 		}
 		args = append(args, arg)
 	}
-	for _, exclusion := range exclusions {
-		args = append(args, "-xr!"+exclusion)
+	for _, name := range root.ExcludedNames {
+		args = append(args, "-xr!"+filepath.ToSlash(filepath.Join(filepath.Base(source), name)))
 	}
+	for _, exclusion := range exclusions {
+		args = append(args, "-x!"+exclusion)
+	}
+	// Filesystem exclusions and the validated source are literal names, not globs.
+	args = append(args, "-spd")
 	args = append(args, "."+string(os.PathSeparator)+filepath.Base(source))
 
 	cmd := exec.CommandContext(ctx, e.cfg.Executable, args...)
@@ -133,8 +138,20 @@ func preflightArchiveSource(ctx context.Context, root filesystem.Root, source st
 		excludedNames[name] = struct{}{}
 	}
 	result := CreateResult{}
-	exclusions := make([]string, 0)
 	top := filepath.Base(source)
+	exclusions := make([]string, 0)
+	// Pass configured rules even when their targets do not exist during preflight.
+	// The archive tool may enumerate files copied in after this walk finishes.
+	for _, excludedPath := range root.ExcludedPaths {
+		absolute := filepath.Join(root.Path, filepath.FromSlash(strings.TrimPrefix(excludedPath, "/")))
+		relative, err := filepath.Rel(source, absolute)
+		if err != nil {
+			return CreateResult{}, nil, err
+		}
+		if relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+			exclusions = append(exclusions, filepath.ToSlash(filepath.Join(top, relative)))
+		}
+	}
 	err := filepath.WalkDir(source, func(current string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -143,11 +160,6 @@ func preflightArchiveSource(ctx context.Context, root filesystem.Root, source st
 			return err
 		}
 		if current != source && archiveEntryExcluded(root, current, entry.Name(), excludedNames) {
-			relative, err := filepath.Rel(source, current)
-			if err != nil {
-				return err
-			}
-			exclusions = append(exclusions, filepath.ToSlash(filepath.Join(top, relative)))
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}

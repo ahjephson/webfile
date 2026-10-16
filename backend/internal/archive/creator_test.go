@@ -63,7 +63,7 @@ printf archive > "$out"
 		t.Fatal(err)
 	}
 	args := string(data)
-	for _, expected := range []string{"-xr!photos/secret", "-xr!photos/private", "./photos"} {
+	for _, expected := range []string{"-xr!photos/secret", "-x!photos/private", "-spd", "./photos"} {
 		if !strings.Contains(args, expected+"\n") {
 			t.Fatalf("arguments missing %q: %s", expected, args)
 		}
