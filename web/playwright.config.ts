@@ -2,7 +2,9 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests/e2e',
-  fullyParallel: false,
+  // Balance CI shards by test, including tests in the large interaction file.
+  // Each shard keeps one worker and its own backend on a separate runner.
+  fullyParallel: true,
   workers: 1,
   timeout: 30_000,
   expect: {

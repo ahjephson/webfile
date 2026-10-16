@@ -25,11 +25,12 @@ bash scripts/validate-browser.sh webkit-ipad --grep 'gallery'
 ```
 
 These runs are labelled focused and also exercise the mounted-path smoke check.
-They are iteration checks, not a complete release pass. The default invocation
-without selectors runs the whole project; CI always uses that default. Keep
-the full local pass until source edits are finished and the candidate is ready
-to push. Documentation-only edits after a pass need documentation review, not
-another complete application test/build cycle.
+They are iteration checks, not a complete release pass. Without selectors or a
+shard setting, the default invocation runs the whole project. CI runs all four
+shards for each browser, and every shard is required. Keep the full local pass
+until source edits are finished and the candidate is ready to push.
+Documentation-only edits after a pass need documentation review, not another
+complete application test/build cycle.
 
 Before pushing a candidate to CI, committing a release version, or creating a
 tag, run the complete checks locally. Focused tests are useful during development
@@ -60,6 +61,18 @@ browser scripts sequentially in the shared WSL mirror. They each build a
 development HTTP/non-auth server, use isolated fixture and persistence data,
 run their entire project plus the mounted-path smoke check, and stop the server.
 Their default ports are 8094 and 8095; override `WEBFILE_E2E_PORT` if necessary.
+
+CI divides each browser suite into four parallel jobs on separate runners, with
+one Playwright worker and an independent application instance per shard. Tests
+are distributed individually, so the large interaction file is divided too.
+Run `WEBFILE_E2E_SHARD=2/4 bash scripts/validate-browser.sh webkit-ipad` to reproduce
+one shard locally; omit the variable for the complete local suite. Run shards
+sequentially in the shared local mirror because their frontend builds share
+generated assets. Shard logs and diagnostics are isolated under
+`dist/validation/<project>/shard-<index>-of-<total>/`, including separate output
+directories for the main tests and mounted-path smoke check. Each CI shard has
+its own diagnostic artifact, and every shard must pass before publication.
+
 Inspect the final output and any affected UI before pushing. Browser diagnostics
 are retained under `dist/validation/<project>/` in WSL, including JSON reports
 with individual test durations. Browser scripts expect frontend dependencies
@@ -89,8 +102,9 @@ verification.
 
 `Validate release candidate` runs on branch pushes and pull requests, with
 independent Production package, Chromium and WebKit jobs. The browser jobs each
-have their own server and state. All three must pass. Retry only a failed job
-after examining its named test output, screenshots, traces and server logs;
+have their own server and state. Production and all eight browser shards must
+pass. Retry only a failed job after examining its named test output,
+screenshots, traces and server logs;
 do not blindly restart the entire pipeline or add retries that hide failures.
 
 The production job uploads the archive, checksum and `release-candidate.json`
@@ -137,8 +151,8 @@ to retry infrastructure. Published assets are not overwritten by this workflow.
 - Create and review `RELEASE_NOTES_<version>.md`; commit it before tagging so
   the workflow can use it as the GitHub Release description.
 - Push the candidate commit to `main` only when the user authorizes a push.
-  Wait for all three validation jobs to succeed at that exact commit. Inspect
-  the candidate artifact and provenance before tagging. If checks fail, diagnose
+  Wait for production and every browser shard to succeed at that exact commit.
+  Inspect the candidate artifact and provenance before tagging. If checks fail, diagnose
   and fix them, validate locally, then validate the revised commit in CI.
 - Create an annotated bare semantic-version tag, without a `v` prefix, pointing
   to the validated commit. Push the tag separately from `main` from the

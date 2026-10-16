@@ -16,6 +16,17 @@ if [[ ! "$port" =~ ^[0-9]+$ ]] || ((port < 1 || port > 65535)); then
   exit 1
 fi
 work_dir="$ROOT/dist/validation/$project"
+shard="${WEBFILE_E2E_SHARD:-}"
+shard_args=()
+if [[ -n "$shard" ]]; then
+  if [[ ! "$shard" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] ||
+     ((BASH_REMATCH[1] > BASH_REMATCH[2])); then
+    echo 'WEBFILE_E2E_SHARD must be INDEX/TOTAL with 1 <= INDEX <= TOTAL.' >&2
+    exit 1
+  fi
+  work_dir="$work_dir/shard-${BASH_REMATCH[1]}-of-${BASH_REMATCH[2]}"
+  shard_args=("--shard=$shard")
+fi
 mkdir -p "$work_dir"
 runtime_dir="$(mktemp -d "/tmp/webfile-$project.XXXXXX")"
 webfile_pid=''
@@ -33,9 +44,6 @@ stop_server() {
 }
 cleanup() {
   stop_server
-  if [[ -d "$ROOT/web/test-results" ]]; then
-    cp -a "$ROOT/web/test-results" "$work_dir/"
-  fi
   case "$runtime_dir" in
     /tmp/webfile-*) rm -rf -- "$runtime_dir" ;;
   esac
@@ -88,8 +96,10 @@ wait_for_server '' "$work_dir/server.log"
   else
     printf 'Full browser validation: %s\n' "$project"
   fi
+  if [[ -n "$shard" ]]; then printf 'Browser shard: %s\n' "$shard"; fi
   PLAYWRIGHT_JSON_OUTPUT_FILE="$work_dir/results.json" \
-    npx playwright test "${suite_args[@]}" --project="$project" \
+    npx playwright test "${suite_args[@]}" "${shard_args[@]}" --project="$project" \
+      --output="$work_dir/test-results" \
       --reporter=line,json --global-timeout=900000
 )
 stop_server
@@ -101,5 +111,6 @@ wait_for_server /tools/webfile "$work_dir/server-prefix.log"
   cd web
   WEBFILE_E2E_PREFIX=/tools/webfile PLAYWRIGHT_JSON_OUTPUT_FILE="$work_dir/results-prefix.json" \
     npx playwright test tests/e2e/base-path.spec.ts \
-      --project="$project" --reporter=line,json --global-timeout=120000
+      --project="$project" --output="$work_dir/test-results-prefix" \
+      --reporter=line,json --global-timeout=120000
 )

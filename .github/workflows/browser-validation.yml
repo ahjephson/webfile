@@ -15,9 +15,13 @@ permissions:
 
 jobs:
   browser:
-    name: ${{ inputs.engine }} workflows
+    name: ${{ inputs.engine }} shard ${{ matrix.shard }}/4
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -41,15 +45,17 @@ jobs:
       - name: Validate browser workflows and mounted path
         env:
           PROJECT: ${{ inputs.project }}
+          WEBFILE_E2E_SHARD: ${{ matrix.shard }}/4
         run: bash scripts/validate-browser.sh "$PROJECT"
       - name: Preserve browser diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: browser-diagnostics-${{ inputs.project }}-${{ github.run_attempt }}
+          name: browser-diagnostics-${{ inputs.project }}-${{ matrix.shard }}-of-4-${{ github.run_attempt }}
           path: |
-            dist/validation/${{ inputs.project }}/*.log
-            dist/validation/${{ inputs.project }}/*.json
-            dist/validation/${{ inputs.project }}/test-results/
+            dist/validation/${{ inputs.project }}/**/*.log
+            dist/validation/${{ inputs.project }}/**/*.json
+            dist/validation/${{ inputs.project }}/**/test-results/
+            dist/validation/${{ inputs.project }}/**/test-results-prefix/
           if-no-files-found: ignore
           retention-days: 7
