@@ -82,7 +82,7 @@ func (s *Service) Details(ctx context.Context, virtualPath string) (Details, err
 		Size:      st.Size(),
 		Modified:  st.ModTime(),
 		Mode:      st.Mode().String(),
-		ModeOctal: fmt.Sprintf("%04o", st.Mode().Perm()),
+		ModeOctal: fmt.Sprintf("%04o", unixPermissionBits(st.Mode())),
 	}
 	if stat, ok := st.Sys().(*syscall.Stat_t); ok {
 		d.UID, d.GID = stat.Uid, stat.Gid
@@ -202,7 +202,31 @@ func (s *Service) Chmod(ctx context.Context, virtualPath, modeText string) error
 	if err != nil || value > 0o7777 {
 		return fmt.Errorf("invalid mode %q", modeText)
 	}
-	return os.Chmod(abs, fs.FileMode(value))
+	mode := fs.FileMode(value & 0o777)
+	if value&0o4000 != 0 {
+		mode |= fs.ModeSetuid
+	}
+	if value&0o2000 != 0 {
+		mode |= fs.ModeSetgid
+	}
+	if value&0o1000 != 0 {
+		mode |= fs.ModeSticky
+	}
+	return os.Chmod(abs, mode)
+}
+
+func unixPermissionBits(mode fs.FileMode) uint32 {
+	bits := uint32(mode.Perm())
+	if mode&fs.ModeSetuid != 0 {
+		bits |= 0o4000
+	}
+	if mode&fs.ModeSetgid != 0 {
+		bits |= 0o2000
+	}
+	if mode&fs.ModeSticky != 0 {
+		bits |= 0o1000
+	}
+	return bits
 }
 
 func (s *Service) Chown(ctx context.Context, virtualPath, username, groupname string) error {
