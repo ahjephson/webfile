@@ -14,6 +14,9 @@ import (
 
 var ErrThumbnailQueueFull = errors.New("video thumbnail queue is full")
 
+const failedThumbnailLimit = 50
+const failedThumbnailLife = 5 * time.Minute
+
 type VideoThumbnailJob struct {
 	ID            string     `json:"id"`
 	Path          string     `json:"path"`
@@ -89,6 +92,10 @@ func (q *videoThumbnailQueue) scheduleBatch(sources []thumbnailSource) []VideoTh
 	for _, source := range sources {
 		logicalKey := videoThumbnailLogicalKey(source)
 		if existing := q.jobs[logicalKey]; existing != nil {
+			needsSlot := isThumbnailTerminal(existing.view.State) && (existing.source.key != source.key || existing.view.State == "failed" && time.Since(existing.view.UpdatedAt) >= q.retryBackoff)
+			if needsSlot && len(q.queued)+len(q.settling) >= q.maxQueued {
+				continue
+			}
 			if existing.source.key != source.key {
 				now := time.Now()
 				previousState := existing.view.State
@@ -148,6 +155,8 @@ func (q *videoThumbnailQueue) scheduleBatch(sources []thumbnailSource) []VideoTh
 
 func (q *videoThumbnailQueue) runSettler() {
 	defer q.workerWait.Done()
+	janitor := time.NewTicker(30 * time.Second)
+	defer janitor.Stop()
 	for {
 		job, wait := q.nextSettling()
 		if job != nil {
@@ -159,6 +168,10 @@ func (q *videoThumbnailQueue) runSettler() {
 			timer = time.After(wait)
 		}
 		select {
+		case <-janitor.C:
+			q.mu.Lock()
+			q.trimFailuresLocked()
+			q.mu.Unlock()
 		case <-q.settleWake:
 		case <-timer:
 		case <-q.stop:
@@ -405,9 +418,35 @@ func (q *videoThumbnailQueue) finish(job *videoThumbnailJob, state, detail, expe
 	job.cancel = nil
 	close(job.done)
 	q.publishLocked(q.snapshotLocked(job))
+	if state == "failed" {
+		q.trimFailuresLocked()
+	}
 	q.mu.Unlock()
 	if state == "ready" || state == "cancelled" {
 		time.AfterFunc(q.completedLife, func() { q.remove(job, now) })
+	}
+}
+
+func (q *videoThumbnailQueue) trimFailuresLocked() {
+	failed := make([]*videoThumbnailJob, 0, failedThumbnailLimit+1)
+	for _, job := range q.jobs {
+		if job.view.State != "failed" {
+			continue
+		}
+		if time.Since(job.view.UpdatedAt) >= failedThumbnailLife {
+			delete(q.jobs, job.logicalKey)
+			delete(q.ids, job.view.ID)
+		} else {
+			failed = append(failed, job)
+		}
+	}
+	if len(failed) <= failedThumbnailLimit {
+		return
+	}
+	sort.Slice(failed, func(i, j int) bool { return failed[i].view.UpdatedAt.Before(failed[j].view.UpdatedAt) })
+	for _, job := range failed[:len(failed)-failedThumbnailLimit] {
+		delete(q.jobs, job.logicalKey)
+		delete(q.ids, job.view.ID)
 	}
 }
 
@@ -415,7 +454,7 @@ func (q *videoThumbnailQueue) remove(job *videoThumbnailJob, finishedAt time.Tim
 	q.mu.Lock()
 	if q.jobs[job.logicalKey] == job &&
 		job.view.FinishedAt != nil && job.view.FinishedAt.Equal(finishedAt) &&
-		(job.view.State == "ready" || job.view.State == "cancelled") {
+		isThumbnailTerminal(job.view.State) {
 		delete(q.jobs, job.logicalKey)
 		delete(q.ids, job.view.ID)
 	}
