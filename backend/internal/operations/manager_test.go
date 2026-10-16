@@ -267,6 +267,36 @@ func TestOperationCanBeCancelled(t *testing.T) {
 	t.Fatal("operation did not become cancelled")
 }
 
+func TestCancellationCleanupFailureReportsRecoveryInsteadOfCancelled(t *testing.T) {
+	manager, err := Open(filepath.Join(t.TempDir(), "tasks.db"), 10, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close(context.Background())
+	started := make(chan struct{})
+	recovery := errors.New("rollback incomplete; recovery files retained at /private/stage")
+	op := manager.StartTask("extract", nil, "", TaskOptions{
+		Cancellable: true,
+		Cleanup:     func(context.Context, Operation) error { return recovery },
+	}, func(ctx context.Context, reporter Reporter) error {
+		close(started)
+		<-ctx.Done()
+		return errors.Join(ctx.Err(), recovery)
+	})
+	<-started
+	if !manager.Cancel(op.ID) {
+		t.Fatal("cancel failed")
+	}
+	finished := waitForState(t, manager, op.ID, StateFailed)
+	if finished.Error != recovery.Error() || finished.CleanupError != recovery.Error() {
+		t.Fatalf("recovery details hidden: %#v", finished)
+	}
+	stored, err := manager.store.List(10)
+	if err != nil || len(stored) != 1 || stored[0].Error != finished.Error || stored[0].CleanupError != finished.CleanupError {
+		t.Fatalf("recovery details not persisted: %#v %v", stored, err)
+	}
+}
+
 func TestFailedOperationStoresError(t *testing.T) {
 	manager := New(10)
 	want := errors.New("boom")

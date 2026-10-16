@@ -17,6 +17,8 @@ import (
 	"sync"
 
 	"webfile/internal/filesystem"
+
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -458,9 +460,24 @@ func sanitizeToolError(output string) string {
 	return message
 }
 
+// PublicationRecoveryError identifies extraction data retained because rollback
+// could not safely restore every destination. Callers must surface this even
+// when the operation was cancelled.
+type PublicationRecoveryError struct {
+	Directory string
+	Err       error
+}
+
+func (e *PublicationRecoveryError) Error() string {
+	return fmt.Sprintf("extraction rollback incomplete; recovery files retained at %s: %v", e.Directory, e.Err)
+}
+
+func (e *PublicationRecoveryError) Unwrap() error { return e.Err }
+
 func publishStage(ctx context.Context, stage, destination string, destinationExists bool, policy ExistingFilePolicy, report ProgressReporter, checks ...func() error) (result ExtractResult, err error) {
+	retainStage := false
 	defer func() {
-		if stage != "" {
+		if stage != "" && !retainStage {
 			_ = removeStage(stage)
 		}
 	}()
@@ -493,15 +510,19 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 		err = publishNode(ctx, stage, destination, policy, &skipped, &published, &done, int64(count), report)
 	} else {
 		err = publishAbsent(ctx, stage, destination, count, &published, &done, int64(count), report)
-		if err == nil {
-			stage = ""
-		}
+	}
+	if err == nil {
+		err = ctx.Err()
 	}
 	if err != nil {
 		if rollbackErr := rollbackPublished(published); rollbackErr != nil {
-			return ExtractResult{}, errors.Join(err, fmt.Errorf("rollback published files: %w", rollbackErr))
+			retainStage = true
+			return ExtractResult{}, &PublicationRecoveryError{Directory: stage, Err: errors.Join(err, rollbackErr)}
 		}
 		return ExtractResult{}, err
+	}
+	if !destinationExists {
+		stage = ""
 	}
 	return ExtractResult{Extracted: count - skipped, Skipped: skipped}, nil
 }
@@ -622,6 +643,8 @@ type publishedMove struct {
 	source        string
 	destination   string
 	directoryMode fs.FileMode
+	publishedInfo fs.FileInfo
+	originalInfo  fs.FileInfo
 }
 
 func publishNode(ctx context.Context, source, destination string, policy ExistingFilePolicy, skipped *int, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
@@ -657,8 +680,26 @@ func publishNode(ctx context.Context, source, destination string, policy Existin
 			if err := os.Chmod(source, destinationInfo.Mode()); err != nil {
 				return err
 			}
-			if err := os.Rename(source, destination); err != nil {
+			sourceInfo, err = os.Lstat(source)
+			if err != nil {
 				return err
+			}
+			// Keep the displaced original in the private stage until the entire
+			// publication succeeds. Never fall back to a destructive rename.
+			if err := exchangeFiles(source, destination); err != nil {
+				return err
+			}
+			move := publishedMove{source: source, destination: destination, publishedInfo: sourceInfo, originalInfo: destinationInfo}
+			originalInfo, statErr := os.Lstat(source)
+			if statErr == nil {
+				move.originalInfo = originalInfo
+			}
+			*published = append(*published, move)
+			if statErr != nil {
+				return statErr
+			}
+			if !sameFileState(originalInfo, destinationInfo) {
+				return filesystem.ErrConflict
 			}
 			*done += 1
 			if report != nil {
@@ -779,6 +820,10 @@ func rollbackPublished(published []publishedMove) error {
 	var result error
 	for index := len(published) - 1; index >= 0; index-- {
 		move := published[index]
+		if move.originalInfo != nil {
+			result = errors.Join(result, restoreReplacement(move))
+			continue
+		}
 		if move.directoryMode != 0 {
 			if err := os.MkdirAll(move.source, move.directoryMode.Perm()); err != nil {
 				result = errors.Join(result, err)
@@ -797,6 +842,47 @@ func rollbackPublished(published []publishedMove) error {
 		}
 	}
 	return result
+}
+
+func exchangeFiles(source, destination string) error {
+	return unix.Renameat2(unix.AT_FDCWD, source, unix.AT_FDCWD, destination, unix.RENAME_EXCHANGE)
+}
+
+func sameFileState(a, b fs.FileInfo) bool {
+	return os.SameFile(a, b) && a.Mode() == b.Mode() && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
+}
+
+func restoreReplacement(move publishedMove) error {
+	original, err := os.Lstat(move.source)
+	if err != nil {
+		return err
+	}
+	if !sameFileState(original, move.originalInfo) {
+		return fmt.Errorf("backup changed: %s", move.source)
+	}
+	current, err := os.Lstat(move.destination)
+	if errors.Is(err, fs.ErrNotExist) {
+		return filesystem.RenameNoReplace(move.source, move.destination)
+	}
+	if err != nil {
+		return err
+	}
+	if !sameFileState(current, move.publishedInfo) {
+		return fmt.Errorf("destination changed during extraction: %s", move.destination)
+	}
+	if err := exchangeFiles(move.source, move.destination); err != nil {
+		return err
+	}
+	// A concurrent replacement between the check and exchange must survive in
+	// staging, even though the original has now been restored successfully.
+	displaced, err := os.Lstat(move.source)
+	if err != nil {
+		return err
+	}
+	if !sameFileState(displaced, move.publishedInfo) {
+		return fmt.Errorf("destination changed during rollback: %s", move.destination)
+	}
+	return nil
 }
 
 func scanRecords(reader io.Reader, emit func(string)) error {

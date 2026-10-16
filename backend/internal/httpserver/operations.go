@@ -201,9 +201,11 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startExtractOperation(source, destination string, policy archive.ExistingFilePolicy) operations.Operation {
+	var recoveryError error
 	return s.ops.StartTask("extract", []string{source}, destination, operations.TaskOptions{
 		Cancellable:   true,
-		CleanupPolicy: "Temporary extraction data is removed on cancellation. Files already published are retained.",
+		CleanupPolicy: "Publication is rolled back on cancellation. If restoration fails, recovery files are retained and their location is reported.",
+		Cleanup:       func(context.Context, operations.Operation) error { return recoveryError },
 	}, func(ctx context.Context, reporter operations.Reporter) error {
 		defer func() {
 			if !s.ops.HasQueuedKind("extract") {
@@ -254,6 +256,10 @@ func (s *Server) startExtractOperation(source, destination string, policy archiv
 				})
 			}
 		}, archive.ExtractOptions{ExistingFiles: policy})
+		var recovery *archive.PublicationRecoveryError
+		if errors.As(err, &recovery) {
+			recoveryError = err
+		}
 		if err == nil {
 			if lastPassword != "" {
 				s.archivePassword.Set(lastPassword)
