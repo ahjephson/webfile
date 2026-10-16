@@ -265,6 +265,7 @@ func inlineContentTypeAllowed(contentType string) bool {
 }
 
 func (s *Server) thumbnail(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	width := thumbnailDimension(r.URL.Query().Get("width"), 320)
 	height := thumbnailDimension(r.URL.Query().Get("height"), 320)
 	result, err := s.files.RequestThumbnail(r.Context(), queryPath(r), width, height)
@@ -277,17 +278,10 @@ func (s *Server) thumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if result.Job != nil {
-		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusAccepted, map[string]any{"job": result.Job})
 		return
 	}
 	thumbnail := *result.Thumbnail
-	w.Header().Set("Cache-Control", "private, no-cache")
-	w.Header().Set("ETag", thumbnail.ETag)
-	if r.Header.Get("If-None-Match") == thumbnail.ETag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
 	w.Header().Set("Content-Type", thumbnail.ContentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(thumbnail.Data)))
 	_, _ = w.Write(thumbnail.Data)
