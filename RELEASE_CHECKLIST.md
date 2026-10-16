@@ -44,7 +44,7 @@ as described in `AGENTS.md`. Preserve unrelated changes. Run all Linux commands
 below from `$HOME/code/webfile` inside WSL, never `/mnt/c`.
 
 ```bash
-python3 -m unittest discover -s scripts -p test_release_artifact.py
+python3 -m unittest discover -s scripts -p 'test_*.py'
 COMMIT=local-validation bash scripts/validate-production.sh
 cd web
 npx playwright install --with-deps chromium webkit

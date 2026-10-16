@@ -53,6 +53,7 @@ restore_file() {
 rollback() {
   echo "Restoring previous WebFile installation." >&2
   restore_file /usr/local/bin/webfile webfile
+  restore_file /usr/local/sbin/webfile-update webfile-update
   restore_file /etc/systemd/system/webfile.service webfile.service
   restore_file /etc/systemd/system/webfile-launcher.service webfile-launcher.service
   restore_file /usr/lib/tmpfiles.d/webfile.conf webfile.tmpfiles
@@ -62,6 +63,7 @@ rollback() {
 }
 
 backup_file /usr/local/bin/webfile webfile
+backup_file /usr/local/sbin/webfile-update webfile-update
 backup_file /etc/systemd/system/webfile.service webfile.service
 backup_file /etc/systemd/system/webfile-launcher.service webfile-launcher.service
 backup_file /usr/lib/tmpfiles.d/webfile.conf webfile.tmpfiles
@@ -69,6 +71,8 @@ backup_file /etc/pam.d/webfile webfile.pam
 
 install -m0755 "$WORK/release/webfile" /usr/local/bin/webfile.new
 mv -f /usr/local/bin/webfile.new /usr/local/bin/webfile
+install -m0755 "$WORK/release/deploy/webfile-update" /usr/local/sbin/webfile-update.new
+mv -f /usr/local/sbin/webfile-update.new /usr/local/sbin/webfile-update
 
 # Unit/PAM changes ship with releases, but the local config is never replaced.
 install -m0644 "$WORK/release/deploy/webfile.service" /etc/systemd/system/webfile.service
