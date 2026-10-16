@@ -97,8 +97,15 @@ func (s *Store) GetSession(hash string) (SessionRecord, bool) {
 func (s *Store) DeleteSession(hash string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previous, exists := s.data.Sessions[hash]
 	delete(s.data.Sessions, hash)
-	return s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		if exists {
+			s.data.Sessions[hash] = previous
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Store) SweepSessions(now time.Time) (int, error) {

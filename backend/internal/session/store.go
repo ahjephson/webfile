@@ -96,9 +96,11 @@ func (s *Store) VerifyCSRF(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
 }
 
-func (s *Store) Delete(w http.ResponseWriter, r *http.Request) {
+func (s *Store) Delete(w http.ResponseWriter, r *http.Request) error {
 	if cookie, err := r.Cookie(s.cookieName()); err == nil && cookie.Value != "" {
-		_ = s.state.DeleteSession(tokenHash(cookie.Value))
+		if err := s.state.DeleteSession(tokenHash(cookie.Value)); err != nil {
+			return err
+		}
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName(),
@@ -110,6 +112,7 @@ func (s *Store) Delete(w http.ResponseWriter, r *http.Request) {
 		Expires:  time.Unix(1, 0),
 		MaxAge:   -1,
 	})
+	return nil
 }
 
 func (s *Store) cookieName() string {

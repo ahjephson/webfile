@@ -4,6 +4,7 @@ import Button from 'primevue/button'
 import ConfirmDialog from 'primevue/confirmdialog'
 import ProgressSpinner from 'primevue/progressspinner'
 import Toast from 'primevue/toast'
+import { useToast } from 'primevue/usetoast'
 import FileExplorer from '@/components/FileExplorer.vue'
 import LoginView from '@/components/LoginView.vue'
 import ElevationDialog from '@/components/ElevationDialog.vue'
@@ -11,6 +12,7 @@ import { api, ApiError, type SessionStatus } from '@/api/client'
 import { appPath } from '@/base'
 
 const session = ref<SessionStatus | null>(null)
+const toast = useToast()
 const checking = ref(true)
 const loginBusy = ref(false)
 const loginError = ref('')
@@ -66,13 +68,17 @@ async function login(username: string, password: string) {
 }
 
 async function logout() {
-  const logoutURL = session.value?.logout_url
-  await api.logout()
-  if (logoutURL) {
-    await postExternalLogout(logoutURL)
-    return
+  try {
+    const logoutURL = session.value?.logout_url
+    await api.logout()
+    if (logoutURL) {
+      await postExternalLogout(logoutURL)
+      return
+    }
+    session.value = await api.session()
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Could not sign out', detail: err instanceof Error ? err.message : String(err), life: 6000 })
   }
-  session.value = await api.session()
 }
 
 async function postExternalLogout(url: string) {

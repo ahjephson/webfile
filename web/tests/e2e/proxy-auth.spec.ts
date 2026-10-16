@@ -1,5 +1,27 @@
 import { expect, test } from '@playwright/test'
 
+test('failed session deletion is visible and sign out can be retried', async ({ page }) => {
+  let attempts = 0, signedOut = false
+  await page.route('**/api/session', route => route.fulfill({ json: {
+    authenticated: !signedOut, mode: 'pam', user: { username: 'logout-test' }, csrf_token: 'test-csrf',
+  } }))
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries: [] } }))
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [] } }))
+  await page.routeWebSocket('**/api/fs/ws', () => {})
+  await page.route('**/api/logout', route => {
+    if (++attempts === 1) return route.fulfill({ status: 500, json: { error: 'could not delete session; try signing out again' } })
+    signedOut = true
+    return route.fulfill({ status: 204 })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await expect(page.getByText('Could not sign out', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await expect(page.getByLabel('Username', { exact: true })).toBeVisible()
+  expect(attempts).toBe(2)
+})
+
 test('proxy-authenticated sessions use the configured external logout URL', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Playwright WebKit cannot fulfill intercepted requests with redirect responses')
   let logoutRequests = 0

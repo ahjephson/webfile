@@ -108,7 +108,10 @@ func (s *MainServer) getSession(w http.ResponseWriter, r *http.Request) {
 			} else {
 				if sessionOK {
 					s.dropElevationForRequest(r)
-					s.opts.Sessions.Delete(w, r)
+					if err := s.opts.Sessions.Delete(w, r); err != nil {
+						writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not replace session"})
+						return
+					}
 				}
 				createdCSRF, err := s.opts.Sessions.Create(w, externalID)
 				if err != nil {
@@ -198,7 +201,10 @@ func (s *MainServer) login(w http.ResponseWriter, r *http.Request) {
 func (s *MainServer) logout(w http.ResponseWriter, r *http.Request) {
 	if s.opts.AuthMode == "pam" || s.opts.AuthMode == "proxy" {
 		s.dropElevationForRequest(r)
-		s.opts.Sessions.Delete(w, r)
+		if err := s.opts.Sessions.Delete(w, r); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not delete session; try signing out again"})
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

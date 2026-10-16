@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,6 +15,68 @@ import (
 	"webfile/internal/persistence"
 	"webfile/internal/session"
 )
+
+func TestLogoutPersistenceFailureIsReportedAndCanBeRetried(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	state, err := persistence.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := identity.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := session.New(time.Hour, false, state)
+	created := httptest.NewRecorder()
+	csrf, err := sessions.Create(created, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := created.Result().Cookies()[0]
+	target := NewMain(MainOptions{AuthMode: "pam", Sessions: sessions, State: state})
+	backup := filepath.Join(filepath.Dir(path), "backup.json")
+	if err := os.Rename(path, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "http://localhost/api/logout", nil)
+	request.AddCookie(cookie)
+	request.Header.Set("X-WebFile-CSRF", csrf)
+	response := httptest.NewRecorder()
+	target.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("logout acknowledged failed persistence: %d %s", response.Code, response.Body.String())
+	}
+	if len(response.Result().Cookies()) != 0 {
+		t.Fatal("failed logout discarded the cookie needed to retry")
+	}
+	if _, _, ok := sessions.Get(request); !ok {
+		t.Fatal("failed mutation left memory inconsistent with persistent state")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(backup, path); err != nil {
+		t.Fatal(err)
+	}
+	response = httptest.NewRecorder()
+	target.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("retry failed: %d %s", response.Code, response.Body.String())
+	}
+	if cookies := response.Result().Cookies(); len(cookies) != 1 || cookies[0].MaxAge != -1 {
+		t.Fatalf("successful logout cookie: %v", cookies)
+	}
+	reopened, err := persistence.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := session.New(time.Hour, false, reopened).Get(request); ok {
+		t.Fatal("successful logout was lost after reopening state")
+	}
+}
 
 func proxyAuthTestServer(t *testing.T) (*MainServer, identity.Identity) {
 	t.Helper()
