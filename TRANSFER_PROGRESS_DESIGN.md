@@ -2,6 +2,42 @@
 
 Status: implemented 2026-10-01.
 
+## Small-file transfer update (2026-10-16)
+
+Copy and move tasks keep their main detail message above the progress bar. The
+byte-progress line shows counts and a rate when available, without repeating
+the per-file copying/flushing/publishing phase. Preparation reads **Scanning**.
+
+Per-file phases remain available internally, but they follow the ordinary
+100 ms broadcast and one-second persistence cadence. They do not create task
+history events on every file. Lifecycle changes, conflict review, cancellation
+and completion remain immediate. Copy files still synchronize before publication
+and source deletion; this update does not relax durability to match plain `cp`.
+
+Transfers no longer walk and inspect source files to migrate thumbnail cache
+entries. Destination thumbnails are generated on demand; obsolete keys expire
+through the bounded cache's normal eviction. The explicit Rename action keeps
+its existing cache-migration behavior. Top-level directory moves reuse the
+initial size measurement rather than scanning the same tree a second time.
+
+Cross-root moves attempt an anchored, no-overwrite rename and fall back to
+copy-and-delete on `EXDEV`. Cross-root directory rename is restricted to roots
+without exclusion rules, so the optimization cannot bypass descendant filtering.
+
+The benchmark `BenchmarkSmallFileMove` compares 1,000 small files through the
+persistent task manager with `cp -r` plus deletion, both with and without a
+final filesystem sync. It uses tmpfs and the native temporary directory to
+force different filesystems; actual two-disk measurements are still required
+to tune the small-file pipeline or consider a broader flush-batching design.
+
+Small-file copies now use at most four concurrent workers for independent
+regular files up to 64 KiB with absent destinations. This overlaps writes and
+the existing per-file syncs. Same-filesystem rename moves, directories, large
+files and conflict decisions remain sequential. A group drains fully before
+reviewing a conflict or returning; successfully completed items are retained,
+failed/conflicting items remain queued, and no worker deletes its source before
+its own destination is synchronized and safely published.
+
 ## Goals
 
 - Make copy and move progress understandable in the same way as a desktop file

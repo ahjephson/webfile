@@ -165,7 +165,14 @@ func TestCopyingOperationReportsAndClearsTransferRate(t *testing.T) {
 	op := manager.Start("copy", []string{"/a"}, "/b", func(_ context.Context, reporter Reporter) error {
 		reporter.UpdatePhase("copying", 0, 100, 0, 1, "Copying a")
 		reporter.UpdatePhase("copying", 50, 100, 0, 1, "Copying a")
+		// Simulate the next broadcast interval without a wall-clock sleep.
+		manager.mu.Lock()
+		manager.records[reporter.ID()].lastBroadcast = time.Time{}
+		manager.mu.Unlock()
 		reporter.UpdatePhase("copying", 100, 100, 0, 1, "Copying a")
+		manager.mu.Lock()
+		manager.records[reporter.ID()].lastBroadcast = time.Time{}
+		manager.mu.Unlock()
 		reporter.UpdatePhase("flushing", 100, 100, 0, 1, "Copying a")
 		return nil
 	})

@@ -765,8 +765,12 @@ func (m *Manager) updateProgress(id string, p ProgressUpdate) {
 		go m.expireTransferRate(id)
 	}
 
-	changed := stateChanged || phaseChanged || unitChanged
-	terminalProgress := p.ProgressTotal > 0 && p.ProgressDone >= p.ProgressTotal
+	// Per-file copy/flush/publish transitions are telemetry, not durable task
+	// state changes. Persist and broadcast them at the normal progress cadence.
+	// Conflict, cancellation and completion use their immediate state paths.
+	transferProgress := (rec.op.Kind == "copy" || rec.op.Kind == "move") && transferIOPhase(p.Phase)
+	changed := stateChanged || unitChanged || phaseChanged && !transferProgress
+	terminalProgress := !transferProgress && p.ProgressTotal > 0 && p.ProgressDone >= p.ProgressTotal
 	if changed || terminalProgress || time.Since(rec.lastPersistence) >= time.Second {
 		m.persistLocked(rec, changed)
 	}
@@ -774,6 +778,14 @@ func (m *Manager) updateProgress(id string, p ProgressUpdate) {
 		rec.lastBroadcast = time.Now()
 		m.broadcastLocked(rec.op)
 	}
+}
+
+func transferIOPhase(phase string) bool {
+	switch phase {
+	case "copying", "flushing", "publishing", "removing_source":
+		return true
+	}
+	return false
 }
 
 func (m *Manager) setStatus(id string, state State, phase, message string) {

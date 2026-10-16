@@ -135,10 +135,10 @@ function formatProgress(operation: FileOperation): string {
     if (operation.phase === 'copying' && operation.bytes_per_second && operation.bytes_per_second > 0) {
       return `${progress} · ${formatBytes(operation.bytes_per_second)}/s`
     }
-    if (active(operation)) return `${progress} · ${phaseLabel(operation)}`
     return progress
   }
   if (operation.progress_unit === 'items') return `${operation.progress_done} / ${operation.progress_total} items`
+  if (operation.kind === 'copy' || operation.kind === 'move') return ''
   return phaseLabel(operation)
 }
 

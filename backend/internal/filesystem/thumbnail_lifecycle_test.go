@@ -20,7 +20,7 @@ func TestRenameMovesCachedThumbnail(t *testing.T) {
 	assertCachedThumbnailMoved(t, svc, oldKey, "/Files/after.jpg")
 }
 
-func TestMoveDirectoryMovesCachedThumbnails(t *testing.T) {
+func TestMoveDirectoryRegeneratesThumbnailsOnDemand(t *testing.T) {
 	svc, root := testService(t)
 	if err := os.MkdirAll(filepath.Join(root, "source", "nested"), 0o755); err != nil {
 		t.Fatal(err)
@@ -35,7 +35,16 @@ func TestMoveDirectoryMovesCachedThumbnails(t *testing.T) {
 	if err := svc.CopyMove(context.Background(), "move", []string{"/Files/source"}, "/Files/destination", nil); err != nil {
 		t.Fatal(err)
 	}
-	assertCachedThumbnailMoved(t, svc, oldKey, "/Files/destination/source/nested/photo.jpg")
+	if onlyCachedThumbnailKey(t, svc) != oldKey {
+		t.Fatal("move unexpectedly scanned or rewrote thumbnail cache entries")
+	}
+	cacheThumbnail(t, svc, "/Files/destination/source/nested/photo.jpg")
+	cache := svc.thumbnailCache.(*memoryThumbnailCache)
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if len(cache.items) != 2 {
+		t.Fatalf("destination thumbnail was not regenerated on demand: %d entries", len(cache.items))
+	}
 }
 
 func TestDeleteDirectoryDeletesCachedThumbnails(t *testing.T) {

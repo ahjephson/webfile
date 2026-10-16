@@ -1,0 +1,38 @@
+# Bug log
+
+- [x] Transfer progress wording: change **Scanning transfer sources** to **Scanning**. Implemented and validated.
+- [x] Remove the separate transfer phase/status text. The main task details above the progress bar (for example **Copying**) are sufficient. Moving a folder containing many files previously made the redundant status repeatedly flip between **Copying**, **Flushing** and **Publishing**. Implemented and validated.
+- [x] Investigate moves containing many small files being much slower than OS moves, including between different disks where copy-and-delete is required. Identified excessive synchronous task-history writes, thumbnail inspection and avoidable same-filesystem copies. Implemented the changes below and measured a local improvement; performance on the user's physical disks remains unverified.
+
+## Proposed transfer fixes
+
+User comparison: manual `cp -r` followed by deletion completed in under one minute; WebFile took almost five minutes to process less than 5% of the files. This was a manual observation, not a controlled benchmark.
+
+- [x] Throttle ordinary browser progress updates to 100–250 ms and ordinary task persistence to about once per second. Keep completion, errors, conflicts and cancellation immediate; avoid a database transaction/event for every file phase. Implemented and validated.
+- [x] Remove thumbnail scanning/cache maintenance from the transfer's critical path; regenerate thumbnails on demand or perform cache upkeep in the background. Implemented on-demand regeneration and validated.
+- [x] Review per-file disk flushing and investigate safe batching or overlap. Never delete a move source before its destination data has been safely written. The bounded small-file pipeline overlaps writes/flushes while retaining every per-file sync; broader batching requires additional staging/recovery work and disk measurements.
+- [x] Consider bounded file-copy concurrency after checking disk behavior; avoid excessive concurrency and preserve conflict review, cancellation and no-overwrite behavior. Initial local measurements showed about a 3x improvement from bookkeeping/cache fixes but a substantial remaining gap. Implemented and validated a four-worker pipeline only for independent absent-destination regular files up to 64 KiB; per-file sync remains mandatory.
+- [x] Attempt safe rename moves across configured roots on the same filesystem, with copy-and-delete fallback for different filesystems. Implemented and validated with a guard for directory exclusion rules. Top-level moves also reuse their initial size measurement.
+- [x] Measure local many-small-file transfers before and after implementation, including OS copy comparisons; results below.
+- [ ] Measure the user's physical two-disk workload and investigate the remaining OS-copy gap before tuning concurrency or implementing broader flush batching.
+
+## Validation and measurements (2026-10-16)
+
+No tests ran during the initial implementation. Its completed regression/race checks and measurements motivated the bounded-pipeline refinement, which was fully implemented before its validation pass.
+
+- Regression tests against the original code failed as expected: 100 files created 299 transient task events, and cross-root moves on one filesystem copied rather than renamed.
+- Full backend race tests, vet, production/PAM tests and production/PAM vet passed on the final code. Cancellation/conflict and related regressions passed 10 race-enabled repetitions.
+- All five task-update browser tests passed in Chromium and WebKit, plus both mounted-path smoke checks; frontend builds passed.
+- Visually checked an active 12,000-file copy in the Codex browser: the main details and byte progress remained visible without repeated phase text. The task completed with matching counters and all files present; only its own task-history entry was removed afterward.
+
+Local benchmark: 1,000 files of 4 KiB each, tmpfs source and native WSL destination to force different filesystems, persistent task database enabled, three runs per method. Median elapsed times exclude fixture creation.
+
+| Method | Median elapsed |
+| --- | ---: |
+| Original WebFile | 5.25 s |
+| Bookkeeping/cache/rename changes | 1.72 s |
+| Final code with bounded small-file pipeline | 0.96 s |
+| OS `cp -r` plus deletion (final comparison) | 0.067 s |
+| OS `cp -r`, final filesystem sync, then deletion (final comparison) | 0.099 s |
+
+The final local result is about 5.5x faster than the original WebFile path. OS copying remains faster in this fixture. A final filesystem-wide sync differs from per-file synchronization and publication. These results do not establish performance on two physical disks; detailed attribution of the remaining gap and a broader flush-batching/recovery redesign remain follow-ups.

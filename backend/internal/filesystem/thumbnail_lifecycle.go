@@ -4,7 +4,6 @@ import (
 	"context"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 )
 
@@ -81,9 +80,4 @@ func (s *Service) deleteCachedThumbnails(ctx context.Context, cached []cachedThu
 	for _, item := range cached {
 		_ = s.thumbnailCache.Delete(ctx, item.key)
 	}
-}
-
-func (s *Service) finishThumbnailMove(ctx context.Context, source, destinationDir string, cached []cachedThumbnail) {
-	destination := VirtualJoin(destinationDir, path.Base(source))
-	s.moveCachedThumbnails(context.WithoutCancel(ctx), cached, destination)
 }

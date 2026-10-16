@@ -5,6 +5,28 @@ const task = (id: string, state: string, updated = 1) => ({ id, kind: 'upload', 
   progress_done: 1, progress_total: 10, progress_unit: 'bytes', cancellable: state === 'running',
   started_at: '2000-01-01T00:00:00Z', updated_at: `2000-01-01T00:00:00.00000${updated}Z` })
 
+test('transfer progress retains its main details without redundant file phase text', async ({ page }) => {
+  const realtime = await taskFolder(page)
+  const operation = { ...task('folder', 'running'), kind: 'move', phase: 'scanning', message: 'Scanning',
+    progress_done: 0, progress_total: 0, progress_unit: '', bytes_done: 0, bytes_total: 0 }
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [operation] } }))
+  await page.goto('/#path=%2Fdocs')
+  await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+  const panel = page.getByRole('complementary')
+  const transfer = panel.getByRole('article').filter({ hasText: 'Move folder.txt' })
+  await expect(transfer.getByText('Scanning', { exact: true })).toHaveCount(1)
+  let updated = 2
+  for (const phase of ['copying', 'flushing', 'publishing', 'copying']) {
+    realtime.send({ type: 'operation-updated', operation: { ...operation, phase, message: 'Copying folder',
+      progress_done: updated, progress_total: 10, progress_unit: 'bytes', bytes_done: updated, bytes_total: 10,
+      updated_at: `2000-01-01T00:00:0${updated++}Z` } })
+    await expect(transfer.getByRole('progressbar')).toHaveAttribute('aria-valuenow', `${(updated - 1) * 10}`)
+    await expect(transfer.getByText('Copying folder', { exact: true })).toBeVisible()
+    await expect(transfer.getByText(/^(Copying|Flushing|Publishing)$/)).toHaveCount(0)
+    await expect(transfer.getByText(/B.*·.*(Copying|Flushing|Publishing)/)).toHaveCount(0)
+  }
+})
+
 async function taskFolder(page: Page) {
   await page.route('**/api/session', route => route.fulfill({ json: { authenticated: true, mode: 'none', user: { username: 'tasks-test' } } }))
   await page.route('**/api/preferences', route => route.fulfill({ json: { view_mode: 'list' } }))

@@ -53,7 +53,7 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 		return errors.New("at least one source is required")
 	}
 	if report != nil {
-		report(TransferProgress{Phase: transferPhaseScanning, Message: "Scanning sources"})
+		report(TransferProgress{Phase: transferPhaseScanning, Message: "Scanning"})
 	}
 
 	destRoot, destAbs, err := s.resolver.ResolveExisting(destinationDir)
@@ -134,20 +134,21 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 		target := filepath.Join(destAbs, filepath.Base(source.Absolute))
 		message := fmt.Sprintf("%s %s", strings.ToUpper(kind[:1])+kind[1:], path.Base(source.VirtualPath))
 
-		var cached []cachedThumbnail
 		if kind == "move" {
 			s.videoQueue.cancelPath(ctx, source.VirtualPath)
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			cached = s.collectCachedThumbnails(ctx, source.VirtualPath)
 		}
-		if kind == "move" && source.Root.Name == destRoot.Name {
-			if err := renameNoReplace(source.Absolute, target); err == nil {
+		if kind == "move" && canRenameTransferTree(source.Root, destRoot) {
+			info, err := os.Lstat(source.Absolute)
+			if err != nil {
+				return err
+			}
+			if err := moveReviewedItem(source.Root, destRoot, source.Absolute, target, info); err == nil {
 				bytesDone += source.Bytes
 				itemsDone += source.Items
 				emit(transferPhaseCompleted, message)
-				s.finishThumbnailMove(ctx, source.VirtualPath, destinationDir, cached)
 				continue
 			} else if errors.Is(err, ErrConflict) {
 				return err
@@ -171,7 +172,6 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 			if err := os.RemoveAll(source.Absolute); err != nil {
 				return fmt.Errorf("copied but could not remove source %s: %w", source.VirtualPath, err)
 			}
-			s.finishThumbnailMove(ctx, source.VirtualPath, destinationDir, cached)
 		}
 	}
 

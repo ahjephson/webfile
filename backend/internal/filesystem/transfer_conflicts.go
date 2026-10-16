@@ -34,6 +34,8 @@ type ConflictDecision struct {
 }
 type transferItem struct {
 	source, target string
+	bytes, items   int64
+	measured       bool
 	finish         bool
 	restore        bool
 	info           os.FileInfo
@@ -133,7 +135,7 @@ func (t *Transfer) initialize(ctx context.Context) error {
 		}
 		t.totalBytes += bytes
 		t.totalItems += items
-		t.queue = append(t.queue, transferItem{source: CleanVirtual(source), target: path.Join(t.destination, path.Base(CleanVirtual(source)))})
+		t.queue = append(t.queue, transferItem{source: CleanVirtual(source), target: path.Join(t.destination, path.Base(CleanVirtual(source))), bytes: bytes, items: items, measured: true})
 	}
 	t.initialized = true
 	return nil
@@ -146,7 +148,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 		}
 	}
 	if !t.initialized {
-		emit(transferPhaseScanning, "Scanning transfer sources")
+		emit(transferPhaseScanning, "Scanning")
 		if err := t.initialize(ctx); err != nil {
 			return err
 		}
@@ -154,6 +156,12 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 	for len(t.queue) > 0 {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if copied, err := t.copySmallBatch(ctx, emit); copied || err != nil {
+			if err != nil {
+				return err
+			}
+			continue
 		}
 		item := t.queue[0]
 		if item.finish {
@@ -294,19 +302,21 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 			// An absent destination can receive the whole directory without
 			// requiring write access to its descendants. Existing folders still
 			// follow the explicit merge path and review child conflicts.
-			if t.kind == "move" && choice != "merge" && sourceRoot.Name == targetRoot.Name {
-				bytes, items, err := measureTree(ctx, source)
-				if err != nil {
-					return err
+			if t.kind == "move" && choice != "merge" && canRenameTransferTree(sourceRoot, targetRoot) {
+				bytes, items := item.bytes, item.items
+				if !item.measured {
+					var err error
+					bytes, items, err = measureTree(ctx, source)
+					if err != nil {
+						return err
+					}
 				}
 				t.service.videoQueue.cancelPath(ctx, item.source)
-				cached := t.service.collectCachedThumbnails(ctx, item.source)
 				if err := ctx.Err(); err != nil {
 					return err
 				}
 				err = moveReviewedItem(sourceRoot, targetRoot, source, target, sourceInfo)
 				if err == nil {
-					t.service.moveCachedThumbnails(context.WithoutCancel(ctx), cached, item.target)
 					t.bytes += bytes
 					t.items += items
 					t.queue = t.queue[1:]
@@ -356,14 +366,14 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 		if !sourceInfo.Mode().IsRegular() && sourceInfo.Mode()&os.ModeSymlink == 0 {
 			return fmt.Errorf("unsupported special file")
 		}
-		var cached []cachedThumbnail
 		if t.kind == "move" {
 			t.service.videoQueue.cancelPath(ctx, item.source)
-			cached = t.service.collectCachedThumbnails(ctx, item.source)
 		}
-		if t.kind == "move" && choice != "replace" && sourceRoot.Name == targetRoot.Name {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if t.kind == "move" && choice != "replace" {
 			if err := moveReviewedItem(sourceRoot, targetRoot, source, target, sourceInfo); err == nil {
-				t.service.moveCachedThumbnails(context.WithoutCancel(ctx), cached, item.target)
 				t.bytes += sourceInfo.Size()
 				t.items++
 				t.queue = t.queue[1:]
@@ -380,9 +390,6 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 		}
 		if err != nil {
 			return err
-		}
-		if t.kind == "move" {
-			t.service.moveCachedThumbnails(context.WithoutCancel(ctx), cached, item.target)
 		}
 		t.items++
 		t.queue = t.queue[1:]
@@ -577,4 +584,12 @@ func moveReviewedItem(sourceRoot, targetRoot Root, source, target string, expect
 		return errRenameNoReplaceUnsupported
 	}
 	return err
+}
+
+func canRenameTransferTree(sourceRoot, targetRoot Root) bool {
+	// A cross-root rename must not move descendants that the ordinary transfer
+	// would filter out, or bypass destination exclusion checks on those children.
+	return sourceRoot.Name == targetRoot.Name ||
+		len(sourceRoot.ExcludedNames) == 0 && len(sourceRoot.ExcludedPaths) == 0 &&
+			len(targetRoot.ExcludedNames) == 0 && len(targetRoot.ExcludedPaths) == 0
 }
