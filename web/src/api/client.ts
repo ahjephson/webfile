@@ -365,8 +365,9 @@ export const api = {
     return appPath(`${withPath('/api/fs/download', path)}&inline=true`)
   },
 
-  thumbnailUrl(path: string, width = 320, height = 320) {
+  thumbnailUrl(path: string, width = 320, height = 320, version?: string) {
     const query = new URLSearchParams({ path, width: String(width), height: String(height) })
+    if (version !== undefined) query.set('version', version)
     return appPath(`/api/fs/thumbnail?${query}`)
   },
 
