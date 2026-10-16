@@ -2,6 +2,7 @@ package thumbnailcache
 
 import (
 	"bytes"
+	"container/list"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -41,6 +42,9 @@ type Store struct {
 	dir         string
 	maxBytes    int64
 	mu          sync.Mutex
+	blobs       map[string]*list.Element
+	lru         list.List
+	bytes       int64
 	indexMu     sync.Mutex
 	index       *locationIndex
 	indexErr    error
@@ -54,7 +58,14 @@ func Open(dir string, maxBytes int64) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, err
 	}
-	return &Store{dir: filepath.Clean(dir), maxBytes: maxBytes}, nil
+	s := &Store{dir: filepath.Clean(dir), maxBytes: maxBytes, blobs: make(map[string]*list.Element)}
+	if err := s.loadBlobs(); err != nil {
+		return nil, err
+	}
+	if err := s.pruneLocked(); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 func (s *Store) Get(ctx context.Context, key string) (Item, bool, error) {
@@ -64,8 +75,11 @@ func (s *Store) Get(ctx context.Context, key string) (Item, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return Item{}, false, err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	encoded, err := os.ReadFile(s.dataPath(key))
 	if errors.Is(err, os.ErrNotExist) {
+		s.forgetBlob(key)
 		return Item{}, false, nil
 	}
 	if err != nil {
@@ -77,6 +91,7 @@ func (s *Store) Get(ctx context.Context, key string) (Item, bool, error) {
 	}
 	now := time.Now()
 	_ = os.Chtimes(s.dataPath(key), now, now)
+	s.rememberBlob(key, int64(len(encoded)))
 	return Item{Data: encoded[separator+1:], ContentType: string(encoded[:separator])}, true, nil
 }
 
@@ -99,6 +114,7 @@ func (s *Store) Put(ctx context.Context, key string, item Item) error {
 	if err := atomicWrite(s.dataPath(key), encoded); err != nil {
 		return err
 	}
+	s.rememberBlob(key, int64(len(encoded)))
 	return s.pruneLocked()
 }
 
@@ -118,10 +134,17 @@ func (s *Store) Move(ctx context.Context, from, to string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := os.Rename(s.dataPath(from), s.dataPath(to)); errors.Is(err, os.ErrNotExist) {
+		s.forgetBlob(from)
 		return nil
-	} else {
+	} else if err != nil {
 		return err
 	}
+	if element := s.blobs[from]; element != nil {
+		size := element.Value.(cachedBlob).size
+		s.forgetBlob(from)
+		s.rememberBlob(to, size)
+	}
+	return nil
 }
 
 func (s *Store) Delete(ctx context.Context, key string) error {
@@ -136,6 +159,7 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	if err := os.Remove(s.dataPath(key)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	s.forgetBlob(key)
 	return nil
 }
 
@@ -357,19 +381,24 @@ func atomicWrite(path string, data []byte) error {
 	return os.Rename(temporaryPath, path)
 }
 
-func (s *Store) pruneLocked() error {
+type cachedBlob struct {
+	key  string
+	size int64
+}
+
+// Rebuild disposable size/LRU bookkeeping once at startup. The on-disk cache
+// remains authoritative; ordinary writes never enumerate its directory.
+func (s *Store) loadBlobs() error {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return err
 	}
 	type cachedFile struct {
-		path    string
 		key     string
 		size    int64
 		modTime time.Time
 	}
 	files := make([]cachedFile, 0, len(entries))
-	var total int64
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".thumb") {
 			continue
@@ -379,17 +408,43 @@ func (s *Store) pruneLocked() error {
 			continue
 		}
 		key := strings.TrimSuffix(entry.Name(), ".thumb")
-		files = append(files, cachedFile{path: filepath.Join(s.dir, entry.Name()), key: key, size: info.Size(), modTime: info.ModTime()})
-		total += info.Size()
+		if !keyPattern.MatchString(key) {
+			continue
+		}
+		files = append(files, cachedFile{key: key, size: info.Size(), modTime: info.ModTime()})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].modTime.Before(files[j].modTime) })
 	for _, file := range files {
-		if total <= s.maxBytes {
+		s.rememberBlob(file.key, file.size)
+	}
+	return nil
+}
+
+func (s *Store) forgetBlob(key string) {
+	if element := s.blobs[key]; element != nil {
+		s.bytes -= element.Value.(cachedBlob).size
+		s.lru.Remove(element)
+		delete(s.blobs, key)
+	}
+}
+
+func (s *Store) rememberBlob(key string, size int64) {
+	s.forgetBlob(key)
+	s.blobs[key] = s.lru.PushBack(cachedBlob{key: key, size: size})
+	s.bytes += size
+}
+
+func (s *Store) pruneLocked() error {
+	for s.bytes > s.maxBytes {
+		oldest := s.lru.Front()
+		if oldest == nil {
 			break
 		}
-		if err := os.Remove(file.path); err == nil || errors.Is(err, os.ErrNotExist) {
-			total -= file.size
+		blob := oldest.Value.(cachedBlob)
+		if err := os.Remove(s.dataPath(blob.key)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
+		s.forgetBlob(blob.key)
 	}
 	return nil
 }
