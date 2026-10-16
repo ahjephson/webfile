@@ -2,6 +2,9 @@
 
 Status: implemented.
 
+For the proposed cache-only directory grouping and the current delete/move
+lifecycle changes, see [Thumbnail lifecycle design](THUMBNAIL_LIFECYCLE_DESIGN.md).
+
 ## Goals
 
 - Persist generated thumbnails across process and machine restarts.
