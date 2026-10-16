@@ -1,5 +1,30 @@
 # Bug log
 
+## Remaining-action performance audit fixes (2026-10-16)
+
+| Item | Priority | Fix |
+| --- | --- | --- |
+| 1 | P1 | Release the global upload lock during publication, including cross-disk copying; keep one writer per upload and propagate cancellation through fallback copies. |
+| 2 | P2 | Finish stopped uploads as failed while preserving resumable staging. Late failures cannot overwrite cancellation or a newer attempt. |
+| 3 | P2 | Coalesce batch-upload folder reads and terminal notifications into a final refresh. |
+| 4 | P2 | Expire inactive upload staging after seven days, clean orphan payloads, preserve active writers, and discard staged data when its terminal task history is removed. Cleanup errors retain history for retry. |
+| 5 | P2 | Bound folder-size work to 32 jobs and two IO slots; cancel abandoned viewer leases and shut down queued scans. Store scan times and directory metadata in the backend, invalidate ancestors after writes/transfers/deletes/uploads/extraction and watcher events, and rescan previously measured stale folders when listed. Unwatched external nested edits use the five-minute fallback. No scan timestamp is displayed. |
+| 6 | P2 | Rebuild thumbnail blob size/LRU bookkeeping once at startup, then maintain it incrementally; ordinary writes no longer enumerate and sort the cache directory. |
+| 7 | P2 | Abort gallery content-type detection when the gallery closes or its inputs change. |
+| 8 | P2 | Retain at most the current original and five neighbours on either side; release obsolete images and settle cancelled load promises. |
+| 9 | P2 | Limit failed video-thumbnail history to 50 jobs and expire it after five minutes, swept every 30 seconds while idle. Failed-job retries respect queue capacity. |
+| 10 | P2 | Stream archive-inspection flags with bounded records and diagnostics instead of retaining and copying the entire listing. |
+| 11 | P2 | Check cancellation during extraction validation, exclusion checks, destination preflight and publication counting; rollback and private-stage cleanup still complete. |
+| 12 | P2 | Virtualise destination folders and scroll newly created folders into view. |
+
+Regressions reproduced the upload-lock blockage, stopped tasks remaining active, per-file upload refreshes, abandoned staging, queued folder scans, gallery requests continuing after close, retained originals, unbounded failed thumbnail history, whole-list archive allocations, cancelled publication checks and 2,000 destination buttons. The existing Details race tests now accommodate aborted HTTP requests while retaining their stale-response assertions.
+
+Native-WSL measurements: with 10,000 cached blobs, median warm thumbnail write time fell from 30.45 ms to 1.85 ms (three runs of 20 writes). Allocations fell from about 60,057 to 18 per write; with an empty cache, the new path measured 1.64 ms. The 200,000-entry archive-inspection fixture fell from 74.4 MiB of total Go allocations to 0.05 MiB. These are local cache/inspection measurements, not physical two-disk transfer measurements.
+
+Visual checks in the Codex browser: an externally added file changed a previously measured folder from 7 B to 17 B after a listing refresh with Details closed; the destination picker rendered a small window of 2,001 folders and selected folder 1,999; the gallery navigated from the first image to the sixteenth, back again and closed cleanly. All fixtures were isolated development data.
+
+Validation: full backend race tests, vet and production/PAM tests and vet passed. Browser coverage passed all 175 Chromium cases across the full run and focused follow-ups, and the full WebKit run passed 164 cases with 11 expected skips. The final folder-size/cancellation group passed all 14 cases in both browsers, with frontend builds and both mounted-path smoke checks. Changes are committed locally; no push or release was requested for this work.
+
 ## Large-folder delete work
 
 - [x] Remove the thumbnail discovery/content-reading pass before recursive deletion; let old derived cache entries expire normally until grouped cleanup is available.

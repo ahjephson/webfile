@@ -98,6 +98,12 @@ and persistent application state.
 - The read-only Details pane resolves UID/GID to Linux user/group names. The
   backend has permission-change endpoints, but they are not currently exposed
   as user controls.
+- Folder sizes are calculated on demand. The backend keeps scan times and
+  directory metadata, invalidates sizes after known changes, and rescans stale
+  results when viewed. External nested changes outside active directory watches
+  are covered by a five-minute freshness limit. Unscanned folders are not walked
+  during browsing. Scans use two IO slots, a bounded queue and expiring viewer
+  leases, so abandoned views do not leave work queued indefinitely.
 
 ### Resumable uploads
 
@@ -110,6 +116,8 @@ Uploads use an 8 MiB chunked protocol rather than one large multipart request.
 - each chunk is synchronised before its offset is advanced;
 - completion is published into the normal operation/WebSocket UI;
 - cancellation removes the staged upload;
+- abandoned staging expires after seven days without activity; removing failed
+  or interrupted upload history also discards its checkpoint and partial bytes;
 - final publication remains no-overwrite and handles cross-filesystem staging.
 
 ### Background tasks

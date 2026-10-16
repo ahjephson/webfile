@@ -83,3 +83,29 @@ func TestStoreBudgetTracksRestartReadsReplacementsMovesAndDeletes(t *testing.T) 
 		t.Fatalf("wrong disk budget after mutations: %d", bytes)
 	}
 }
+
+func BenchmarkWarmCachePut(b *testing.B) {
+	for _, count := range []int{0, 10000} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			dir := b.TempDir()
+			for i := 0; i < count; i++ {
+				if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%064x.thumb", i)), []byte("image/png\nx"), 0600); err != nil {
+					b.Fatal(err)
+				}
+			}
+			store, err := Open(dir, 1<<30)
+			if err != nil {
+				b.Fatal(err)
+			}
+			key := fmt.Sprintf("%064x", count+1)
+			item := Item{Data: make([]byte, 8192), ContentType: "image/png"}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := store.Put(context.Background(), key, item); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
