@@ -3,10 +3,49 @@ package operations
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestHistoryLimitCountsOnlyFinishedTasks(t *testing.T) {
+	for _, persistent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("persistent=%v", persistent), func(t *testing.T) {
+			manager := New(3)
+			if persistent {
+				var err error
+				manager, err = Open(filepath.Join(t.TempDir(), "tasks.db"), 3, 2)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Cleanup(func() { _ = manager.Close(context.Background()) })
+			for index := 0; index < 3; index++ {
+				manager.UpsertExternal(fmt.Sprintf("finished-%d", index), "upload", nil, "", StateCompleted, 1, 1, 1, 1, "done", "")
+			}
+			for index := 0; index < 7; index++ {
+				manager.UpsertExternal(fmt.Sprintf("active-%d", index), "upload", nil, "", StateRunning, 0, 1, 0, 1, "active", "")
+			}
+			if got := len(manager.List()); got != 10 {
+				t.Fatalf("active tasks consumed history allowance: got %d records, want 10", got)
+			}
+			manager.UpsertExternal("newest", "upload", nil, "", StateCompleted, 1, 1, 1, 1, "done", "")
+			if _, exists := manager.Get("finished-0"); exists {
+				t.Fatal("oldest finished task was not evicted")
+			}
+			if got := len(manager.List()); got != 10 {
+				t.Fatalf("retained %d records, want 3 finished plus 7 active", got)
+			}
+			if persistent {
+				stored, err := manager.store.List(100)
+				if err != nil || len(stored) != 10 {
+					t.Fatalf("persistent retention disagrees: %d %v", len(stored), err)
+				}
+			}
+		})
+	}
+}
 
 func TestHistoryCleanupFailureRetainsPersistentRecordForRetry(t *testing.T) {
 	manager, err := Open(filepath.Join(t.TempDir(), "tasks.db"), 1, 2)

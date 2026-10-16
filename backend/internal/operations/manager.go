@@ -892,9 +892,10 @@ func (m *Manager) trimLocked() {
 		}
 	}
 	sort.Slice(finished, func(i, j int) bool { return finished[i].op.UpdatedAt.Before(finished[j].op.UpdatedAt) })
+	remaining := len(finished)
 	cleanupFailed := false
 	for _, rec := range finished {
-		if len(m.records) <= m.maxKeep {
+		if remaining <= m.maxKeep {
 			break
 		}
 		if m.historyCleanup != nil {
@@ -912,6 +913,7 @@ func (m *Manager) trimLocked() {
 			}
 		}
 		delete(m.records, rec.op.ID)
+		remaining--
 	}
 	if m.store != nil && !cleanupFailed {
 		if err := m.store.Trim(m.maxKeep); err != nil {
