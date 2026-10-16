@@ -12,7 +12,27 @@ usage() {
 TARBALL_URL="$1"
 SHA_URL="$2"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+ROLLBACK_NEEDED=false
+BINARY_STAGE=""
+UPDATER_STAGE=""
+
+cleanup() {
+  local status=$?
+  trap - EXIT
+  set +e
+  if [[ "$status" -ne 0 && "$ROLLBACK_NEEDED" == true ]]; then
+    if ! rollback; then
+      echo "Rollback was incomplete; inspect the WebFile installation and service status." >&2
+    fi
+  fi
+  [[ -z "$BINARY_STAGE" ]] || rm -f -- "$BINARY_STAGE"
+  [[ -z "$UPDATER_STAGE" ]] || rm -f -- "$UPDATER_STAGE"
+  rm -rf -- "$WORK"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 curl --fail --location --proto '=https' --tlsv1.2 "$TARBALL_URL" -o "$WORK/release.tar.gz"
 curl --fail --location --proto '=https' --tlsv1.2 "$SHA_URL" -o "$WORK/release.tar.gz.sha256"
@@ -46,20 +66,28 @@ restore_file() {
   if [[ -e "$WORK/previous/$name.absent" ]]; then
     rm -f -- "$destination"
   else
-    cp -a "$WORK/previous/$name" "$destination"
+    local temporary
+    temporary="$(mktemp "${destination}.rollback.XXXXXX")" || return 1
+    if cp -a "$WORK/previous/$name" "$temporary" && mv -f -- "$temporary" "$destination"; then
+      return 0
+    fi
+    rm -f -- "$temporary"
+    return 1
   fi
 }
 
 rollback() {
   echo "Restoring previous WebFile installation." >&2
-  restore_file /usr/local/bin/webfile webfile
-  restore_file /usr/local/sbin/webfile-update webfile-update
-  restore_file /etc/systemd/system/webfile.service webfile.service
-  restore_file /etc/systemd/system/webfile-launcher.service webfile-launcher.service
-  restore_file /usr/lib/tmpfiles.d/webfile.conf webfile.tmpfiles
-  restore_file /etc/pam.d/webfile webfile.pam
-  systemctl daemon-reload
-  systemctl restart webfile-launcher.service webfile.service || true
+  local failed=0
+  restore_file /usr/local/bin/webfile webfile || failed=1
+  restore_file /usr/local/sbin/webfile-update webfile-update || failed=1
+  restore_file /etc/systemd/system/webfile.service webfile.service || failed=1
+  restore_file /etc/systemd/system/webfile-launcher.service webfile-launcher.service || failed=1
+  restore_file /usr/lib/tmpfiles.d/webfile.conf webfile.tmpfiles || failed=1
+  restore_file /etc/pam.d/webfile webfile.pam || failed=1
+  systemctl daemon-reload || failed=1
+  systemctl restart webfile-launcher.service webfile.service || failed=1
+  return "$failed"
 }
 
 backup_file /usr/local/bin/webfile webfile
@@ -69,10 +97,14 @@ backup_file /etc/systemd/system/webfile-launcher.service webfile-launcher.servic
 backup_file /usr/lib/tmpfiles.d/webfile.conf webfile.tmpfiles
 backup_file /etc/pam.d/webfile webfile.pam
 
-install -m0755 "$WORK/release/webfile" /usr/local/bin/webfile.new
-mv -f /usr/local/bin/webfile.new /usr/local/bin/webfile
-install -m0755 "$WORK/release/deploy/webfile-update" /usr/local/sbin/webfile-update.new
-mv -f /usr/local/sbin/webfile-update.new /usr/local/sbin/webfile-update
+# All backups must exist before any installation file is replaced.
+ROLLBACK_NEEDED=true
+BINARY_STAGE="$(mktemp /usr/local/bin/.webfile-bin.XXXXXX)"
+install -m0755 "$WORK/release/webfile" "$BINARY_STAGE"
+mv -f -- "$BINARY_STAGE" /usr/local/bin/webfile
+UPDATER_STAGE="$(mktemp /usr/local/sbin/.webfile-update.XXXXXX)"
+install -m0755 "$WORK/release/deploy/webfile-update" "$UPDATER_STAGE"
+mv -f -- "$UPDATER_STAGE" /usr/local/sbin/webfile-update
 
 # Unit/PAM changes ship with releases, but the local config is never replaced.
 install -m0644 "$WORK/release/deploy/webfile.service" /etc/systemd/system/webfile.service
@@ -83,15 +115,14 @@ systemctl daemon-reload
 
 if ! systemctl restart webfile-launcher.service webfile.service; then
   echo "Update failed to start." >&2
-  rollback
   exit 1
 fi
 
 sleep 1
 if ! systemctl is-active --quiet webfile.service; then
   echo "WebFile did not stay active." >&2
-  rollback
   exit 1
 fi
 
+ROLLBACK_NEEDED=false
 echo "Update complete: $(/usr/local/bin/webfile version)"

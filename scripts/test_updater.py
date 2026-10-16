@@ -2,6 +2,7 @@
 import hashlib
 import io
 import os
+import signal
 from pathlib import Path
 import subprocess
 import tarfile
@@ -43,12 +44,13 @@ class UpdaterTests(unittest.TestCase):
         with tarfile.open(archive, 'w:gz') as output:
             for name, content in contents.items():
                 info = tarfile.TarInfo('package/' + name)
-                data = content.encode()
+                data = Path('/usr/bin/sleep').read_bytes() if fault == 'running-binary' and name == 'webfile' else content.encode()
                 info.size = len(data)
                 info.mode = 0o755 if name in ('webfile', 'deploy/webfile-update') else 0o644
                 output.addfile(info, io.BytesIO(data))
         checksum = root / 'release.tar.gz.sha256'
-        checksum.write_text(hashlib.sha256(archive.read_bytes()).hexdigest() + '  release.tar.gz\n')
+        digest = '0' * 64 if fault == 'checksum' else hashlib.sha256(archive.read_bytes()).hexdigest()
+        checksum.write_text(digest + '  release.tar.gz\n')
 
         def executable(path, content):
             path.write_text(content)
@@ -60,13 +62,37 @@ source = os.environ['TEST_CHECKSUM'] if any(a.endswith('.sha256') for a in sys.a
 shutil.copyfile(source, sys.argv[sys.argv.index('-o') + 1])
 ''')
         executable(commands / 'systemctl', '''#!/usr/bin/python3
-import os, pathlib, sys
+import os, pathlib, subprocess, sys
 marker = pathlib.Path(os.environ['TEST_FAILED'])
 command = sys.argv[1]
-fail = not marker.exists() and ((os.environ['TEST_FAULT'] == 'restart' and command == 'restart') or
+if os.environ['TEST_FAULT'] == 'running-binary' and command == 'restart' and not marker.exists():
+    process = subprocess.Popen([os.environ['TEST_BINARY'], '30'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    pathlib.Path(os.environ['TEST_CHILD']).write_text(str(process.pid))
+    marker.touch()
+    sys.exit(1)
+fail = not marker.exists() and ((os.environ['TEST_FAULT'] in ('daemon', 'rollback') and command == 'daemon-reload') or
+                              (os.environ['TEST_FAULT'] == 'restart' and command == 'restart') or
                               (os.environ['TEST_FAULT'] == 'health' and command == 'is-active'))
 if fail: marker.touch()
 sys.exit(1 if fail else 0)
+''')
+        executable(commands / 'install', '''#!/usr/bin/python3
+import os, sys
+fault = os.environ['TEST_FAULT']
+source, target = sys.argv[-2:]
+if ((fault == 'install' and target.endswith('webfile-launcher.service')) or
+    (fault == 'binary' and source.endswith('/release/webfile')) or
+    (fault == 'updater' and source.endswith('/release/deploy/webfile-update'))):
+    sys.exit(1)
+os.execv('/usr/bin/install', ['install', *sys.argv[1:]])
+''')
+        executable(commands / 'cp', '''#!/usr/bin/python3
+import os, sys
+if os.environ['TEST_FAULT'] == 'backup' and sys.argv[-1].endswith('/previous/webfile.service'):
+    sys.exit(1)
+if os.environ['TEST_FAULT'] == 'rollback' and sys.argv[-2].endswith('/previous/webfile.service'):
+    sys.exit(1)
+os.execv('/usr/bin/cp', ['cp', *sys.argv[1:]])
 ''')
         executable(commands / 'sleep', '#!/bin/sh\nexit 0\n')
         source = (REPOSITORY / 'deploy/webfile-update').read_text()
@@ -79,10 +105,18 @@ sys.exit(1 if fail else 0)
         script.write_text(source)
         env = {**os.environ, 'PATH': f'{commands}:/usr/bin:/bin', 'TMPDIR': str(work),
                'TEST_ARCHIVE': str(archive), 'TEST_CHECKSUM': str(checksum),
-               'TEST_FAULT': fault, 'TEST_FAILED': str(root / 'failed')}
-        result = subprocess.run(['bash', str(script), 'https://test.invalid/release.tar.gz',
-                                 'https://test.invalid/release.tar.gz.sha256'],
-                                env=env, text=True, capture_output=True, timeout=15)
+               'TEST_FAULT': fault, 'TEST_FAILED': str(root / 'failed'),
+               'TEST_BINARY': str(installed['/usr/local/bin/webfile']), 'TEST_CHILD': str(root / 'child')}
+        try:
+            result = subprocess.run(['bash', str(script), 'https://test.invalid/release.tar.gz',
+                                     'https://test.invalid/release.tar.gz.sha256'],
+                                    env=env, text=True, capture_output=True, timeout=15)
+        finally:
+            if (root / 'child').exists():
+                try:
+                    os.kill(int((root / 'child').read_text()), signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
         return result, installed, contents
 
     def test_success_installs_release_updater_with_executable_permissions(self):
@@ -104,6 +138,36 @@ sys.exit(1 if fail else 0)
         result, installed, _ = self.run_update('restart', updater_exists=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(installed['/usr/local/sbin/webfile-update'].exists())
+
+    def test_every_installation_failure_restores_previous_installation(self):
+        for fault in ('binary', 'updater', 'install', 'daemon', 'running-binary'):
+            with self.subTest(fault=fault):
+                result, installed, _ = self.run_update(fault)
+                self.assertNotEqual(result.returncode, 0)
+                for target, path in installed.items():
+                    self.assertEqual(path.read_text(), 'old installation\n', target)
+                for target in ('/usr/local/bin/webfile', '/usr/local/sbin/webfile-update'):
+                    self.assertEqual(list(installed[target].parent.glob('.webfile-*')), [])
+                    self.assertEqual(list(installed[target].parent.glob('*.rollback.*')), [])
+                    self.assertFalse(Path(str(installed[target]) + '.new').exists())
+
+    def test_preinstallation_failures_leave_files_untouched(self):
+        for fault in ('checksum', 'backup'):
+            with self.subTest(fault=fault):
+                result, installed, _ = self.run_update(fault)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('Restoring previous', result.stderr)
+                for target, path in installed.items():
+                    self.assertEqual(path.read_text(), 'old installation\n', target)
+
+    def test_rollback_failure_is_reported_and_other_files_are_restored(self):
+        result, installed, contents = self.run_update('rollback')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('Rollback was incomplete', result.stderr)
+        for target, path in installed.items():
+            expected = contents[TARGETS[target]] if target == '/etc/systemd/system/webfile.service' else 'old installation\n'
+            self.assertEqual(path.read_text(), expected, target)
+            self.assertEqual(list(path.parent.glob('*.rollback.*')), [])
 
 
 if __name__ == '__main__':
