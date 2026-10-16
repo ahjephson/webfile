@@ -5,23 +5,44 @@ const task = (id: string, state: string, updated = 1) => ({ id, kind: 'upload', 
   progress_done: 1, progress_total: 10, progress_unit: 'bytes', cancellable: state === 'running',
   started_at: '2000-01-01T00:00:00Z', updated_at: `2000-01-01T00:00:00.00000${updated}Z` })
 
-test('large-folder deletion reports removed entries without inventing a total', async ({ page }) => {
+test('large-folder deletion shows an indeterminate bar and removed count without inventing a total', async ({ page }) => {
   const realtime = await taskFolder(page)
-  const operation = { ...task('large-folder', 'running'), kind: 'delete', phase: 'deleting',
+  const operation = { ...task('large-folder', 'running'), kind: 'delete', phase: 'deleting', sources: ['/docs/large-folder'],
     message: 'Deleting large-folder', progress_done: 25, progress_total: 0, progress_unit: 'items',
     bytes_done: 0, bytes_total: 0, items_done: 25, items_total: 0 }
   await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [operation] } }))
   await page.goto('/#path=%2Fdocs')
   await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
-  const deletion = page.getByRole('complementary').getByRole('article').filter({ hasText: 'Delete large-folder.txt' })
+  const deletion = page.getByRole('complementary').getByRole('article').filter({ hasText: 'Delete large-folder' })
   await expect(deletion.getByText('Deleting large-folder', { exact: true })).toBeVisible()
   await expect(deletion.getByText('25 items', { exact: true })).toBeVisible()
-  await expect(deletion.getByRole('progressbar')).toHaveCount(0)
+  const progress = deletion.getByRole('progressbar', { name: 'Delete large-folder progress', exact: true })
+  await expect(progress).toBeVisible()
+  await expect(progress).not.toHaveAttribute('aria-valuenow')
+  await expect(progress).toHaveAttribute('aria-valuetext', '25 items')
+  const indicator = progress.locator('.webfile-indeterminate')
+  const transform = await indicator.evaluate(element => getComputedStyle(element).transform)
+  await expect.poll(() => indicator.evaluate(element => getComputedStyle(element).transform)).not.toBe(transform)
   realtime.send({ type: 'operation-updated', operation: { ...operation, progress_done: 256, items_done: 256,
     updated_at: '2000-01-01T00:00:02Z' } })
   await expect(deletion.getByText('256 items', { exact: true })).toBeVisible()
+  await expect(progress).toHaveAttribute('aria-valuetext', '256 items')
   await expect(deletion.getByText(/\/ 0 items/)).toHaveCount(0)
   await expect(deletion.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(indicator).toHaveCSS('transform', 'none')
+  const barWidth = (await progress.boundingBox())!.width
+  await expect.poll(async () => (await indicator.boundingBox())!.width).toBeCloseTo(barWidth, 0)
+  realtime.send({ type: 'operation-updated', operation: { ...operation, state: 'cancelling', phase: 'cancelling', cancellable: false,
+    progress_done: 256, items_done: 256, updated_at: '2000-01-01T00:00:03Z' } })
+  await expect(deletion).toHaveAttribute('data-task-state', 'cancelling')
+  await expect(progress).toBeVisible()
+  await expect(progress).not.toHaveAttribute('aria-valuenow')
+  realtime.send({ type: 'operation-updated', operation: { ...operation, state: 'completed', phase: 'completed', cancellable: false,
+    message: 'Deleted 256 items', progress_done: 256, progress_total: 256, items_done: 256, items_total: 256,
+    updated_at: '2000-01-01T00:00:04Z', finished_at: '2000-01-01T00:00:04Z' } })
+  await expect(page.getByRole('button', { name: 'Collapse History (1)', exact: true })).toBeVisible()
+  await expect(deletion.getByRole('progressbar')).toHaveCount(0)
 })
 
 test('transfer progress retains its main details without redundant file phase text', async ({ page }) => {

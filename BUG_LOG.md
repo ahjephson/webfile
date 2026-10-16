@@ -5,6 +5,7 @@
 - [x] Remove the thumbnail discovery/content-reading pass before recursive deletion; let old derived cache entries expire normally until grouped cleanup is available.
 - [x] Stream directory names in bounded batches, unlink relative to open directory descriptors, never follow child symlinks and check cancellation between entries.
 - [x] Report actual deleted child entries without a preliminary count or invented percentage; retain completed deletions on cancellation.
+- [x] Keep a visible indeterminate progress bar on streaming delete tasks alongside the removed-item count, including cancellation and reduced-motion display.
 - [x] Validate cancellation/resume, symlinks, parent replacement, many-child folders and end-to-end task counts; benchmark against the original delete path and OS deletion.
 - [x] Investigate and implement cache-only directory grouping. Lazy broker-owned nodes, stable ownership, revision-checked moves and bounded background delete cleanup are documented with measurements in `THUMBNAIL_LIFECYCLE_DESIGN.md`. Source filesystem scanning is not used to populate the index.
 
@@ -28,6 +29,8 @@ counters and the generated folder absent. Only the generated task's history
 entry was removed afterward. Subsequent cache directory grouping adds ownership,
 shared-blob and delete/recreate protections without restoring the source scan;
 see `THUMBNAIL_LIFECYCLE_DESIGN.md` for its separate measurements and validation.
+
+Delete progress-bar follow-up: the regression first failed because no progress bar was rendered for an unknown total. The fix passed 11 task checks in each browser, both mounted-path smoke checks and frontend builds, including animation, live counts, reduced motion, cancellation and completion. In the Codex browser, an active real deletion showed the animated bar with 16,307 removed items and no fabricated percentage. Generated deletions of 250,000 and 100,000 files completed with 250,001 and 100,001 items respectively, including the folders. Only those two task-history entries were removed, and the isolated test server was stopped.
 
 ## Completed transfer work
 

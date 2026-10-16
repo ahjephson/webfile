@@ -240,12 +240,15 @@ function formatDate(value?: string) {
               <div v-else-if="percent(operation) !== null && operation.state === 'running'" class="h-2 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${label(operation)} progress`" :aria-valuenow="percent(operation) ?? undefined" aria-valuemin="0" aria-valuemax="100">
                 <div class="h-full bg-sky-600 transition-[width]" :style="{ width: `${percent(operation)}%` }" />
               </div>
+              <div v-else-if="operation.kind === 'delete' && percent(operation) === null" class="h-2 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${label(operation)} progress`" :aria-valuetext="formatProgress(operation)">
+                <div class="webfile-indeterminate h-full w-1/3 rounded bg-sky-600" />
+              </div>
               <div v-else class="flex items-center gap-2 text-xs text-zinc-500" role="status" :aria-label="`${label(operation)} ${phaseLabel(operation)}`">
                 <i class="pi pi-spinner text-xs motion-safe:animate-spin" aria-hidden="true" />
                 <span>{{ formatProgress(operation) }}</span>
               </div>
               <div v-if="operation.state !== 'queued'" class="mt-2 flex items-center justify-between gap-3 text-xs text-zinc-500">
-                <span v-if="operation.progress_total > 0">{{ formatProgress(operation) }}</span>
+                <span v-if="operation.progress_total > 0 || (operation.kind === 'delete' && operation.progress_unit === 'items')">{{ formatProgress(operation) }}</span>
                 <span v-else />
                 <Button v-if="operation.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel', operation)" />
               </div>
