@@ -14,11 +14,14 @@ export function useFileOperations(onTerminal: (operation: FileOperation, previou
   const operations = ref<FileOperation[]>([])
   const activeOperations = computed(() => operations.value.filter(operation => activeStates.includes(operation.state)))
   const announcedTerminalStates = new Set<string>()
+  let historyRevision = 0
 
   async function load() {
+    const revision = historyRevision
     const idsBeforeLoad = new Set(operations.value.map(operation => operation.id))
     try {
       const loaded = (await api.operations()).operations
+      if (revision !== historyRevision) return
       const current = new Map(operations.value.map(operation => [operation.id, operation]))
       const loadedIds = new Set(loaded.map(operation => operation.id))
       operations.value = retainOperations([
@@ -64,12 +67,14 @@ export function useFileOperations(onTerminal: (operation: FileOperation, previou
 
   async function clearHistory() {
     const result = await api.clearOperationHistory()
+    historyRevision++
     operations.value = operations.value.filter(operation => activeStates.includes(operation.state))
     return result.removed
   }
 
   async function removeHistory(id: string) {
     await api.removeOperationHistory(id)
+    historyRevision++
     operations.value = operations.value.filter(operation => operation.id !== id)
   }
 
