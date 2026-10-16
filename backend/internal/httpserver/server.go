@@ -42,6 +42,9 @@ func NewWorker(files *filesystem.Service, uploads *filesystem.UploadManager, wat
 		if operation.Kind == "archive" {
 			return removeArchiveArtifacts(archiveDir, operation.ID)
 		}
+		if operation.Kind == "upload" && uploads != nil {
+			return uploads.Discard(strings.TrimPrefix(operation.ID, "upload-"))
+		}
 		return nil
 	})
 	if err := s.cleanOrphanArchives(); err != nil {

@@ -35,10 +35,11 @@ type uploadRecord struct {
 }
 
 type UploadManager struct {
-	mu       sync.Mutex
-	active   map[string]context.CancelFunc
-	resolver *Resolver
-	baseDir  string
+	mu        sync.Mutex
+	active    map[string]context.CancelFunc
+	resolver  *Resolver
+	baseDir   string
+	nextPrune time.Time
 }
 
 func NewUploadManager(resolver *Resolver, baseDir string) *UploadManager {
@@ -67,6 +68,9 @@ func (m *UploadManager) Init(ctx context.Context, virtualDir, filename string, s
 		return UploadSession{}, err
 	}
 	if err := m.ensureDir(); err != nil {
+		return UploadSession{}, err
+	}
+	if err := m.pruneIfDue(time.Now()); err != nil {
 		return UploadSession{}, err
 	}
 
@@ -296,7 +300,7 @@ func (m *UploadManager) readRecordLocked(id string) (uploadRecord, error) {
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return uploadRecord{}, err
 	}
-	if rec.ID != id || rec.TempName == "" {
+	if rec.ID != id || filepath.Base(rec.TempName) != rec.TempName || !strings.HasPrefix(rec.TempName, id+"-") || !strings.HasSuffix(rec.TempName, ".part") {
 		return uploadRecord{}, ErrInvalidPath
 	}
 	return rec, nil

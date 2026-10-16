@@ -404,6 +404,9 @@ func workerMain(args []string) {
 		workerStateDir = filepath.Join(*home, ".local", "share", "webfile")
 	}
 	uploads := filesystem.NewUploadManager(resolver, filepath.Join(workerStateDir, "uploads"))
+	uploadCleanupCtx, stopUploadCleanup := context.WithCancel(context.Background())
+	defer stopUploadCleanup()
+	go uploads.RunCleanup(uploadCleanupCtx)
 	pollInterval, err := time.ParseDuration(cfg.Watch.PollInterval)
 	fatalIf(err, "invalid watch.poll_interval")
 	watchManager, err := watch.New(watch.Options{Polling: watch.PollingMode(cfg.Watch.Polling), PollInterval: pollInterval})
