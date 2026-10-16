@@ -186,6 +186,7 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 				watchedPath = ""
 				continue
 			}
+			s.files.InvalidateFolderSizes(watchedPath)
 			if err := writeWebsocketMessage(ctx, conn, websocketServerMessage{
 				Type: "directory-invalidated", Path: watchedPath, Reason: event.Kind, At: event.At,
 			}); err != nil {

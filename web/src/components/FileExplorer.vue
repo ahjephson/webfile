@@ -202,11 +202,15 @@ const extractTargets = ref<FileEntry[]>([])
 const uploadInput = ref<HTMLInputElement | null>(null)
 const draggingOver = ref(false)
 let invalidateTimer: number | null = null
+let sizeFreshnessTimer: number | null = null
+let sizeRefreshPoll: number | null = null
 let refreshRequest = 0
 let latestDirectoryRefresh: { path: string; promise: Promise<boolean> } | null = null
 let invalidationRefreshRunning = false
 let invalidationRefreshPending = false
 let explorerDisposed = false
+let terminalRefreshTimer: number | null = null
+const uploadBatchFolders = new Map<string, number>()
 let acceptedHashLocation: { url: string; state: { webfilePosition?: number } | null } | null = null
 let historyRestorePending = false
 let hashFileRequest = 0
@@ -481,6 +485,9 @@ function parentPathFor(path: string): string {
 const parentPath = computed(() => parentPathFor(currentPath.value))
 
 onMounted(async () => {
+  sizeFreshnessTimer = window.setInterval(() => {
+    if (!viewingSearch.value && entries.value.some(entry => entry.is_dir && entry.size_calculated_at && Date.now() - Date.parse(entry.size_calculated_at) >= 5 * 60_000)) void refreshInvalidatedDirectory()
+  }, 30_000)
   await loadRootLayout()
   currentPath.value = toInternalPath(readHashPath() ?? currentPath.value)
   await nextTick()
@@ -541,6 +548,9 @@ watch([selectedPaths, focusedPath, detailsVisible, detailsPath], storeSessionExp
 onBeforeUnmount(() => {
   explorerDisposed = true
   if (invalidateTimer !== null) window.clearTimeout(invalidateTimer)
+  if (sizeFreshnessTimer !== null) window.clearInterval(sizeFreshnessTimer)
+  if (sizeRefreshPoll !== null) window.clearTimeout(sizeRefreshPoll)
+  if (terminalRefreshTimer !== null) window.clearTimeout(terminalRefreshTimer)
   window.removeEventListener('keydown', onGlobalKeyDown)
   window.removeEventListener('popstate', applyHashPath)
   window.removeEventListener('hashchange', applyHashPath)
@@ -730,6 +740,7 @@ function storeSessionExplorerState() {
 
 async function refreshInvalidatedDirectory() {
   invalidationRefreshPending = true
+  if (uploadBatchFolders.has(currentPath.value)) return
   if (invalidationRefreshRunning) return
   invalidationRefreshRunning = true
   try {
@@ -757,6 +768,8 @@ function waitForLatestDirectoryRefresh(path: string): Promise<boolean> {
 }
 
 async function loadDirectory(request: number, requestedPath: string, showSpinner: boolean): Promise<boolean> {
+  if (sizeRefreshPoll !== null) window.clearTimeout(sizeRefreshPoll)
+  sizeRefreshPoll = null
   if (showSpinner) loading.value = true
   error.value = ''
   try {
@@ -771,6 +784,12 @@ async function loadDirectory(request: number, requestedPath: string, showSpinner
       return true
     }
     entries.value = result.entries
+    if (result.entries.some(entry => entry.size_refreshing)) {
+      sizeRefreshPoll = window.setTimeout(() => {
+        sizeRefreshPoll = null
+        if (!explorerDisposed && currentPath.value === requestedPath && !viewingSearch.value) void refreshInvalidatedDirectory()
+      }, 500)
+    }
     const existing = new Set(result.entries.map(entry => entry.path))
     selectedPaths.value = new Set([...selectedPaths.value].filter(path => existing.has(path)))
     if (focusedPath.value && !existing.has(focusedPath.value)) clearFocus(requestedPath)
@@ -826,7 +845,19 @@ function onOperationTerminal(operation: FileOperation) {
   } else {
     showOperationTerminalToast(operation)
   }
-  void refresh(false)
+  const folder = (path: string) => path.slice(0, path.lastIndexOf('/')) || '/'
+  const paths = [...(operation.sources ?? []), operation.destination].filter((path): path is string => Boolean(path))
+  if (!paths.some(path => path === currentPath.value || folder(path) === currentPath.value)) return
+  if (operation.kind === 'upload' && uploadBatchFolders.has(currentPath.value)) return
+  scheduleTerminalRefresh()
+}
+
+function scheduleTerminalRefresh() {
+  if (terminalRefreshTimer !== null) window.clearTimeout(terminalRefreshTimer)
+  terminalRefreshTimer = window.setTimeout(() => {
+    terminalRefreshTimer = null
+    if (!explorerDisposed) void refreshInvalidatedDirectory()
+  }, 120)
 }
 
 async function onArchivePasswordAfterHide() {
@@ -998,8 +1029,8 @@ function toggleDetails(entry: FileEntry | null = selectedOne.value) {
   detailsVisible.value = true
 }
 
-function applyCachedFolderSize(value: { path: string; size: number }) {
-  entries.value = entries.value.map(entry => entry.path === value.path ? { ...entry, size: value.size, size_status: 'ready' } : entry)
+function applyCachedFolderSize(value: { path: string; size: number; calculatedAt?: string }) {
+  entries.value = entries.value.map(entry => entry.path === value.path ? { ...entry, size: value.size, size_status: 'ready', size_calculated_at: value.calculatedAt } : entry)
 }
 
 function openNewFolder() {
@@ -1321,21 +1352,30 @@ async function uploadFiles(event: Event) {
 }
 
 async function uploadFileList(files: File[], destination: string) {
-  for (const file of files) {
-    try {
-      let announced = false
-      const operation = await api.upload(destination, file, current => {
-        updateOperation(current)
-        if (announced) return
-        announced = true
-        signalTaskAdded()
-      })
-      updateOperation(operation)
-    } catch (err) {
-      showError(err, `Could not upload ${file.name}`)
+  uploadBatchFolders.set(destination, (uploadBatchFolders.get(destination) ?? 0) + 1)
+  try {
+    for (const file of files) {
+      try {
+        let announced = false
+        const operation = await api.upload(destination, file, current => {
+          updateOperation(current)
+          if (announced) return
+          announced = true
+          signalTaskAdded()
+        })
+        updateOperation(operation)
+      } catch (err) {
+        showError(err, `Could not upload ${file.name}`)
+      }
+    }
+  } finally {
+    const remaining = (uploadBatchFolders.get(destination) ?? 1) - 1
+    if (remaining > 0) uploadBatchFolders.set(destination, remaining)
+    else {
+      uploadBatchFolders.delete(destination)
+      if (destination === currentPath.value) scheduleTerminalRefresh()
     }
   }
-  await refresh(false)
 }
 
 function dropFilesOnFolder(folder: FileEntry, event: DragEvent) {

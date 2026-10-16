@@ -430,8 +430,8 @@ func TestDetailsWithFolderSizeCalculatesCachesAndRefreshes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cached.Size != 5 || cached.SizeStatus != "ready" || !cached.SizeRefreshing {
-		t.Fatalf("expected cached value during refresh: %#v", cached)
+	if cached.SizeStatus != "calculating" || !cached.SizeRefreshing {
+		t.Fatalf("changed directory should invalidate its cached size: %#v", cached)
 	}
 	waitForFolderSize(t, svc, "/Files/folder", 11)
 }
@@ -470,7 +470,7 @@ func TestListIncludesOnlyAlreadyCachedFolderSizes(t *testing.T) {
 	if uncached[0].SizeStatus != "" {
 		t.Fatalf("listing should not calculate an uncached size: %#v", uncached[0])
 	}
-	if svc.folderSizePending[folder] {
+	if svc.folderSizePending[folder] != nil {
 		t.Fatal("listing unexpectedly started a folder size calculation")
 	}
 

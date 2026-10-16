@@ -96,6 +96,7 @@ func countDeleteEntryAt(ctx context.Context, parent *os.File, name string) (int6
 // or inspecting thumbnails. Callers may count first. The callback receives the
 // number of entries actually removed, including directories, starting at zero.
 func (s *Service) DeleteWithProgress(ctx context.Context, virtualPath string, report func(int64)) error {
+	defer s.InvalidateFolderSizes(virtualPath)
 	if IsConfiguredRootPath(virtualPath) {
 		return errors.New("configured roots cannot be deleted")
 	}

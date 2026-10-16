@@ -177,10 +177,15 @@ export const api = {
     return { ...response, entries: arrayOrEmpty(response.entries) }
   },
 
-  details(path: string, refresh = true) {
+  details(path: string, refresh = true, signal?: AbortSignal, scan?: string) {
     const url = new URL(withPath('/api/fs/details', path), window.location.origin)
     url.searchParams.set('refresh', String(refresh))
-    return request<FileDetails>(`${url.pathname}${url.search}`)
+    if (scan) url.searchParams.set('scan', scan)
+    return request<FileDetails>(`${url.pathname}${url.search}`, { signal })
+  },
+
+  cancelDetails(scan: string) {
+    return request<void>(`/api/fs/details?${new URLSearchParams({ scan })}`, { method: 'DELETE' })
   },
 
   chmod(path: string, mode: string) {
@@ -203,8 +208,8 @@ export const api = {
     return request<FileContent>(withPath('/api/fs/file', path))
   },
 
-  contentType(path: string) {
-    return request<{ path: string; content_type: string }>(withPath('/api/fs/content-type', path))
+  contentType(path: string, signal?: AbortSignal) {
+    return request<{ path: string; content_type: string }>(withPath('/api/fs/content-type', path), { signal })
   },
 
   saveFile(path: string, content: string, options?: { etag?: string; createOnly?: boolean; force?: boolean }) {

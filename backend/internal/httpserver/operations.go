@@ -234,6 +234,7 @@ func (s *Server) startExtractOperation(source, destination string, policy archiv
 		CleanupPolicy: "Publication is rolled back on cancellation. If restoration fails, recovery files are retained and their location is reported.",
 		Cleanup:       func(context.Context, operations.Operation) error { return recoveryError },
 	}, func(ctx context.Context, reporter operations.Reporter) error {
+		defer s.files.InvalidateFolderSizes(destination)
 		defer func() {
 			if !s.ops.HasQueuedKind("extract") {
 				s.archivePassword.Clear()

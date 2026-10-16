@@ -9,13 +9,15 @@ const props = defineProps<{ visible: boolean; path: string }>()
 const emit = defineEmits<{
   'update:visible': [value: boolean]
   error: [message: string]
-  'size-ready': [value: { path: string; size: number }]
+  'size-ready': [value: { path: string; size: number; calculatedAt?: string }]
 }>()
 
 const details = ref<FileDetails | null>(null)
 const loading = ref(false)
 let sizePoll: number | null = null
 let loadRequest = 0
+let detailsController: AbortController | null = null
+let scan = ''
 
 const permissionRows = [
   { label: 'Owner', read: 0o400, write: 0o200, execute: 0o100 },
@@ -23,10 +25,20 @@ const permissionRows = [
   { label: 'Other', read: 0o004, write: 0o002, execute: 0o001 },
 ]
 
-watch([() => props.visible, () => props.path], ([visible]) => {
+watch([() => props.visible, () => props.path], ([visible], _previous, onCleanup) => {
   loadRequest++
   stopSizePoll()
-  if (visible && props.path) void load(true)
+  if (visible && props.path) {
+    details.value = null
+    detailsController = new AbortController()
+    scan = crypto.randomUUID()
+    const active = scan
+    onCleanup(() => {
+      detailsController?.abort()
+      void api.cancelDetails(active).catch(() => undefined)
+    })
+    void load(false)
+  }
 }, { immediate: true })
 
 onBeforeUnmount(() => { loadRequest++; stopSizePoll() })
@@ -37,12 +49,16 @@ async function load(refresh: boolean) {
   const current = () => request === loadRequest && props.visible && props.path === path
   if (!details.value || refresh) loading.value = true
   try {
-    const result = await api.details(path, refresh)
+    const result = await api.details(path, refresh, detailsController?.signal, scan)
     if (!current()) return
     details.value = result
-    if (result.is_dir && result.size_status === 'ready') emit('size-ready', { path: result.path, size: result.size })
+    if (result.is_dir && result.size_status === 'ready') emit('size-ready', { path: result.path, size: result.size, calculatedAt: result.size_calculated_at })
     if (result.is_dir && (result.size_status === 'calculating' || result.size_refreshing)) {
       sizePoll = window.setTimeout(() => void load(false), 500)
+    } else if (result.is_dir && result.size_status === 'ready') {
+      const scanned = Date.parse(result.size_calculated_at ?? '')
+      const remaining = Number.isFinite(scanned) ? scanned + 5 * 60_000 - Date.now() : 5 * 60_000
+      sizePoll = window.setTimeout(() => void load(false), Math.max(1000, remaining))
     }
   } catch (err) {
     if (current()) emit('error', err instanceof Error ? err.message : String(err))

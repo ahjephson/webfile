@@ -28,17 +28,19 @@ var (
 )
 
 type Entry struct {
-	Name        string    `json:"name"`
-	Path        string    `json:"path"`
-	IsDir       bool      `json:"is_dir"`
-	Size        int64     `json:"size"`
-	SizeStatus  string    `json:"size_status,omitempty"`
-	Modified    time.Time `json:"modified"`
-	Mode        string    `json:"mode"`
-	UID         uint32    `json:"uid,omitempty"`
-	GID         uint32    `json:"gid,omitempty"`
-	CanNavigate *bool     `json:"can_navigate,omitempty"`
-	CanRead     *bool     `json:"can_read,omitempty"`
+	Name             string     `json:"name"`
+	Path             string     `json:"path"`
+	IsDir            bool       `json:"is_dir"`
+	Size             int64      `json:"size"`
+	SizeStatus       string     `json:"size_status,omitempty"`
+	SizeRefreshing   bool       `json:"size_refreshing,omitempty"`
+	SizeCalculatedAt *time.Time `json:"size_calculated_at,omitempty"`
+	Modified         time.Time  `json:"modified"`
+	Mode             string     `json:"mode"`
+	UID              uint32     `json:"uid,omitempty"`
+	GID              uint32     `json:"gid,omitempty"`
+	CanNavigate      *bool      `json:"can_navigate,omitempty"`
+	CanRead          *bool      `json:"can_read,omitempty"`
 }
 
 type FileContent struct {
@@ -65,8 +67,12 @@ type Service struct {
 	videoQueue        *videoThumbnailQueue
 	folderSizeMu      sync.Mutex
 	folderSizeCache   map[string]folderSizeCacheEntry
-	folderSizePending map[string]bool
+	folderSizePending map[string]*folderSizeJob
 	folderSizeSlots   chan struct{}
+	folderSizeContext context.Context
+	folderSizeCancel  context.CancelFunc
+	folderSizeWait    sync.WaitGroup
+	folderSizeClosed  bool
 }
 
 func NewService(resolver *Resolver, editorMaxBytes int64) *Service {
@@ -84,14 +90,27 @@ func NewServiceWithThumbnailOptions(resolver *Resolver, editorMaxBytes int64, op
 		thumbnailFlights:  make(map[string]*thumbnailFlight),
 		videoThumbnails:   videoThumbnailGenerator{ffmpeg: "ffmpeg", ffprobe: "ffprobe", threads: options.VideoFFmpegThreads},
 		folderSizeCache:   make(map[string]folderSizeCacheEntry),
-		folderSizePending: make(map[string]bool),
+		folderSizePending: make(map[string]*folderSizeJob),
 		folderSizeSlots:   make(chan struct{}, 2),
 	}
+	service.folderSizeContext, service.folderSizeCancel = context.WithCancel(context.Background())
 	service.videoQueue = newVideoThumbnailQueue(service, options)
 	return service
 }
 
-func (s *Service) Close() { s.videoQueue.close() }
+func (s *Service) Close() {
+	s.folderSizeMu.Lock()
+	s.folderSizeClosed = true
+	if s.folderSizeCancel != nil {
+		s.folderSizeCancel()
+	}
+	for _, job := range s.folderSizePending {
+		job.cancel()
+	}
+	s.folderSizeMu.Unlock()
+	s.folderSizeWait.Wait()
+	s.videoQueue.close()
+}
 
 func (s *Service) Resolver() *Resolver { return s.resolver }
 
@@ -364,6 +383,7 @@ saved:
 			return FileContent{}, err
 		}
 	}
+	s.InvalidateFolderSizes(virtualPath)
 	return FileContent{
 		Path:     CleanVirtual(virtualPath),
 		Content:  string(content),
@@ -380,7 +400,11 @@ func (s *Service) Mkdir(ctx context.Context, virtualPath string) error {
 	if err != nil {
 		return err
 	}
-	return os.Mkdir(abs, 0o755)
+	if err := os.Mkdir(abs, 0o755); err != nil {
+		return err
+	}
+	s.InvalidateFolderSizes(virtualPath)
+	return nil
 }
 
 func (s *Service) Rename(ctx context.Context, from, to string) error {
@@ -420,6 +444,7 @@ func (s *Service) Rename(ctx context.Context, from, to string) error {
 	if err := renameNoReplace(fromAbs, toAbs); err != nil {
 		return err
 	}
+	s.InvalidateFolderSizes(from, to)
 	if len(tickets) == 1 {
 		change := thumbnailcache.LocationChange{Ticket: tickets[0]}
 		if info.IsDir() {
@@ -494,6 +519,7 @@ func (s *Service) Upload(ctx context.Context, virtualDir, filename string, src i
 		}
 		return Entry{}, err
 	}
+	s.InvalidateFolderSizes(virtualPath)
 	st, err := os.Stat(abs)
 	if err != nil {
 		return Entry{}, err

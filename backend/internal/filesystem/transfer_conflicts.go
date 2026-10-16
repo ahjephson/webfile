@@ -142,6 +142,7 @@ func (t *Transfer) initialize(ctx context.Context) error {
 }
 
 func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error {
+	defer t.service.InvalidateFolderSizes(append(append([]string(nil), t.sources...), t.destination)...)
 	capturedThumbnails := t.service.captureThumbnailTransfer(ctx, t.kind, t.sources, t.destination)
 	defer t.service.finishThumbnailTransfer(capturedThumbnails)
 	emit := func(phase, message string) {

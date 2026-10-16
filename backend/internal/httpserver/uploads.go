@@ -74,6 +74,7 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	message := "Uploading " + upload.Name
 	itemsDone := int64(0)
 	if complete {
+		if s.files != nil { s.files.InvalidateFolderSizes(upload.Path) }
 		state = operations.StateCompleted
 		message = "Uploaded " + upload.Name
 		itemsDone = 1

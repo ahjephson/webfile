@@ -49,9 +49,11 @@ const metadataRevision = ref(0)
 const touchPointers = new Map<number, Point>()
 const preloadedOriginals = new Map<string, HTMLImageElement>()
 const originalLoads = new Map<string, Promise<boolean>>()
+const cancelOriginalLoads = new Map<string, () => void>()
 const imageMetadata = new Map<string, { width: number; height: number }>()
 let resizeObserver: ResizeObserver | null = null
 let galleryDetection = 0
+let galleryController: AbortController | null = null
 let thumbnailGeneration = 0
 let navigationTimer: ReturnType<typeof setTimeout> | null = null
 let singleTapTimer: ReturnType<typeof setTimeout> | null = null
@@ -141,6 +143,7 @@ onBeforeUnmount(() => {
   clearPendingTap()
   clearOriginals()
   galleryDetection++
+  galleryController?.abort()
   thumbnailGeneration++
   navigationRequest++
   if (navigationTimer !== null) clearTimeout(navigationTimer)
@@ -175,6 +178,9 @@ function restoreCurrentImage() {
 }
 
 async function detectGalleryImages() {
+  galleryController?.abort()
+  const controller = new AbortController()
+  galleryController = controller
   const request = ++galleryDetection
   const files = props.entries.filter(entry => !entry.is_dir && entry.can_read !== false)
   const paths = new Set(files.filter(entry => previewKindForPath(entry.path) === 'image').map(entry => entry.path))
@@ -183,10 +189,10 @@ async function detectGalleryImages() {
   const unknown = files.filter(entry => previewKindForPath(entry.path) === 'unsupported')
   let cursor = 0
   async function worker() {
-    while (cursor < unknown.length) {
+    while (cursor < unknown.length && !controller.signal.aborted) {
       const entry = unknown[cursor++]
       try {
-        const result = await api.contentType(entry.path)
+        const result = await api.contentType(entry.path, controller.signal)
         if (previewKindForContentType(result.content_type, entry.path) === 'image') paths.add(entry.path)
       } catch {
         continue
@@ -194,7 +200,7 @@ async function detectGalleryImages() {
     }
   }
   await Promise.all(Array.from({ length: Math.min(4, unknown.length) }, worker))
-  if (request === galleryDetection) detectedImagePaths.value = files.filter(entry => paths.has(entry.path)).map(entry => entry.path)
+  if (request === galleryDetection && !controller.signal.aborted) detectedImagePaths.value = files.filter(entry => paths.has(entry.path)).map(entry => entry.path)
 }
 
 async function loadThumbnailCatalogue() {
@@ -245,6 +251,10 @@ function retryThumbnail(path: string) {
 function preloadNearbyOriginals() {
   const index = imageIndex.value
   if (index < 0) return
+  const desired = new Set(images.value.slice(Math.max(0, index - 5), index + 6).map(entry => entry.path))
+  for (const path of preloadedOriginals.keys()) {
+    if (!desired.has(path)) releaseOriginal(path)
+  }
   for (let offset = -5; offset <= 5; offset++) {
     const entry = images.value[index + offset]
     if (!entry) continue
@@ -259,22 +269,40 @@ function ensureOriginalReady(path: string) {
   image.decoding = 'async'
   preloadedOriginals.set(path, image)
   const load = new Promise<boolean>(resolve => {
+    let settled = false
+    const finish = (ready: boolean) => {
+      if (settled) return
+      settled = true
+      image.onload = null
+      image.onerror = null
+      cancelOriginalLoads.delete(path)
+      resolve(ready)
+    }
+    cancelOriginalLoads.set(path, () => finish(false))
     image.onload = () => {
       imageMetadata.set(path, { width: image.naturalWidth, height: image.naturalHeight })
       metadataRevision.value++
-      void image.decode?.().catch(() => undefined).finally(() => resolve(true))
+      void Promise.resolve(image.decode?.()).catch(() => undefined).finally(() => finish(true))
     }
-    image.onerror = () => resolve(false)
-    image.src = api.previewUrl(path)
+    image.onerror = () => finish(false)
   })
   originalLoads.set(path, load)
+  image.src = api.previewUrl(path)
   return load
 }
 
+function releaseOriginal(path: string) {
+  cancelOriginalLoads.get(path)?.()
+  const image = preloadedOriginals.get(path)
+  if (image) image.src = ''
+  preloadedOriginals.delete(path)
+  originalLoads.delete(path)
+  imageMetadata.delete(path)
+  metadataRevision.value++
+}
+
 function clearOriginals() {
-  for (const image of preloadedOriginals.values()) image.src = ''
-  preloadedOriginals.clear()
-  originalLoads.clear()
+  for (const path of preloadedOriginals.keys()) releaseOriginal(path)
   imageMetadata.clear()
   metadataRevision.value++
 }

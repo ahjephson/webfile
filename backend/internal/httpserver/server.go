@@ -76,6 +76,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/fs/thumbnails/jobs", s.listThumbnailJobs)
 	s.mux.HandleFunc("DELETE /api/fs/thumbnails/jobs/{id}", s.cancelThumbnailJob)
 	s.mux.HandleFunc("GET /api/fs/details", s.details)
+	s.mux.HandleFunc("DELETE /api/fs/details", s.cancelDetails)
 	s.mux.HandleFunc("POST /api/fs/chmod", s.chmod)
 	s.mux.HandleFunc("POST /api/fs/chown", s.chown)
 	s.mux.HandleFunc("POST /api/fs/uploads/init", s.initUpload)

@@ -111,17 +111,25 @@ for (const fail of [false, true]) {
     await mockFolder(page)
     let release!: () => void
     let held = false
+    let handled!: () => void
+    const handlingComplete = new Promise<void>(resolve => { handled = resolve })
     const released = new Promise<void>(resolve => { release = resolve })
     await page.route('**/api/fs/details**', async route => {
+      if (route.request().method() === 'DELETE') return route.fulfill({ status: 204 })
       const path = new URL(route.request().url()).searchParams.get('path')!
       if (path === '/docs') {
         held = true
         await released
-        if (fail) return route.fulfill({ status: 500, json: { error: 'stale details error' } })
+        if (fail) {
+          await route.fulfill({ status: 500, json: { error: 'stale details error' } }).catch(() => undefined)
+          handled()
+          return
+        }
       }
       await route.fulfill({ json: { path, name: path === '/docs' ? 'docs' : 'notes.txt',
         is_dir: path === '/docs', size: 12, size_status: 'ready',
-        modified: '2000-01-01T00:00:00Z', mode_octal: '0644', owner: 'test', group: 'test', uid: 1000, gid: 1000 } })
+        modified: '2000-01-01T00:00:00Z', mode_octal: '0644', owner: 'test', group: 'test', uid: 1000, gid: 1000 } }).catch(() => undefined)
+      if (path === '/docs') handled()
     })
     await page.goto('/#path=%2Fdocs')
     await expect(page).toHaveURL(/#path=%2Fdocs$/)
@@ -130,9 +138,8 @@ for (const fail of [false, true]) {
     await page.locator('[data-file-entry]').click()
     const details = page.locator('aside')
     await expect(details.getByText('/docs/notes.txt', { exact: true })).toBeVisible()
-    const response = page.waitForResponse(response => response.url().includes('/api/fs/details?') && new URL(response.url()).searchParams.get('path') === '/docs')
     release()
-    await response
+    await handlingComplete
     await expect(details.getByText('/docs/notes.txt', { exact: true })).toBeVisible()
     await expect(page.getByText('stale details error', { exact: true })).toHaveCount(0)
   })
@@ -143,19 +150,22 @@ test('closing Details while a request is pending does not restart folder-size po
   let release!: () => void
   const released = new Promise<void>(resolve => { release = resolve })
   let reads = 0
+  let handled!: () => void
+  const handlingComplete = new Promise<void>(resolve => { handled = resolve })
   await page.route('**/api/fs/details**', async route => {
+    if (route.request().method() === 'DELETE') return route.fulfill({ status: 204 })
     reads++
     await released
-    await route.fulfill({ json: { path: '/docs', name: 'docs', is_dir: true, size_status: 'calculating' } })
+    await route.fulfill({ json: { path: '/docs', name: 'docs', is_dir: true, size_status: 'calculating' } }).catch(() => undefined)
+    handled()
   })
   await page.goto('/#path=%2Fdocs')
   await expect(page).toHaveURL(/#path=%2Fdocs$/)
   await page.getByRole('button', { name: 'Open details', exact: true }).click()
   await expect.poll(() => reads).toBe(1)
   await page.locator('aside').getByRole('button', { name: 'Close details', exact: true }).click()
-  const response = page.waitForResponse(response => response.url().includes('/api/fs/details?'))
   release()
-  await response
+  await handlingComplete
   // Cross the polling interval to catch a late response scheduling new work.
   await page.waitForTimeout(650)
   expect(reads).toBe(1)

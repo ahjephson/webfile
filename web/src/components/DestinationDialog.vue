@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import ProgressSpinner from 'primevue/progressspinner'
@@ -32,6 +32,11 @@ const singleRootPath = ref('')
 const newFolderVisible = ref(false)
 const createError = ref('')
 let loadRequest = 0
+const viewport = ref<HTMLElement | null>(null)
+const scrollTop = ref(0)
+const viewportHeight = ref(352)
+const rowHeight = 48
+let viewportObserver: ResizeObserver | null = null
 
 const folders = computed(() => entries.value.filter(entry => entry.is_dir && isEntryVisible(entry, {
   showHidden: props.showHidden, hideInaccessible: props.hideInaccessible,
@@ -43,6 +48,19 @@ const parentPath = computed(() => {
   const parent = parts.length ? `/${parts.join('/')}` : '/'
   return singleRootPath.value && !parent.startsWith(`${singleRootPath.value}/`) && parent !== singleRootPath.value ? '' : parent
 })
+const visibleFolders = computed(() => {
+  const offset = Math.max(0, scrollTop.value - (parentPath.value ? rowHeight : 0))
+  const start = Math.max(0, Math.floor(offset / rowHeight) - 5)
+  const end = Math.min(folders.value.length, Math.ceil((offset + viewportHeight.value) / rowHeight) + 5)
+  return folders.value.slice(start, end).map((folder, index) => ({ folder, index: start + index }))
+})
+watch(viewport, element => {
+  viewportObserver?.disconnect()
+  if (!element) return
+  viewportObserver = new ResizeObserver(entries => { viewportHeight.value = entries[0]?.contentRect.height ?? 352 })
+  viewportObserver.observe(element)
+})
+onBeforeUnmount(() => viewportObserver?.disconnect())
 const crumbs = computed(() => {
   const displayRoot = singleRootPath.value || '/'
   const relativePath = singleRootPath.value && current.value.startsWith(`${singleRootPath.value}/`)
@@ -73,6 +91,8 @@ async function load(): Promise<boolean> {
   loading.value = true
   error.value = ''
   focusedPath.value = ''
+  scrollTop.value = 0
+  if (viewport.value) viewport.value.scrollTop = 0
   try {
     const response = await api.list(path)
     if (!props.visible || request !== loadRequest) return false
@@ -119,7 +139,12 @@ async function createFolder(name: string) {
   try {
     await api.mkdir(path)
     if (!props.visible || request !== loadRequest) return
-    if (await load()) focusedPath.value = path
+    if (await load()) {
+      focusedPath.value = path
+      await nextTick()
+      const index = folders.value.findIndex(folder => folder.path === path)
+      if (index >= 0 && viewport.value) viewport.value.scrollTop = (index + (parentPath.value ? 1 : 0)) * rowHeight
+    }
   } catch (err) {
     if (props.visible && request === loadRequest) createError.value = err instanceof Error ? err.message : String(err)
   }
@@ -153,13 +178,13 @@ function submit() {
         </template>
       </nav>
 
-      <div class="h-[22rem] overflow-auto rounded-xl border border-zinc-800 bg-zinc-950">
+      <div ref="viewport" class="h-[22rem] overflow-auto rounded-xl border border-zinc-800 bg-zinc-950" data-destination-viewport @scroll="scrollTop = viewport?.scrollTop ?? 0">
         <div v-if="loading" class="grid h-full place-items-center"><ProgressSpinner class="h-8 w-8" /></div>
         <div v-else-if="error" class="webfile-text-error p-4 text-sm">{{ error }}</div>
         <template v-else>
           <button
             v-if="parentPath"
-            class="flex w-full items-center gap-3 border-b border-zinc-900 px-4 py-3 text-left hover:bg-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-400"
+            class="flex h-12 w-full items-center gap-3 border-b border-zinc-900 px-4 text-left hover:bg-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-400"
             :class="focusedPath === parentPath ? 'bg-zinc-900' : ''"
             aria-label="Parent directory"
             @click="focusedPath = parentPath"
@@ -169,10 +194,12 @@ function submit() {
             <LevelUpIcon class="h-5 w-5 text-zinc-300" />
             <span class="min-w-0 flex-1" />
           </button>
+          <div class="relative" :style="{ height: `${folders.length * rowHeight}px` }">
           <button
-            v-for="folder in folders"
+            v-for="{ folder, index } in visibleFolders"
             :key="folder.path"
-            class="flex w-full items-center gap-3 border-b border-zinc-900 px-4 py-3 text-left hover:bg-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-400"
+            class="absolute left-0 flex h-12 w-full items-center gap-3 border-b border-zinc-900 px-4 text-left hover:bg-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-400"
+            :style="{ top: `${index * rowHeight}px` }"
             :title="folder.can_navigate === false ? 'You do not have permission to open this folder' : undefined"
             :class="focusedPath === folder.path ? 'bg-zinc-900' : ''"
             :aria-disabled="folder.can_navigate === false"
@@ -186,6 +213,7 @@ function submit() {
             </span>
             <span class="min-w-0 flex-1 truncate">{{ folder.name }}</span>
           </button>
+          </div>
           <div v-if="folders.length === 0" class="p-6 text-center text-sm text-zinc-500">No folders here.</div>
         </template>
       </div>
