@@ -137,7 +137,9 @@ function formatProgress(operation: FileOperation): string {
     }
     return progress
   }
-  if (operation.progress_unit === 'items') return `${operation.progress_done} / ${operation.progress_total} items`
+  if (operation.progress_unit === 'items') return operation.progress_total > 0
+    ? `${operation.progress_done} / ${operation.progress_total} items`
+    : `${operation.progress_done} items`
   if (operation.kind === 'copy' || operation.kind === 'move') return ''
   return phaseLabel(operation)
 }

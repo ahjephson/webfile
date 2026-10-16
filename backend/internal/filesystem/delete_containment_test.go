@@ -9,20 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-
-	"webfile/internal/thumbnailcache"
 )
-
-type swappingThumbnailCache struct {
-	thumbnailcache.Cache
-	once sync.Once
-	swap func()
-}
-
-func (c *swappingThumbnailCache) Get(context.Context, string) (thumbnailcache.Item, bool, error) {
-	c.once.Do(c.swap)
-	return thumbnailcache.Item{}, false, nil
-}
 
 func TestDeleteRemainsConfinedWhenParentChangesAfterValidation(t *testing.T) {
 	for _, directory := range []bool{false, true} {
@@ -45,19 +32,22 @@ func TestDeleteRemainsConfinedWhenParentChangesAfterValidation(t *testing.T) {
 				}
 				writeThumbnailTestImage(t, filepath.Join(parent, relative), color.RGBA{R: 255, A: 255})
 			}
-			service.thumbnailCache = &swappingThumbnailCache{Cache: service.thumbnailCache, swap: func() {
-				if err := os.Rename(slot, parked); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(outside, slot); err != nil {
-					t.Fatal(err)
-				}
-			}}
+			var once sync.Once
+			swap := func() {
+				once.Do(func() {
+					if err := os.Rename(slot, parked); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(outside, slot); err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
 			target := "/Files/slot/photo.png"
 			if directory {
 				target = "/Files/slot/tree"
 			}
-			err := service.Delete(context.Background(), target)
+			err := service.DeleteWithProgress(context.Background(), target, func(int64) { swap() })
 			if _, statErr := os.Stat(filepath.Join(outside, relative)); statErr != nil {
 				t.Fatalf("delete reached outside the root: %v (delete result: %v)", statErr, err)
 			}

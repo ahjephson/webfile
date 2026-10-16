@@ -90,18 +90,22 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 			Cancellable:   true,
 			CleanupPolicy: "Deleted items cannot be recovered. Cancellation keeps items not yet deleted.",
 		}, func(ctx context.Context, reporter operations.Reporter) error {
-			total := int64(len(req.Sources))
-			for index, source := range req.Sources {
+			var deleted int64
+			for _, source := range req.Sources {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
 				message := "Deleting " + path.Base(filesystem.CleanVirtual(source))
-				reporter.UpdatePhase("deleting", 0, 0, int64(index), total, message)
-				if err := s.files.Delete(ctx, source); err != nil {
+				before := deleted
+				if err := s.files.DeleteWithProgress(ctx, source, func(count int64) {
+					deleted = before + count
+					reporter.Report(operations.ProgressUpdate{Phase: "deleting", Message: message,
+						ProgressDone: deleted, ProgressUnit: operations.ProgressUnitItems, ItemsDone: deleted})
+				}); err != nil {
 					return err
 				}
-				reporter.UpdatePhase("deleting", 0, 0, int64(index+1), total, message)
 			}
+			reporter.UpdatePhase("deleting", 0, 0, deleted, deleted, fmt.Sprintf("Deleted %d items", deleted))
 			return nil
 		})
 		writeJSON(w, http.StatusAccepted, op)

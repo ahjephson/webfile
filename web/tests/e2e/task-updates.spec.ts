@@ -5,6 +5,25 @@ const task = (id: string, state: string, updated = 1) => ({ id, kind: 'upload', 
   progress_done: 1, progress_total: 10, progress_unit: 'bytes', cancellable: state === 'running',
   started_at: '2000-01-01T00:00:00Z', updated_at: `2000-01-01T00:00:00.00000${updated}Z` })
 
+test('large-folder deletion reports removed entries without inventing a total', async ({ page }) => {
+  const realtime = await taskFolder(page)
+  const operation = { ...task('large-folder', 'running'), kind: 'delete', phase: 'deleting',
+    message: 'Deleting large-folder', progress_done: 25, progress_total: 0, progress_unit: 'items',
+    bytes_done: 0, bytes_total: 0, items_done: 25, items_total: 0 }
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [operation] } }))
+  await page.goto('/#path=%2Fdocs')
+  await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+  const deletion = page.getByRole('complementary').getByRole('article').filter({ hasText: 'Delete large-folder.txt' })
+  await expect(deletion.getByText('Deleting large-folder', { exact: true })).toBeVisible()
+  await expect(deletion.getByText('25 items', { exact: true })).toBeVisible()
+  await expect(deletion.getByRole('progressbar')).toHaveCount(0)
+  realtime.send({ type: 'operation-updated', operation: { ...operation, progress_done: 256, items_done: 256,
+    updated_at: '2000-01-01T00:00:02Z' } })
+  await expect(deletion.getByText('256 items', { exact: true })).toBeVisible()
+  await expect(deletion.getByText(/\/ 0 items/)).toHaveCount(0)
+  await expect(deletion.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible()
+})
+
 test('transfer progress retains its main details without redundant file phase text', async ({ page }) => {
   const realtime = await taskFolder(page)
   const operation = { ...task('folder', 'running'), kind: 'move', phase: 'scanning', message: 'Scanning',

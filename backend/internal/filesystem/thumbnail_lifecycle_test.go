@@ -47,22 +47,24 @@ func TestMoveDirectoryRegeneratesThumbnailsOnDemand(t *testing.T) {
 	}
 }
 
-func TestDeleteDirectoryDeletesCachedThumbnails(t *testing.T) {
+func TestDeleteDirectoryDoesNotScanThumbnailCache(t *testing.T) {
 	svc, root := testService(t)
 	if err := os.Mkdir(filepath.Join(root, "source"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeThumbnailTestImage(t, filepath.Join(root, "source", "photo.jpg"), color.RGBA{B: 255, A: 255})
 	cacheThumbnail(t, svc, "/Files/source/photo.jpg")
+	cache := &untouchedTransferCache{}
+	svc.thumbnailCache = cache
 
 	if err := svc.Delete(context.Background(), "/Files/source"); err != nil {
 		t.Fatal(err)
 	}
-	cache := svc.thumbnailCache.(*memoryThumbnailCache)
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	if len(cache.items) != 0 {
-		t.Fatalf("cache still contains %d entries", len(cache.items))
+	if cache.calls != 0 {
+		t.Fatalf("deletion made %d thumbnail cache calls", cache.calls)
+	}
+	if _, err := svc.Thumbnail(context.Background(), "/Files/source/photo.jpg", 320, 320); !os.IsNotExist(err) {
+		t.Fatalf("deleted source was not rejected before cache access: %v", err)
 	}
 }
 

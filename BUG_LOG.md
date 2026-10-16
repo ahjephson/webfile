@@ -1,5 +1,35 @@
 # Bug log
 
+## Large-folder delete work
+
+- [x] Remove the thumbnail discovery/content-reading pass before recursive deletion; let old derived cache entries expire normally until grouped cleanup is available.
+- [x] Stream directory names in bounded batches, unlink relative to open directory descriptors, never follow child symlinks and check cancellation between entries.
+- [x] Report actual deleted child entries without a preliminary count or invented percentage; retain completed deletions on cancellation.
+- [x] Validate cancellation/resume, symlinks, parent replacement, many-child folders and end-to-end task counts; benchmark against the original delete path and OS deletion.
+- [x] Investigate cache categorization separately. Proposed cache-only directory nodes and shared image blobs are documented in `THUMBNAIL_LIFECYCLE_DESIGN.md`; no index implementation or migration is included yet.
+
+Implementation and regression coverage were completed before tests ran. The
+original-code regressions failed as expected for thumbnail-cache access and
+top-level-only task counts. The final delete regressions passed 10 race-enabled
+runs; full backend race tests, vet, production/PAM tests and vet passed. Both
+browsers passed seven task checks and the mounted-path smoke check; frontend
+builds passed.
+
+Local deletion benchmark: 5,000 small text files in native WSL, fixture creation
+excluded, three runs per method. The original WebFile median was 168 ms; the new
+streaming delete median was 59 ms (about 2.9x faster). OS `rm` measured about
+59–60 ms. This compares the filesystem service paths without task persistence;
+physical/network filesystem results may differ.
+
+The final visual check used a generated 250,000-file folder in the Codex
+browser. The running removed-entry count was visible without a fabricated total;
+completion reported 250,001 entries including the folder, with matching task
+counters and the generated folder absent. Only the generated task's history
+entry was removed afterward. Cache directory grouping remains a proposal, with
+ownership, shared-blob and delete/recreate protections documented separately.
+
+## Completed transfer work
+
 - [x] Transfer progress wording: change **Scanning transfer sources** to **Scanning**. Implemented and validated.
 - [x] Remove the separate transfer phase/status text. The main task details above the progress bar (for example **Copying**) are sufficient. Moving a folder containing many files previously made the redundant status repeatedly flip between **Copying**, **Flushing** and **Publishing**. Implemented and validated.
 - [x] Investigate moves containing many small files being much slower than OS moves, including between different disks where copy-and-delete is required. Identified excessive synchronous task-history writes, thumbnail inspection and avoidable same-filesystem copies. Implemented the changes below and measured a local improvement; performance on the user's physical disks remains unverified.

@@ -75,9 +75,3 @@ func (s *Service) moveCachedThumbnails(ctx context.Context, cached []cachedThumb
 		_ = s.thumbnailCache.Move(ctx, item.key, source.key)
 	}
 }
-
-func (s *Service) deleteCachedThumbnails(ctx context.Context, cached []cachedThumbnail) {
-	for _, item := range cached {
-		_ = s.thumbnailCache.Delete(ctx, item.key)
-	}
-}

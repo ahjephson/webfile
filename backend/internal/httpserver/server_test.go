@@ -265,6 +265,12 @@ func TestDeleteOperationPermanentlyRemovesEntry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(deleted, "file.txt"), []byte("gone"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(deleted, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deleted, "nested", "child.txt"), []byte("gone too"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	request := httptest.NewRequest(http.MethodPost, "/api/fs/operations", bytes.NewBufferString(`{"kind":"delete","sources":["/Files/delete-me"]}`))
 	response := httptest.NewRecorder()
@@ -277,7 +283,7 @@ func TestDeleteOperationPermanentlyRemovesEntry(t *testing.T) {
 	for {
 		operation := target.ops.List()[0]
 		if operation.State == operations.StateCompleted {
-			if operation.Kind != "delete" || operation.ProgressDone != 1 || operation.ProgressTotal != 1 {
+			if operation.Kind != "delete" || operation.ProgressDone != 4 || operation.ProgressTotal != 4 || operation.ItemsDone != 4 || operation.Message != "Deleted 4 items" {
 				t.Fatalf("unexpected operation: %#v", operation)
 			}
 			break

@@ -89,7 +89,10 @@ and persistent application state.
 - Regular file downloads. Folder downloads are prepared as cancellable 7-Zip
   archive tasks and become downloadable when creation completes.
 - Delete permanently removes files and folders using native filesystem
-  operations after explicit confirmation. Upgrades do not automatically purge
+  operations after explicit confirmation. Large folders are deleted in a single
+  streaming pass with cancellation checks between entries and a running count
+  of deleted items, without a preliminary size or thumbnail scan. Upgrades do
+  not automatically purge
   files left in the legacy trash directory.
 - The read-only Details pane resolves UID/GID to Linux user/group names. The
   backend has permission-change endpoints, but they are not currently exposed
