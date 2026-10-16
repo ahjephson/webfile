@@ -1,6 +1,7 @@
 package filesystem
 
 import (
+	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -16,6 +17,13 @@ func RenameNoReplace(source, destination string) error {
 }
 
 func renameNoReplaceFallback(source, destination string) error {
+	return renameNoReplaceFallbackContext(context.Background(), source, destination)
+}
+
+func renameNoReplaceFallbackContext(ctx context.Context, source, destination string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	info, err := os.Lstat(source)
 	if err != nil {
 		return err
@@ -27,7 +35,7 @@ func renameNoReplaceFallback(source, destination string) error {
 		if errors.Is(err, fs.ErrExist) {
 			return ErrConflict
 		}
-		return copyNoReplace(source, destination, info)
+		return copyNoReplaceContext(ctx, source, destination, info)
 	}
 	if err := os.Remove(source); err != nil {
 		_ = os.Remove(destination)
@@ -37,6 +45,13 @@ func renameNoReplaceFallback(source, destination string) error {
 }
 
 func copyNoReplace(source, destination string, info fs.FileInfo) (result error) {
+	return copyNoReplaceContext(context.Background(), source, destination, info)
+}
+
+func copyNoReplaceContext(ctx context.Context, source, destination string, info fs.FileInfo) (result error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	input, err := os.Open(source)
 	if err != nil {
 		return err
@@ -56,13 +71,16 @@ func copyNoReplace(source, destination string, info fs.FileInfo) (result error) 
 			_ = os.Remove(destination)
 		}
 	}()
-	if _, err := io.Copy(output, input); err != nil {
+	if _, err := io.Copy(output, &uploadContextReader{ctx: ctx, reader: input}); err != nil {
 		return err
 	}
 	if err := output.Sync(); err != nil {
 		return err
 	}
 	if err := output.Close(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := os.Chtimes(destination, info.ModTime(), info.ModTime()); err != nil {

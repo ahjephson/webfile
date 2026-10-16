@@ -357,7 +357,7 @@ func copyFileAtomic(ctx context.Context, source, destination string, mode fs.Fil
 	// no-replace rename publishes it without exposing partial output and works
 	// on filesystems that support renameat2 even when hard links are unavailable.
 	// The platform fallback retains exclusive-create semantics where necessary.
-	if err := renameNoReplace(tmpName, destination); err != nil {
+	if err := renameNoReplaceContext(ctx, tmpName, destination); err != nil {
 		return err
 	}
 	_ = os.Chtimes(destination, modified, modified)

@@ -220,7 +220,10 @@ func (m *UploadManager) Append(ctx context.Context, id string, offset int64, src
 		if err := os.Chmod(tempPath, 0o644); err != nil {
 			return UploadSession{}, false, err
 		}
-		if err := renameNoReplace(tempPath, destination); err != nil {
+		m.mu.Unlock()
+		publishErr := renameNoReplaceContext(ctx, tempPath, destination)
+		m.mu.Lock()
+		if err := publishErr; err != nil {
 			if errors.Is(err, ErrConflict) {
 				return UploadSession{}, false, ErrConflict
 			}
