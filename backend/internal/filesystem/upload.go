@@ -258,6 +258,12 @@ func (m *UploadManager) Cancel(id string) error {
 	return os.Remove(m.recordPath(id))
 }
 
+func (m *UploadManager) Active(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.active[id] != nil
+}
+
 type uploadContextReader struct {
 	ctx    context.Context
 	reader io.Reader

@@ -433,6 +433,26 @@ func (m *Manager) UpsertExternal(id, kind string, sources []string, destination 
 	return cloneOperation(rec.op)
 }
 
+// FailExternal preserves cancellation and newer upload attempts when an older
+// HTTP request finishes with an error. Staging is owned by the upload manager.
+func (m *Manager) FailExternal(id string, observed time.Time, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec := m.records[id]
+	if rec == nil || !rec.external || rec.op.State != StateRunning || !rec.op.UpdatedAt.Equal(observed) {
+		return
+	}
+	now := time.Now().UTC()
+	rec.op.State, rec.op.Phase = StateFailed, "failed"
+	rec.op.Error, rec.op.Message = err.Error(), "Upload stopped"
+	rec.op.UpdatedAt, rec.op.FinishedAt = now, timePointer(now)
+	rec.op.Cancellable, rec.cancel = false, nil
+	resetTransferRate(rec)
+	m.persistLocked(rec, true)
+	m.broadcastLocked(rec.op)
+	m.trimLocked()
+}
+
 func (m *Manager) Cancel(id string) bool {
 	m.mu.Lock()
 	rec := m.records[id]

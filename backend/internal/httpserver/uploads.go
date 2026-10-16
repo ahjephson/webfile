@@ -48,9 +48,16 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	length := r.ContentLength
+	var observed operations.Operation
+	if s.ops != nil {
+		observed, _ = s.ops.Get("upload-" + id)
+	}
 	body := cancellableUploadBody{ReadCloser: r.Body, response: http.NewResponseController(w)}
 	upload, complete, err := s.uploads.Append(r.Context(), id, offset, body, length)
 	if err != nil {
+		if s.ops != nil && !s.uploads.Active(id) {
+			s.ops.FailExternal("upload-"+id, observed.UpdatedAt, err)
+		}
 		var offsetErr *filesystem.UploadOffsetError
 		if errors.As(err, &offsetErr) {
 			writeJSON(w, http.StatusConflict, map[string]any{
