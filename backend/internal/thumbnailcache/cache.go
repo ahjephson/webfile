@@ -38,9 +38,13 @@ type Cache interface {
 }
 
 type Store struct {
-	dir      string
-	maxBytes int64
-	mu       sync.Mutex
+	dir         string
+	maxBytes    int64
+	mu          sync.Mutex
+	indexMu     sync.Mutex
+	index       *locationIndex
+	indexErr    error
+	indexClosed bool
 }
 
 func Open(dir string, maxBytes int64) (*Store, error) {
@@ -137,6 +141,7 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 
 func (s *Store) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /cache/locations", s.locationHandler)
 	mux.HandleFunc("GET /cache/{key}", func(w http.ResponseWriter, r *http.Request) {
 		item, ok, err := s.Get(r.Context(), r.PathValue("key"))
 		if err != nil {
@@ -194,9 +199,34 @@ type peerUIDContextKey struct{}
 type Authorizer struct {
 	mu     sync.RWMutex
 	tokens map[string]uint32
+	scopes map[string]map[string]string
 }
 
-func NewAuthorizer() *Authorizer { return &Authorizer{tokens: make(map[string]uint32)} }
+func NewAuthorizer() *Authorizer {
+	return &Authorizer{tokens: make(map[string]uint32), scopes: make(map[string]map[string]string)}
+}
+
+// IssueScoped separates persistent ownership from temporary worker tokens.
+// An elevated grant uses the originating account and an elevated authority ID.
+func (a *Authorizer) IssueScoped(uid uint32, owner string, roots []string) (string, error) {
+	for _, root := range roots {
+		if err := validateKey(root); err != nil {
+			return "", err
+		}
+	}
+	token, err := a.Issue(uid)
+	if err != nil {
+		return "", err
+	}
+	scopes := make(map[string]string, len(roots))
+	for _, root := range roots {
+		scopes[root] = HashName(owner + ":" + root)
+	}
+	a.mu.Lock()
+	a.scopes[token] = scopes
+	a.mu.Unlock()
+	return token, nil
+}
 
 func (a *Authorizer) Issue(uid uint32) (string, error) {
 	data := make([]byte, 32)
@@ -213,6 +243,7 @@ func (a *Authorizer) Issue(uid uint32) (string, error) {
 func (a *Authorizer) Revoke(token string) {
 	a.mu.Lock()
 	delete(a.tokens, token)
+	delete(a.scopes, token)
 	a.mu.Unlock()
 }
 
@@ -222,10 +253,14 @@ func (a *Authorizer) Handler(next http.Handler) http.Handler {
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		a.mu.RLock()
 		expectedUID, issued := a.tokens[token]
+		scopes, scoped := a.scopes[token]
 		a.mu.RUnlock()
 		if !ok || !issued || uid != expectedUID {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
+		}
+		if scoped {
+			r = r.WithContext(context.WithValue(r.Context(), namespaceContextKey{}, scopes))
 		}
 		next.ServeHTTP(w, r)
 	})

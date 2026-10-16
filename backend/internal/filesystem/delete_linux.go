@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"webfile/internal/thumbnailcache"
 
 	"golang.org/x/sys/unix"
 )
@@ -59,7 +60,14 @@ func (s *Service) DeleteWithProgress(ctx context.Context, virtualPath string, re
 			report(deleted)
 		}
 	}
-	return deleteEntryAt(ctx, parent, filepath.Base(relative), removed)
+	tickets := s.captureThumbnailChanges(ctx, []string{virtualPath})
+	if err := deleteEntryAt(ctx, parent, filepath.Base(relative), removed); err != nil {
+		return err
+	}
+	if len(tickets) == 1 {
+		s.applyThumbnailChanges([]thumbnailcache.LocationChange{{Ticket: tickets[0], Purge: true}})
+	}
+	return nil
 }
 
 func deleteEntryAt(ctx context.Context, parent *os.File, name string, removed func()) error {

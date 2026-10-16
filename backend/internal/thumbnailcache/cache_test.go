@@ -76,6 +76,7 @@ func TestUnixClientRequiresMatchingPeerCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	authorizer := NewAuthorizer()
 	token, err := authorizer.Issue(uint32(os.Geteuid()))
 	if err != nil {
@@ -116,5 +117,25 @@ func TestUnixClientRequiresMatchingPeerCapability(t *testing.T) {
 	}
 	if _, _, err := NewClient(socket, "wrong").Get(context.Background(), key); err == nil {
 		t.Fatal("wrong cache capability was accepted")
+	}
+	location := testLocation("folder", "image.jpg")
+	scopedToken, err := authorizer.IssueScoped(uint32(os.Geteuid()), "unix-test:normal", []string{location.Root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopedClient := NewClient(socket, scopedToken)
+	result, err := scopedClient.Locations(context.Background(), LocationRequest{Action: "begin", Paths: []Location{location}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scopedClient.Locations(context.Background(), LocationRequest{Action: "link", Ticket: result.Tickets[0], Key: movedKey, Variant: HashName("320")}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = scopedClient.Locations(context.Background(), LocationRequest{Action: "capture", Paths: []Location{location}})
+	if err != nil || result.Tickets[0].Node == 0 {
+		t.Fatalf("scoped Unix location: %#v %v", result, err)
+	}
+	if _, err := client.Locations(context.Background(), LocationRequest{Action: "begin", Paths: []Location{location}}); err == nil {
+		t.Fatal("unscoped capability accepted location mutations")
 	}
 }

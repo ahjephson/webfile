@@ -25,6 +25,7 @@ import (
 
 	"github.com/disintegration/imaging"
 
+	"golang.org/x/sys/unix"
 	"webfile/internal/thumbnailcache"
 )
 
@@ -32,7 +33,7 @@ const maxThumbnailPixels = 25_000_000
 
 const (
 	videoThumbnailFrames   = 10
-	thumbnailFormatVersion = "thumbnail-v4"
+	thumbnailFormatVersion = "thumbnail-v5"
 )
 
 var ErrThumbnailTooLarge = errors.New("image is too large to thumbnail")
@@ -86,6 +87,7 @@ type videoThumbnailGenerator struct {
 }
 
 type thumbnailSource struct {
+	ticket      *thumbnailcache.LocationTicket
 	virtualPath string
 	absolute    string
 	key         string
@@ -170,6 +172,9 @@ func (s *Service) generateImageDeduplicated(ctx context.Context, file *os.File, 
 		s.thumbnailFlightMu.Unlock()
 		select {
 		case <-existing.done:
+			if existing.err == nil {
+				s.linkThumbnail(ctx, source)
+			}
 			return existing.thumbnail, existing.err
 		case <-ctx.Done():
 			return Thumbnail{}, ctx.Err()
@@ -254,13 +259,23 @@ func (s *Service) inspectThumbnailSource(ctx context.Context, virtualPath string
 		_ = file.Close()
 		return thumbnailSource{}, nil, errors.New("file type does not support thumbnails")
 	}
-	identity := fmt.Sprintf("%s:%s:%d:%d:%d", thumbnailFormatVersion, file.Name(), info.Size(), info.ModTime().UnixNano(), info.Mode())
+	pathIdentity := file.Name()
+	var filesystem unix.Statfs_t
+	if unix.Fstatfs(int(file.Fd()), &filesystem) == nil {
+		switch filesystem.Type {
+		case unix.EXT4_SUPER_MAGIC, unix.BTRFS_SUPER_MAGIC, unix.XFS_SUPER_MAGIC, unix.TMPFS_MAGIC:
+			pathIdentity = ""
+		}
+	}
+	identity := fmt.Sprintf("%s:%s:%d:%d:%d", thumbnailFormatVersion, pathIdentity, info.Size(), info.ModTime().UnixNano(), info.Mode())
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
 		identity += fmt.Sprintf(":%d:%d:%d:%d", stat.Dev, stat.Ino, stat.Ctim.Sec, stat.Ctim.Nsec)
 	}
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s:%dx%d:%s", identity, width, height, contentType)))
+	key := fmt.Sprintf("%x", digest)
 	return thumbnailSource{
-		virtualPath: CleanVirtual(virtualPath), absolute: file.Name(), key: fmt.Sprintf("%x", digest),
+		ticket:      s.thumbnailTicket(ctx, virtualPath, key, thumbnailVariant(contentType, width, height)),
+		virtualPath: CleanVirtual(virtualPath), absolute: file.Name(), key: key,
 		mediaType: mediaType, contentType: contentType, width: width, height: height,
 	}, file, nil
 }
@@ -270,6 +285,7 @@ func (s *Service) cachedThumbnail(ctx context.Context, source thumbnailSource) (
 	if err != nil || !ok {
 		return Thumbnail{}, ok, err
 	}
+	s.linkThumbnail(ctx, source)
 	return Thumbnail{Data: item.Data, ContentType: item.ContentType, ETag: `"` + source.key[:32] + `"`}, true, nil
 }
 
@@ -278,6 +294,7 @@ func (s *Service) storeThumbnail(ctx context.Context, source thumbnailSource, da
 	if err := s.thumbnailCache.Put(ctx, source.key, item); err != nil {
 		return Thumbnail{}, err
 	}
+	s.linkThumbnail(ctx, source)
 	return Thumbnail{Data: data, ContentType: source.contentType, ETag: `"` + source.key[:32] + `"`}, nil
 }
 
@@ -309,8 +326,18 @@ func (s *Service) generateImageThumbnail(ctx context.Context, file *os.File, sou
 	if err := ctx.Err(); err != nil {
 		return Thumbnail{}, err
 	}
+	latest, latestFile, err := s.inspectThumbnailSource(ctx, source.virtualPath, source.width, source.height)
+	if err != nil {
+		return Thumbnail{}, err
+	}
+	_ = latestFile.Close()
+	if latest.key != source.key {
+		return Thumbnail{}, errors.New("thumbnail source changed during generation")
+	}
 	return s.storeThumbnail(ctx, source, encoded.Bytes())
 }
+
+func thumbnailSize(width, height int) string { return fmt.Sprintf("%dx%d", width, height) }
 
 func thumbnailMediaType(file *os.File) (string, error) {
 	sample := make([]byte, 512)

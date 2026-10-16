@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestRenameMovesCachedThumbnail(t *testing.T) {
+func TestRenameFileRegeneratesChangedVersion(t *testing.T) {
 	svc, root := testService(t)
 	writeThumbnailTestImage(t, filepath.Join(root, "before.jpg"), color.RGBA{R: 255, A: 255})
 	cacheThumbnail(t, svc, "/Files/before.jpg")
@@ -17,10 +17,16 @@ func TestRenameMovesCachedThumbnail(t *testing.T) {
 	if err := svc.Rename(context.Background(), "/Files/before.jpg", "/Files/after.jpg"); err != nil {
 		t.Fatal(err)
 	}
-	assertCachedThumbnailMoved(t, svc, oldKey, "/Files/after.jpg")
+	thumbnail, err := svc.Thumbnail(context.Background(), "/Files/after.jpg", 320, 320)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if thumbnail.ETag == `"`+oldKey[:32]+`"` {
+		t.Fatal("file rename reused a source version with changed ctime")
+	}
 }
 
-func TestMoveDirectoryRegeneratesThumbnailsOnDemand(t *testing.T) {
+func TestMoveDirectoryReusesUnchangedDescendantThumbnails(t *testing.T) {
 	svc, root := testService(t)
 	if err := os.MkdirAll(filepath.Join(root, "source", "nested"), 0o755); err != nil {
 		t.Fatal(err)
@@ -42,8 +48,8 @@ func TestMoveDirectoryRegeneratesThumbnailsOnDemand(t *testing.T) {
 	cache := svc.thumbnailCache.(*memoryThumbnailCache)
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if len(cache.items) != 2 {
-		t.Fatalf("destination thumbnail was not regenerated on demand: %d entries", len(cache.items))
+	if len(cache.items) != 1 {
+		t.Fatalf("unchanged destination thumbnail was regenerated: %d entries", len(cache.items))
 	}
 }
 
@@ -87,25 +93,4 @@ func onlyCachedThumbnailKey(t *testing.T, svc *Service) string {
 		return key
 	}
 	return ""
-}
-
-func assertCachedThumbnailMoved(t *testing.T, svc *Service, oldKey, virtualPath string) {
-	t.Helper()
-	source, file, err := svc.inspectThumbnailSource(context.Background(), virtualPath, managedThumbnailDimension, managedThumbnailDimension)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = file.Close()
-	cache := svc.thumbnailCache.(*memoryThumbnailCache)
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	if _, ok := cache.items[oldKey]; ok {
-		t.Fatal("old thumbnail cache key still exists")
-	}
-	if _, ok := cache.items[source.key]; !ok {
-		t.Fatal("thumbnail was not moved to the new cache key")
-	}
-	if len(cache.items) != 1 {
-		t.Fatalf("cache contains %d entries, want 1", len(cache.items))
-	}
 }

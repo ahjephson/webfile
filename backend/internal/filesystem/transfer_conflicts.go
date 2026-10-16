@@ -142,6 +142,8 @@ func (t *Transfer) initialize(ctx context.Context) error {
 }
 
 func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error {
+	capturedThumbnails := t.service.captureThumbnailTransfer(ctx, t.kind, t.sources, t.destination)
+	defer t.service.finishThumbnailTransfer(capturedThumbnails)
 	emit := func(phase, message string) {
 		if report != nil {
 			report(TransferProgress{Phase: phase, Message: message, BytesDone: t.bytes, BytesTotal: t.totalBytes, ItemsDone: t.items, ItemsTotal: t.totalItems})

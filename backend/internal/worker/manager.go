@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"webfile/internal/config"
 	"webfile/internal/identity"
 	"webfile/internal/launcher"
 	"webfile/internal/thumbnailcache"
@@ -72,7 +73,7 @@ func (m *Manager) Ensure(ctx context.Context, id identity.Identity) (*Process, e
 		m.cacheAuth.Revoke(previous.cacheToken)
 		delete(m.workers, id.UID)
 	}
-	cacheToken, err := m.cacheAuth.Issue(id.UID)
+	cacheToken, err := m.issueCacheCapability(id, false)
 	if err != nil {
 		return nil, fmt.Errorf("issue thumbnail cache capability: %w", err)
 	}
@@ -108,7 +109,7 @@ func (m *Manager) Elevate(ctx context.Context, id identity.Identity, password st
 	if err != nil {
 		return nil, "", fmt.Errorf("create elevation capability: %w", err)
 	}
-	cacheToken, err := m.cacheAuth.Issue(0)
+	cacheToken, err := m.issueCacheCapability(id, true)
 	if err != nil {
 		return nil, "", fmt.Errorf("issue elevated thumbnail cache capability: %w", err)
 	}
@@ -142,6 +143,28 @@ func (m *Manager) DropElevation(ctx context.Context, token string) error {
 		m.cacheAuth.Revoke(cacheToken)
 	}
 	return err
+}
+
+func (m *Manager) issueCacheCapability(id identity.Identity, elevated bool) (string, error) {
+	cfg, err := config.Load(m.configPath)
+	if err != nil {
+		return "", err
+	}
+	roots, err := cfg.RootsForUser(id.Username, id.Home)
+	if err != nil {
+		return "", err
+	}
+	keys := make([]string, 0, len(roots))
+	for _, root := range roots {
+		keys = append(keys, thumbnailcache.RootKey(root.Name, root.Path, root.ExcludedNames, root.ExcludedPaths))
+	}
+	uid := id.UID
+	authority := "normal"
+	if elevated {
+		uid = 0
+		authority = "elevated"
+	}
+	return m.cacheAuth.IssueScoped(uid, fmt.Sprintf("%d:%s:%s", id.UID, id.Username, authority), keys)
 }
 
 func (p *Process) alive() bool {

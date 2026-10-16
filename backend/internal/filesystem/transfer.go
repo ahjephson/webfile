@@ -52,6 +52,8 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 	if len(sources) == 0 {
 		return errors.New("at least one source is required")
 	}
+	capturedThumbnails := s.captureThumbnailTransfer(ctx, kind, sources, destinationDir)
+	defer s.finishThumbnailTransfer(capturedThumbnails)
 	if report != nil {
 		report(TransferProgress{Phase: transferPhaseScanning, Message: "Scanning"})
 	}

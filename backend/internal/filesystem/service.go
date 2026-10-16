@@ -409,11 +409,26 @@ func (s *Service) Rename(ctx context.Context, from, to string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	cached := s.collectCachedThumbnails(ctx, from)
+	tickets := s.captureThumbnailChanges(ctx, []string{from})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	info, err := os.Lstat(fromAbs)
+	if err != nil {
+		return err
+	}
 	if err := renameNoReplace(fromAbs, toAbs); err != nil {
 		return err
 	}
-	s.moveCachedThumbnails(context.WithoutCancel(ctx), cached, CleanVirtual(to))
+	if len(tickets) == 1 {
+		change := thumbnailcache.LocationChange{Ticket: tickets[0]}
+		if info.IsDir() {
+			if destination, ok := s.thumbnailLocation(to); ok {
+				change.Destination = &destination
+			}
+		}
+		s.applyThumbnailChanges([]thumbnailcache.LocationChange{change})
+	}
 	return nil
 }
 

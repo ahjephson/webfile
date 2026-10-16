@@ -202,7 +202,9 @@ func TestVideoThumbnailDoesNotRetryOtherFailures(t *testing.T) {
 func TestVideoThumbnailBatchStaysHiddenUntilSettledAndAppendsInOrder(t *testing.T) {
 	target, root := testService(t)
 	queue := newVideoThumbnailQueue(target, ThumbnailOptions{MaxQueued: 10, VideoTimeout: time.Minute})
+	queue.mu.Lock()
 	queue.settleDelay = time.Minute
+	queue.mu.Unlock()
 	t.Cleanup(queue.close)
 	existing := &videoThumbnailJob{
 		view:       VideoThumbnailJob{ID: "existing", Path: "/Files/existing.mp4", Name: "existing.mp4", State: "queued", Cancellable: true, UpdatedAt: time.Now().UTC()},
@@ -276,7 +278,9 @@ func TestVideoThumbnailBatchStaysHiddenUntilSettledAndAppendsInOrder(t *testing.
 
 func TestVideoThumbnailQueueCoalescesChangedSourceAndDismissesFailure(t *testing.T) {
 	queue := newVideoThumbnailQueue(&Service{}, ThumbnailOptions{MaxQueued: 10, VideoTimeout: time.Minute})
+	queue.mu.Lock()
 	queue.settleDelay = time.Minute
+	queue.mu.Unlock()
 	t.Cleanup(queue.close)
 	first := thumbnailSource{virtualPath: "/Files/copying.mp4", key: "11111111111111111111111111111111", width: 320, height: 180}
 	changed := thumbnailSource{virtualPath: first.virtualPath, key: "22222222222222222222222222222222", width: first.width, height: first.height}
@@ -289,37 +293,47 @@ func TestVideoThumbnailQueueCoalescesChangedSourceAndDismissesFailure(t *testing
 	if initial[0].ID != updated[0].ID {
 		t.Fatalf("changed source created a second job: %q != %q", initial[0].ID, updated[0].ID)
 	}
-	if len(queue.settling) != 1 || len(queue.queued) != 0 || len(queue.jobs) != 1 || queue.settling[0].source.key != changed.key {
-		t.Fatalf("changed source was not coalesced: settling=%d queued=%d jobs=%d", len(queue.settling), len(queue.queued), len(queue.jobs))
+	check := func(key string) *videoThumbnailJob {
+		queue.mu.Lock()
+		defer queue.mu.Unlock()
+		if len(queue.settling) != 1 || len(queue.queued) != 0 || len(queue.jobs) != 1 || queue.settling[0].source.key != key {
+			t.Fatalf("source was not coalesced: settling=%d queued=%d jobs=%d", len(queue.settling), len(queue.queued), len(queue.jobs))
+		}
+		return queue.settling[0]
 	}
+	job := check(changed.key)
 	if updated[0].State != "settling" {
 		t.Fatalf("updated job state = %q, want settling", updated[0].State)
 	}
 
-	job := queue.settling[0]
-	queue.settling = nil
-	job.view.State = "failed"
-	job.view.Cancellable = false
-	close(job.done)
+	fail := func() {
+		queue.mu.Lock()
+		defer queue.mu.Unlock()
+		queue.settling = nil
+		job.view.State = "failed"
+		job.view.Cancellable = false
+		close(job.done)
+	}
+	fail()
 	retriedSource := changed
 	retriedSource.key = "33333333333333333333333333333333"
 	retried := queue.scheduleBatch([]thumbnailSource{retriedSource})
 	if len(retried) != 1 || retried[0].ID != initial[0].ID || retried[0].State != "settling" {
 		t.Fatalf("changed failed job was not retried in place: %#v", retried)
 	}
-	if len(queue.settling) != 1 || len(queue.queued) != 0 || len(queue.jobs) != 1 || queue.settling[0] != job {
-		t.Fatalf("retry created duplicate staging state: settling=%d queued=%d jobs=%d", len(queue.settling), len(queue.queued), len(queue.jobs))
+	if check(retriedSource.key) != job {
+		t.Fatal("retry created a different job")
 	}
 
-	queue.settling = nil
-	job.view.State = "failed"
-	job.view.Cancellable = false
-	close(job.done)
+	fail()
 	if !queue.cancelJob(job.view.ID) {
 		t.Fatal("failed job could not be dismissed")
 	}
-	if len(queue.jobs) != 0 || len(queue.ids) != 0 {
-		t.Fatalf("dismissed job remains tracked: jobs=%d ids=%d", len(queue.jobs), len(queue.ids))
+	queue.mu.Lock()
+	remainingJobs, remainingIDs := len(queue.jobs), len(queue.ids)
+	queue.mu.Unlock()
+	if remainingJobs != 0 || remainingIDs != 0 {
+		t.Fatalf("dismissed job remains tracked: jobs=%d ids=%d", remainingJobs, remainingIDs)
 	}
 }
 

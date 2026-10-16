@@ -54,7 +54,11 @@ func TestLocalWorkerExitCanBeCheckedConcurrently(t *testing.T) {
 		t.Fatal(err)
 	}
 	id.Home = t.TempDir()
-	manager := NewManager(wrapper, "unused", t.TempDir(), "", "", thumbnailcache.NewAuthorizer())
+	configuration := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configuration, []byte(`{"roots":[{"name":"Files","path":"{home}"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(wrapper, configuration, t.TempDir(), "", "", thumbnailcache.NewAuthorizer())
 	t.Cleanup(func() { _ = manager.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

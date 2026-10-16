@@ -9,6 +9,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"webfile/internal/thumbnailcache"
 )
 
 var (
@@ -21,6 +23,7 @@ type Root struct {
 	Path          string
 	ExcludedNames []string
 	ExcludedPaths []string
+	cacheID       string
 }
 
 type Resolver struct {
@@ -31,6 +34,7 @@ type Resolver struct {
 func NewResolver(roots []Root) (*Resolver, error) {
 	r := &Resolver{roots: make(map[string]Root, len(roots)), rootOrder: make([]Root, 0, len(roots))}
 	for _, root := range roots {
+		root.cacheID = thumbnailcache.RootKey(root.Name, root.Path, root.ExcludedNames, root.ExcludedPaths)
 		root.Path = filepath.Clean(root.Path)
 		if resolved, err := filepath.EvalSymlinks(root.Path); err == nil {
 			root.Path = resolved

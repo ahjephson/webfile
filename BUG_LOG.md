@@ -6,7 +6,7 @@
 - [x] Stream directory names in bounded batches, unlink relative to open directory descriptors, never follow child symlinks and check cancellation between entries.
 - [x] Report actual deleted child entries without a preliminary count or invented percentage; retain completed deletions on cancellation.
 - [x] Validate cancellation/resume, symlinks, parent replacement, many-child folders and end-to-end task counts; benchmark against the original delete path and OS deletion.
-- [x] Investigate cache categorization separately. Proposed cache-only directory nodes and shared image blobs are documented in `THUMBNAIL_LIFECYCLE_DESIGN.md`; no index implementation or migration is included yet.
+- [x] Investigate and implement cache-only directory grouping. Lazy broker-owned nodes, stable ownership, revision-checked moves and bounded background delete cleanup are documented with measurements in `THUMBNAIL_LIFECYCLE_DESIGN.md`. Source filesystem scanning is not used to populate the index.
 
 Implementation and regression coverage were completed before tests ran. The
 original-code regressions failed as expected for thumbnail-cache access and
@@ -25,8 +25,9 @@ The final visual check used a generated 250,000-file folder in the Codex
 browser. The running removed-entry count was visible without a fabricated total;
 completion reported 250,001 entries including the folder, with matching task
 counters and the generated folder absent. Only the generated task's history
-entry was removed afterward. Cache directory grouping remains a proposal, with
-ownership, shared-blob and delete/recreate protections documented separately.
+entry was removed afterward. Subsequent cache directory grouping adds ownership,
+shared-blob and delete/recreate protections without restoring the source scan;
+see `THUMBNAIL_LIFECYCLE_DESIGN.md` for its separate measurements and validation.
 
 ## Completed transfer work
 

@@ -119,6 +119,7 @@ func serve(args []string) {
 	fatalIf(err, "resolve executable")
 	cacheStore, err := thumbnailcache.Open(cfg.Thumbnails.CacheDir, cfg.Thumbnails.CacheMaxBytes)
 	fatalIf(err, "open thumbnail cache")
+	defer cacheStore.Close()
 	cacheAuthorizer := thumbnailcache.NewAuthorizer()
 	cacheListener, err := thumbnailcache.Listen(cfg.Thumbnails.CacheSocket)
 	fatalIf(err, "listen for thumbnail cache workers")

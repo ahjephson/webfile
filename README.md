@@ -378,6 +378,8 @@ and its Unix socket are configurable under `thumbnails`; generated cache data
 is size-bounded and published atomically. User file access and thumbnail
 generation are performed only by UID-dropped workers.
 
+A bounded, disposable directory-reference index groups cached thumbnails for background deletion cleanup and same-filesystem folder-move reuse. It is populated only by thumbnail requests, never by scanning source roots, and does not replace filesystem authorization or listings. See [Thumbnail lifecycle design](THUMBNAIL_LIFECYCLE_DESIGN.md) for ownership, recovery and performance details.
+
 `/etc/webfile/webfile.json` contains no credentials and is readable by local
 users because UID-dropped workers load it after launch. TLS private-key material
 remains separately protected under `/etc/webfile/tls` for the broker only.
