@@ -8,6 +8,39 @@ import (
 	"time"
 )
 
+func TestHistoryCleanupFailureRetainsPersistentRecordForRetry(t *testing.T) {
+	manager, err := Open(filepath.Join(t.TempDir(), "tasks.db"), 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	failed := true
+	manager.SetHistoryCleanup(func(operation Operation) error {
+		if failed {
+			return errors.New("temporary cleanup failure")
+		}
+		return nil
+	})
+	manager.UpsertExternal("old", "archive", nil, "", StateCompleted, 1, 1, 1, 1, "done", "")
+	manager.UpsertExternal("new", "upload", nil, "", StateCompleted, 1, 1, 1, 1, "done", "")
+	if _, ok := manager.Get("old"); !ok {
+		t.Fatal("failed cleanup lost its record")
+	}
+	stored, err := manager.store.List(10)
+	if err != nil || len(stored) != 2 {
+		t.Fatalf("persistent retry records: %v %v", stored, err)
+	}
+	failed = false
+	manager.UpsertExternal("new", "upload", nil, "", StateCompleted, 1, 1, 1, 1, "done", "")
+	if _, ok := manager.Get("old"); ok {
+		t.Fatal("successful retry did not evict old record")
+	}
+	stored, err = manager.store.List(10)
+	if err != nil || len(stored) != 1 || stored[0].ID != "new" {
+		t.Fatalf("persistent eviction: %v %v", stored, err)
+	}
+}
+
 func TestOperationCompletesAndReportsProgress(t *testing.T) {
 	manager := New(10)
 	updates, cancel := manager.Subscribe()

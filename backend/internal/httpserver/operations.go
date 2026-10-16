@@ -456,6 +456,40 @@ func removeArchiveArtifacts(directory, id string) error {
 	return result
 }
 
+func (s *Server) cleanOrphanArchives() error {
+	if strings.TrimSpace(s.archiveDir) == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(s.archiveDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var result error
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".zip") {
+			continue
+		}
+		id := strings.TrimSuffix(strings.TrimSuffix(entry.Name(), ".zip"), ".partial")
+		if operation, exists := s.ops.Get(id); exists && operation.Kind == "archive" {
+			switch operation.State {
+			case operations.StateQueued, operations.StatePreparing, operations.StateAwaitingInput, operations.StateRunning, operations.StateCancelling, operations.StateCleaningUp:
+				continue
+			case operations.StateCompleted:
+				if operation.Phase == "completed" && !strings.HasSuffix(entry.Name(), ".partial.zip") {
+					continue
+				}
+			}
+		}
+		if err := os.Remove(filepath.Join(s.archiveDir, entry.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			result = errors.Join(result, err)
+		}
+	}
+	return result
+}
+
 func (s *Server) clearOperationHistory(w http.ResponseWriter, r *http.Request) {
 	completed := s.ops.List()
 	removed, err := s.ops.ClearHistory()

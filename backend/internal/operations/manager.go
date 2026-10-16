@@ -155,17 +155,18 @@ type record struct {
 }
 
 type Manager struct {
-	mu            sync.Mutex
-	records       map[string]*record
-	subs          map[chan Operation]struct{}
-	queue         []string
-	store         *Store
-	maxKeep       int
-	maxConcurrent int
-	running       int
-	runningKinds  map[string]int
-	closed        bool
-	wg            sync.WaitGroup
+	historyCleanup func(Operation) error
+	mu             sync.Mutex
+	records        map[string]*record
+	subs           map[chan Operation]struct{}
+	queue          []string
+	store          *Store
+	maxKeep        int
+	maxConcurrent  int
+	running        int
+	runningKinds   map[string]int
+	closed         bool
+	wg             sync.WaitGroup
 }
 
 func New(maxKeep int) *Manager {
@@ -891,17 +892,41 @@ func (m *Manager) trimLocked() {
 		}
 	}
 	sort.Slice(finished, func(i, j int) bool { return finished[i].op.UpdatedAt.Before(finished[j].op.UpdatedAt) })
+	cleanupFailed := false
 	for _, rec := range finished {
 		if len(m.records) <= m.maxKeep {
 			break
 		}
+		if m.historyCleanup != nil {
+			if err := m.historyCleanup(cloneOperation(rec.op)); err != nil {
+				slog.Error("clean evicted task artifacts", slog.String("id", rec.op.ID), slog.String("err", err.Error()))
+				cleanupFailed = true
+				continue
+			}
+		}
+		if m.store != nil {
+			if _, err := m.store.RemoveHistory(rec.op.ID); err != nil {
+				slog.Error("remove evicted task", slog.String("id", rec.op.ID), slog.String("err", err.Error()))
+				cleanupFailed = true
+				continue
+			}
+		}
 		delete(m.records, rec.op.ID)
 	}
-	if m.store != nil {
+	if m.store != nil && !cleanupFailed {
 		if err := m.store.Trim(m.maxKeep); err != nil {
 			slog.Error("trim task history", slog.String("err", err.Error()))
 		}
 	}
+}
+
+// SetHistoryCleanup registers artifact cleanup before automatic history eviction.
+// The callback runs under the manager lock and must not call manager methods.
+// A cleanup failure retains the record so a later trim can retry it.
+func (m *Manager) SetHistoryCleanup(cleanup func(Operation) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.historyCleanup = cleanup
 }
 
 func activeState(state State) bool {

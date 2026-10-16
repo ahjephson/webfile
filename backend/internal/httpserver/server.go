@@ -38,6 +38,15 @@ type Server struct {
 
 func NewWorker(files *filesystem.Service, uploads *filesystem.UploadManager, watchManager *watch.Manager, extractor *archive.Extractor, opManager *operations.Manager, archiveDir string) *Server {
 	s := &Server{files: files, uploads: uploads, watch: watchManager, extractor: extractor, ops: opManager, passwords: newPasswordBroker(), archiveDir: archiveDir, mux: http.NewServeMux()}
+	opManager.SetHistoryCleanup(func(operation operations.Operation) error {
+		if operation.Kind == "archive" {
+			return removeArchiveArtifacts(archiveDir, operation.ID)
+		}
+		return nil
+	})
+	if err := s.cleanOrphanArchives(); err != nil {
+		slog.Error("clean orphan archives", slog.String("err", err.Error()))
+	}
 	s.routes()
 	return s
 }
