@@ -47,6 +47,56 @@ func TestHistoryLimitCountsOnlyFinishedTasks(t *testing.T) {
 	}
 }
 
+func TestRestartRecoversAllActiveTasksBeyondHistoryLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tasks.db")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	states := []State{StateQueued, StatePreparing, StateAwaitingInput, StateRunning, StateCancelling, StateCleaningUp}
+	for index := 0; index < 115; index++ {
+		state := StateCompleted
+		if index < 105 {
+			state = states[index%len(states)]
+		}
+		started := now.Add(time.Duration(index) * time.Second)
+		op := Operation{ID: fmt.Sprintf("task-%d", index), Kind: "upload", State: state, StartedAt: started, UpdatedAt: started, Cancellable: true}
+		if state == StateAwaitingInput {
+			op.Input = []byte(`{"revision":1}`)
+		}
+		if err := store.Upsert(op, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := Open(path, 100, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	stored, err := manager.store.List(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range stored {
+		if activeState(operation.State) {
+			t.Fatalf("task %s was left %s after restart", operation.ID, operation.State)
+		}
+		if operation.State == StateInterrupted && (operation.Cancellable || operation.FinishedAt == nil || len(operation.Input) != 0) {
+			t.Fatalf("invalid interrupted task: %#v", operation)
+		}
+	}
+	if len(stored) != 100 || len(manager.List()) != 100 {
+		t.Fatalf("finished retention after recovery: database=%d memory=%d", len(stored), len(manager.List()))
+	}
+	if manager.running != 0 || len(manager.queue) != 0 {
+		t.Fatal("recovered tasks were scheduled for replay")
+	}
+}
+
 func TestHistoryCleanupFailureRetainsPersistentRecordForRetry(t *testing.T) {
 	manager, err := Open(filepath.Join(t.TempDir(), "tasks.db"), 1, 2)
 	if err != nil {

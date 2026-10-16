@@ -179,7 +179,7 @@ func Open(databasePath string, maxKeep, maxConcurrent int) (*Manager, error) {
 		return nil, err
 	}
 	manager := newManager(store, maxKeep, maxConcurrent)
-	stored, err := store.List(maxKeep)
+	stored, err := store.listForRecovery(manager.maxKeep)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
@@ -201,6 +201,7 @@ func Open(databasePath string, maxKeep, maxConcurrent int) (*Manager, error) {
 		}
 		manager.records[operation.ID] = &record{op: operation, lastPersistence: now}
 	}
+	manager.trimLocked()
 	return manager, nil
 }
 

@@ -217,6 +217,21 @@ ON CONFLICT(id) DO UPDATE SET
 }
 
 func (s *Store) List(limit int) ([]Operation, error) {
+	return s.list(`ORDER BY started_at DESC LIMIT ?`, limit)
+}
+
+func (s *Store) listForRecovery(limit int) ([]Operation, error) {
+	return s.list(`
+WHERE tasks.state NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+   OR tasks.id IN (
+       SELECT id FROM tasks
+       WHERE state IN ('completed', 'failed', 'cancelled', 'interrupted')
+       ORDER BY updated_at DESC LIMIT ?
+   )
+ORDER BY started_at DESC`, limit)
+}
+
+func (s *Store) list(tail string, limit int) ([]Operation, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -225,8 +240,7 @@ SELECT id, kind, sources_json, destination, state, phase, message, error,
        progress_done, progress_total, progress_unit, bytes_done, bytes_total, items_done, items_total, queue_position, cancellable,
        cleanup_policy, cleanup_error, started_at, tasks.updated_at, finished_at, COALESCE(checkpoint.value_json,'')
 FROM tasks LEFT JOIN task_checkpoints checkpoint ON tasks.id=checkpoint.task_id AND checkpoint.name='input'
-ORDER BY started_at DESC
-LIMIT ?`, limit)
+`+tail, limit)
 	if err != nil {
 		return nil, err
 	}
