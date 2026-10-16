@@ -112,6 +112,9 @@ watch(() => props.folderPath, () => {
   thumbnailStates.value = {}
   void detectGalleryImages()
 })
+watch(() => JSON.stringify(props.entries.map(entry => [entry.path, entry.is_dir, entry.can_read, entry.size, entry.modified])), () => {
+  void detectGalleryImages()
+})
 watch(images, () => {
   preloadNearbyOriginals()
   void loadThumbnailCatalogue()
@@ -137,6 +140,7 @@ onBeforeUnmount(() => {
   resizeObserver = null
   clearPendingTap()
   clearOriginals()
+  galleryDetection++
   thumbnailGeneration++
   navigationRequest++
   if (navigationTimer !== null) clearTimeout(navigationTimer)

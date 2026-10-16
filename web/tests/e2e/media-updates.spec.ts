@@ -47,3 +47,24 @@ test('grid refreshes changed image thumbnails and retains unchanged ones', async
   expect(requests).toHaveLength(3)
   expect(new Set(requests).size).toBe(3)
 })
+
+test('open gallery discovers added images and removes deleted images across repeated refreshes', async ({ page }) => {
+  const realtime = await mediaFolder(page)
+  let entries = [entry('first.jpg')], reads = 0
+  await page.route('**/api/fs/dir**', route => { reads++; return route.fulfill({ json: { path: '/docs', entries } }) })
+  await page.goto('/#path=%2Fdocs&file=first.jpg')
+  const next = page.getByRole('button', { name: 'Next image', exact: true })
+  await expect(next).toBeDisabled()
+  for (const name of ['second.jpg', 'extensionless-image']) {
+    entries = [entry('first.jpg'), entry(name)]
+    const before = reads
+    await realtime.invalidate()
+    await expect.poll(() => reads).toBeGreaterThan(before)
+    await expect(next).toBeEnabled()
+    await expect(page.getByRole('option', { name: `Show ${name}`, exact: true })).toBeVisible()
+    entries = [entry('first.jpg')]
+    await realtime.invalidate()
+    await expect(next).toBeDisabled()
+    await expect(page.getByRole('option', { name: `Show ${name}`, exact: true })).toHaveCount(0)
+  }
+})
