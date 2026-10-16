@@ -51,14 +51,16 @@ type dirState struct {
 }
 
 type Manager struct {
-	fd       int
-	mu       sync.Mutex
-	dirs     map[string]*dirState
-	byWD     map[int]string
-	closed   chan struct{}
-	once     sync.Once
-	polling  PollingMode
-	interval time.Duration
+	fd         int
+	file       *os.File
+	readerDone chan struct{}
+	mu         sync.Mutex
+	dirs       map[string]*dirState
+	byWD       map[int]string
+	closed     chan struct{}
+	once       sync.Once
+	polling    PollingMode
+	interval   time.Duration
 }
 
 func New(options ...Options) (*Manager, error) {
@@ -72,17 +74,20 @@ func New(options ...Options) (*Manager, error) {
 	if opts.PollInterval <= 0 {
 		opts.PollInterval = 5 * time.Second
 	}
-	fd, err := syscall.InotifyInit1(syscall.IN_CLOEXEC)
+	fd, err := syscall.InotifyInit1(syscall.IN_CLOEXEC | syscall.IN_NONBLOCK)
 	if err != nil {
 		return nil, fmt.Errorf("inotify init: %w", err)
 	}
 	m := &Manager{
-		fd:       fd,
-		dirs:     map[string]*dirState{},
-		byWD:     map[int]string{},
-		closed:   make(chan struct{}),
-		polling:  opts.Polling,
-		interval: opts.PollInterval,
+		fd: fd,
+		// Go's poller lets Close interrupt an idle inotify read safely.
+		file:       os.NewFile(uintptr(fd), "webfile-inotify"),
+		readerDone: make(chan struct{}),
+		dirs:       map[string]*dirState{},
+		byWD:       map[int]string{},
+		closed:     make(chan struct{}),
+		polling:    opts.Polling,
+		interval:   opts.PollInterval,
 	}
 	go m.loop()
 	// Even without content polling, retry watches whose directory was removed
@@ -95,7 +100,21 @@ func (m *Manager) Close() error {
 	var err error
 	m.once.Do(func() {
 		close(m.closed)
-		err = syscall.Close(m.fd)
+		m.mu.Lock()
+		for _, state := range m.dirs {
+			if state.quietTimer != nil {
+				state.quietTimer.Stop()
+			}
+			for subscriber := range state.subs {
+				close(subscriber)
+			}
+		}
+		// Stale unsubscribe callbacks must not operate on a reused descriptor.
+		clear(m.dirs)
+		clear(m.byWD)
+		err = m.file.Close()
+		m.mu.Unlock()
+		<-m.readerDone
 	})
 	return err
 }
@@ -243,9 +262,15 @@ func directoryFingerprint(dir string) (string, error) {
 }
 
 func (m *Manager) loop() {
+	defer close(m.readerDone)
 	buf := make([]byte, 64*1024)
 	for {
-		n, err := syscall.Read(m.fd, buf)
+		select {
+		case <-m.closed:
+			return
+		default:
+		}
+		n, err := m.file.Read(buf)
 		if err != nil {
 			if errors.Is(err, syscall.EINTR) {
 				continue
