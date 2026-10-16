@@ -650,6 +650,15 @@ func (m *Manager) removeFromQueueLocked(id string) {
 func (m *Manager) ClearHistory() (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.historyCleanup != nil {
+		for _, rec := range m.records {
+			if terminalState(rec.op.State) {
+				if err := m.historyCleanup(cloneOperation(rec.op)); err != nil {
+					return 0, err
+				}
+			}
+		}
+	}
 
 	if m.store != nil {
 		if _, err := m.store.ClearHistory(); err != nil {
@@ -673,6 +682,11 @@ func (m *Manager) RemoveHistory(id string) (bool, error) {
 	rec := m.records[id]
 	if rec == nil || !terminalState(rec.op.State) {
 		return false, nil
+	}
+	if m.historyCleanup != nil {
+		if err := m.historyCleanup(cloneOperation(rec.op)); err != nil {
+			return false, err
+		}
 	}
 	if m.store != nil {
 		removed, err := m.store.RemoveHistory(id)
@@ -955,7 +969,7 @@ func (m *Manager) trimLocked() {
 	}
 }
 
-// SetHistoryCleanup registers artifact cleanup before automatic history eviction.
+// SetHistoryCleanup registers artifact cleanup before history removal or eviction.
 // The callback runs under the manager lock and must not call manager methods.
 // A cleanup failure retains the record so a later trim can retry it.
 func (m *Manager) SetHistoryCleanup(cleanup func(Operation) error) {
