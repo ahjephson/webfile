@@ -61,6 +61,18 @@ type workerProcess struct {
 	done       <-chan struct{}
 }
 
+func (worker workerProcess) alive() bool {
+	if worker.cmd == nil || worker.cmd.Process == nil {
+		return false
+	}
+	select {
+	case <-worker.done:
+		return false
+	default:
+		return true
+	}
+}
+
 func (s *Server) Serve(ctx context.Context) error {
 	if os.Geteuid() != 0 {
 		return errors.New("launcher must run as root")
@@ -200,10 +212,10 @@ func (s *Server) ensureWorker(id identity.Identity, brokerGID int, cacheSocket, 
 	defer s.mu.Unlock()
 	userDir := filepath.Join(s.WorkerDir, strconv.FormatUint(uint64(id.UID), 10))
 	socket := filepath.Join(userDir, "worker.sock")
-	if worker := s.workers[id.UID]; worker.cmd != nil && worker.cmd.ProcessState == nil && worker.cacheToken == cacheToken && socketReady(socket) {
+	if worker := s.workers[id.UID]; worker.alive() && worker.cacheToken == cacheToken && socketReady(socket) {
 		return socket, nil
 	}
-	if worker := s.workers[id.UID]; worker.cmd != nil && worker.cmd.ProcessState == nil {
+	if worker := s.workers[id.UID]; worker.alive() {
 		_ = worker.cmd.Process.Signal(syscall.SIGTERM)
 		select {
 		case <-worker.done:
@@ -355,7 +367,7 @@ func (s *Server) stopElevated(token, reason string) {
 	if !ok {
 		return
 	}
-	if worker.cmd.Process != nil && worker.cmd.ProcessState == nil {
+	if worker.alive() {
 		_ = worker.cmd.Process.Signal(syscall.SIGTERM)
 		select {
 		case <-worker.done:
@@ -371,13 +383,13 @@ func (s *Server) stopAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for uid, worker := range s.workers {
-		if worker.cmd.Process != nil && worker.cmd.ProcessState == nil {
+		if worker.alive() {
 			_ = worker.cmd.Process.Signal(syscall.SIGTERM)
 		}
 		delete(s.workers, uid)
 	}
 	for token, worker := range s.elevated {
-		if worker.cmd.Process != nil && worker.cmd.ProcessState == nil {
+		if worker.alive() {
 			_ = worker.cmd.Process.Signal(syscall.SIGTERM)
 		}
 		delete(s.elevated, token)

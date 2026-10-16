@@ -30,6 +30,7 @@ type Process struct {
 	Proxy      *httputil.ReverseProxy
 	remote     bool
 	cacheToken string
+	done       <-chan struct{}
 }
 
 type Manager struct {
@@ -148,7 +149,12 @@ func (p *Process) alive() bool {
 		return false
 	}
 	if p.Cmd != nil {
-		return p.Cmd.ProcessState == nil
+		select {
+		case <-p.done:
+			return false
+		default:
+			return p.Cmd.Process != nil
+		}
 	}
 	conn, err := net.DialTimeout("unix", p.Socket, 100*time.Millisecond)
 	if err != nil {
@@ -165,7 +171,7 @@ func (m *Manager) Close() error {
 	var first error
 	for uid, p := range m.workers {
 		m.cacheAuth.Revoke(p.cacheToken)
-		if p.Cmd != nil && p.Cmd.Process != nil && p.Cmd.ProcessState == nil {
+		if p.Cmd != nil && p.alive() {
 			if err := p.Cmd.Process.Signal(syscall.SIGTERM); err != nil && first == nil {
 				first = err
 			}
@@ -242,9 +248,11 @@ func (m *Manager) startLocalLocked(ctx context.Context, id identity.Identity, ca
 		return nil, err
 	}
 
-	p := &Process{Identity: id, Socket: socket, Cmd: cmd, Proxy: proxyForSocket(socket)}
+	done := make(chan struct{})
+	p := &Process{Identity: id, Socket: socket, Cmd: cmd, Proxy: proxyForSocket(socket), done: done}
 	go func(uid uint32, process *Process) {
 		_ = cmd.Wait()
+		close(done)
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if current := m.workers[uid]; current == process {
