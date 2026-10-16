@@ -610,10 +610,22 @@ async function loadPreferences() {
   }
 }
 
+let preferenceWrites: Promise<unknown> = Promise.resolve()
+
+function persistPreferences(preferences: UserPreferences) {
+  const snapshot = { ...preferences }
+  const write = preferenceWrites.catch(() => undefined).then(() => {
+    if (explorerDisposed) throw new Error('Explorer is closed')
+    return api.savePreferences(snapshot)
+  })
+  preferenceWrites = write
+  return write
+}
+
 async function savePreferences() {
   try {
     userPreferences.value = currentPreferences()
-    await api.savePreferences(userPreferences.value)
+    await persistPreferences(userPreferences.value)
   } catch {
     // Do not interrupt file work for a preference persistence failure.
   }
@@ -647,7 +659,7 @@ function applyPreferences(preferences: UserPreferences) {
 async function saveSettings(preferences: UserPreferences) {
   settingsSaving.value = true
   try {
-    const saved = normalizePreferences(await api.savePreferences(preferences))
+    const saved = normalizePreferences(await persistPreferences(preferences))
     applyPreferences(saved)
     settingsVisible.value = false
     toast.add({ severity: 'success', summary: 'Settings saved', life: 2000 })
