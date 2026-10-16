@@ -350,6 +350,9 @@ func copyFileAtomic(ctx context.Context, source, destination string, mode fs.Fil
 	if progress != nil {
 		progress(transferPhasePublishing, 0)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// The temporary file already lives in the destination directory. An atomic
 	// no-replace rename publishes it without exposing partial output and works
 	// on filesystems that support renameat2 even when hard links are unavailable.

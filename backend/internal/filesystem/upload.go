@@ -223,8 +223,17 @@ func (m *UploadManager) Append(ctx context.Context, id string, offset int64, src
 			if !errors.Is(err, syscall.EXDEV) && !errors.Is(err, errRenameNoReplaceUnsupported) {
 				return UploadSession{}, false, err
 			}
-			if err := copyFileAtomic(ctx, tempPath, destination, 0o644, time.Now(), nil); err != nil {
+			// The active entry still excludes another writer for this upload.
+			// Publication can take minutes across disks; cancellation and other
+			// uploads must be able to acquire the manager lock during that IO.
+			m.mu.Unlock()
+			copyErr := copyFileAtomic(ctx, tempPath, destination, 0o644, time.Now(), nil)
+			m.mu.Lock()
+			if err := ctx.Err(); err != nil {
 				return UploadSession{}, false, err
+			}
+			if copyErr != nil {
+				return UploadSession{}, false, copyErr
 			}
 			_ = os.Remove(tempPath)
 		}
