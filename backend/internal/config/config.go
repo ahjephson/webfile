@@ -177,7 +177,6 @@ func (c *Config) Validate() error {
 		}
 		excluded := make(map[string]struct{}, len(r.ExcludedNames))
 		for index, name := range r.ExcludedNames {
-			name = strings.TrimSpace(name)
 			if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\\`) {
 				return fmt.Errorf("root %q has invalid excluded name %q", r.Name, name)
 			}
@@ -328,7 +327,6 @@ func validHTTPHeaderName(value string) bool {
 }
 
 func normalizeExcludedPath(value string) (string, error) {
-	value = strings.TrimSpace(value)
 	if value == "" || strings.Contains(value, `\`) {
 		return "", errors.New("must be a non-empty root-relative path using forward slashes")
 	}
