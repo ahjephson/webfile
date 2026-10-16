@@ -237,7 +237,7 @@ function formatDate(value?: string) {
                   <Button label="Cancel" size="small" severity="secondary" text @click="emit('cancel', operation)" />
                 </div>
               </div>
-              <div v-else-if="percent(operation) !== null && operation.state === 'running'" class="h-2 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${label(operation)} progress`" :aria-valuenow="percent(operation) ?? undefined" aria-valuemin="0" aria-valuemax="100">
+              <div v-else-if="percent(operation) !== null && (operation.state === 'running' || operation.kind === 'delete')" class="h-2 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${label(operation)} progress`" :aria-valuenow="percent(operation) ?? undefined" :aria-valuetext="formatProgress(operation)" aria-valuemin="0" aria-valuemax="100">
                 <div class="h-full bg-sky-600 transition-[width]" :style="{ width: `${percent(operation)}%` }" />
               </div>
               <div v-else-if="operation.kind === 'delete' && percent(operation) === null" class="h-2 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${label(operation)} progress`" :aria-valuetext="formatProgress(operation)">

@@ -90,20 +90,43 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 			Cancellable:   true,
 			CleanupPolicy: "Deleted items cannot be recovered. Cancellation keeps items not yet deleted.",
 		}, func(ctx context.Context, reporter operations.Reporter) error {
-			var deleted int64
-			for _, source := range req.Sources {
+			reporter.Report(operations.ProgressUpdate{Phase: "scanning", Message: "Scanning"})
+			counts := make([]int64, len(req.Sources))
+			var total, deleted int64
+			countValid := true
+			for index, source := range req.Sources {
+				count, err := s.files.CountDeleteEntries(ctx, source)
+				if err != nil {
+					return err
+				}
+				counts[index] = count
+				total += count
+			}
+			for index, source := range req.Sources {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
 				message := "Deleting " + path.Base(filesystem.CleanVirtual(source))
 				before := deleted
+				countedTotal := total
 				if err := s.files.DeleteWithProgress(ctx, source, func(count int64) {
 					deleted = before + count
+					// If concurrent changes invalidate the snapshot, keep reporting
+					// actual removals without claiming a percentage we no longer know.
+					countValid = countValid && deleted <= total
+					progressTotal := total
+					if !countValid {
+						progressTotal = 0
+					}
 					reporter.Report(operations.ProgressUpdate{Phase: "deleting", Message: message,
-						ProgressDone: deleted, ProgressUnit: operations.ProgressUnitItems, ItemsDone: deleted})
+						ProgressDone: deleted, ProgressTotal: progressTotal, ProgressUnit: operations.ProgressUnitItems,
+						ItemsDone: deleted, ItemsTotal: progressTotal})
 				}); err != nil {
 					return err
 				}
+				// Reconcile disappeared entries and overlapping selections before
+				// proceeding to the next source; completion uses actual removals.
+				total = max(deleted, countedTotal+deleted-before-counts[index])
 			}
 			reporter.UpdatePhase("deleting", 0, 0, deleted, deleted, fmt.Sprintf("Deleted %d items", deleted))
 			return nil

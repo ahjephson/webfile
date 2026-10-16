@@ -13,8 +13,87 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// DeleteWithProgress streams directory entries without reading file contents,
-// inspecting thumbnails or counting the tree first. The callback receives the
+// CountDeleteEntries counts files, links and directories without reading file
+// contents or inspecting thumbnails. The result is a snapshot: other programs
+// may change the tree before or during deletion. No child symlinks are followed.
+func (s *Service) CountDeleteEntries(ctx context.Context, virtualPath string) (int64, error) {
+	if IsConfiguredRootPath(virtualPath) {
+		return 0, errors.New("configured roots cannot be deleted")
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	configured, absolute, err := s.resolver.ResolveEntry(virtualPath)
+	if err != nil {
+		return 0, err
+	}
+	root, err := os.OpenRoot(configured.Path)
+	if err != nil {
+		return 0, err
+	}
+	defer root.Close()
+	relative, err := filepath.Rel(configured.Path, absolute)
+	if err != nil {
+		return 0, err
+	}
+	if relative == "." {
+		return 0, ErrInvalidPath
+	}
+	parent, err := root.OpenFile(filepath.Dir(relative), os.O_RDONLY|unix.O_DIRECTORY, 0)
+	if err != nil {
+		return 0, err
+	}
+	defer parent.Close()
+	return countDeleteEntryAt(ctx, parent, filepath.Base(relative))
+}
+
+func countDeleteEntryAt(ctx context.Context, parent *os.File, name string) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return 0, nil
+	}
+	if errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
+		return 1, nil // A file or link, including a link to a directory.
+	}
+	if err != nil {
+		return 0, &os.PathError{Op: "openat", Path: name, Err: err}
+	}
+	directory := os.NewFile(uintptr(fd), name)
+	defer directory.Close()
+	total := int64(1)
+	for {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		entries, readErr := directory.ReadDir(128)
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+			if entry.IsDir() {
+				count, err := countDeleteEntryAt(ctx, directory, entry.Name())
+				if err != nil {
+					return 0, err
+				}
+				total += count
+			} else {
+				total++
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return total, nil
+		}
+		if readErr != nil {
+			return 0, readErr
+		}
+	}
+}
+
+// DeleteWithProgress streams directory entries without reading file contents
+// or inspecting thumbnails. Callers may count first. The callback receives the
 // number of entries actually removed, including directories, starting at zero.
 func (s *Service) DeleteWithProgress(ctx context.Context, virtualPath string, report func(int64)) error {
 	if IsConfiguredRootPath(virtualPath) {

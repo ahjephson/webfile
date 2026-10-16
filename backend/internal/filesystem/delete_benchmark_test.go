@@ -12,7 +12,7 @@ import (
 )
 
 func BenchmarkDeleteSmallFiles(b *testing.B) {
-	for _, method := range []string{"webfile", "rm"} {
+	for _, method := range []string{"webfile", "webfile-counted", "rm"} {
 		b.Run(method, func(b *testing.B) {
 			for iteration := 0; iteration < b.N; iteration++ {
 				b.StopTimer()
@@ -32,7 +32,12 @@ func BenchmarkDeleteSmallFiles(b *testing.B) {
 				}
 				service := NewService(resolver, 1024)
 				b.StartTimer()
-				if method == "webfile" {
+				if method == "webfile" || method == "webfile-counted" {
+					if method == "webfile-counted" {
+						if count, err := service.CountDeleteEntries(context.Background(), "/Files/tree"); err != nil || count != 5001 {
+							b.Fatalf("count: %d %v", count, err)
+						}
+					}
 					if err := service.Delete(context.Background(), "/Files/tree"); err != nil {
 						b.Fatal(err)
 					}

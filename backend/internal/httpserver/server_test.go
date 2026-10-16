@@ -271,8 +271,13 @@ func TestDeleteOperationPermanentlyRemovesEntry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(deleted, "nested", "child.txt"), []byte("gone too"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "another.txt"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-	request := httptest.NewRequest(http.MethodPost, "/api/fs/operations", bytes.NewBufferString(`{"kind":"delete","sources":["/Files/delete-me"]}`))
+	updates, stopUpdates := target.ops.Subscribe()
+	defer stopUpdates()
+	request := httptest.NewRequest(http.MethodPost, "/api/fs/operations", bytes.NewBufferString(`{"kind":"delete","sources":["/Files/delete-me","/Files/another.txt"]}`))
 	response := httptest.NewRecorder()
 	target.startOperation(response, request)
 	if response.Code != http.StatusAccepted {
@@ -283,7 +288,7 @@ func TestDeleteOperationPermanentlyRemovesEntry(t *testing.T) {
 	for {
 		operation := target.ops.List()[0]
 		if operation.State == operations.StateCompleted {
-			if operation.Kind != "delete" || operation.ProgressDone != 4 || operation.ProgressTotal != 4 || operation.ItemsDone != 4 || operation.Message != "Deleted 4 items" {
+			if operation.Kind != "delete" || operation.ProgressDone != 5 || operation.ProgressTotal != 5 || operation.ItemsDone != 5 || operation.Message != "Deleted 5 items" {
 				t.Fatalf("unexpected operation: %#v", operation)
 			}
 			break
@@ -298,6 +303,22 @@ func TestDeleteOperationPermanentlyRemovesEntry(t *testing.T) {
 	}
 	if _, err := os.Stat(deleted); !os.IsNotExist(err) {
 		t.Fatalf("deleted entry still exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "another.txt")); !os.IsNotExist(err) {
+		t.Fatalf("second selected entry still exists: %v", err)
+	}
+	var scanning, counted bool
+	for len(updates) > 0 {
+		update := <-updates
+		if update.Phase == "scanning" {
+			scanning = update.Message == "Scanning" && update.ProgressTotal == 0 && update.ItemsDone == 0
+		}
+		if update.Phase == "deleting" && update.State == operations.StateRunning && update.ItemsDone == 0 {
+			counted = update.ProgressTotal == 5 && update.ItemsTotal == 5
+		}
+	}
+	if !scanning || !counted {
+		t.Fatalf("missing indeterminate scan / determinate delete transition: scanning=%v counted=%v", scanning, counted)
 	}
 }
 

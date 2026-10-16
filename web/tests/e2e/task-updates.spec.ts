@@ -45,6 +45,35 @@ test('large-folder deletion shows an indeterminate bar and removed count without
   await expect(deletion.getByRole('progressbar')).toHaveCount(0)
 })
 
+test('delete progress switches from scanning to a counted bar and retains it during cancellation', async ({ page }) => {
+  const realtime = await taskFolder(page)
+  const operation = { ...task('counted-folder', 'running'), kind: 'delete', phase: 'scanning', sources: ['/docs/counted-folder'],
+    message: 'Scanning', progress_done: 0, progress_total: 0, progress_unit: '',
+    bytes_done: 0, bytes_total: 0, items_done: 0, items_total: 0 }
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [operation] } }))
+  await page.goto('/#path=%2Fdocs')
+  await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+  const deletion = page.getByRole('complementary').getByRole('article').filter({ hasText: 'Delete counted-folder' })
+  const progress = deletion.getByRole('progressbar')
+  await expect(deletion.getByText('Scanning', { exact: true })).toBeVisible()
+  await expect(progress).not.toHaveAttribute('aria-valuenow')
+  await expect(progress.locator('.webfile-indeterminate')).toBeVisible()
+  const counted = { ...operation, phase: 'deleting', message: 'Deleting counted-folder', progress_done: 25, progress_total: 100,
+    progress_unit: 'items', items_done: 25, items_total: 100, updated_at: '2000-01-01T00:00:02Z' }
+  realtime.send({ type: 'operation-updated', operation: counted })
+  await expect(progress).toHaveAttribute('aria-valuenow', '25')
+  await expect(progress.locator('.webfile-indeterminate')).toHaveCount(0)
+  await expect(deletion.getByText('25 / 100 items', { exact: true })).toBeVisible()
+  realtime.send({ type: 'operation-updated', operation: { ...counted, progress_done: 50, items_done: 50,
+    updated_at: '2000-01-01T00:00:03Z' } })
+  await expect(progress).toHaveAttribute('aria-valuenow', '50')
+  realtime.send({ type: 'operation-updated', operation: { ...counted, state: 'cancelling', phase: 'cancelling', cancellable: false,
+    progress_done: 50, items_done: 50, updated_at: '2000-01-01T00:00:04Z' } })
+  await expect(deletion).toHaveAttribute('data-task-state', 'cancelling')
+  await expect(progress).toHaveAttribute('aria-valuenow', '50')
+  await expect(progress).toHaveAttribute('aria-valuetext', '50 / 100 items')
+})
+
 test('transfer progress retains its main details without redundant file phase text', async ({ page }) => {
   const realtime = await taskFolder(page)
   const operation = { ...task('folder', 'running'), kind: 'move', phase: 'scanning', message: 'Scanning',

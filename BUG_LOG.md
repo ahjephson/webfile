@@ -4,8 +4,8 @@
 
 - [x] Remove the thumbnail discovery/content-reading pass before recursive deletion; let old derived cache entries expire normally until grouped cleanup is available.
 - [x] Stream directory names in bounded batches, unlink relative to open directory descriptors, never follow child symlinks and check cancellation between entries.
-- [x] Report actual deleted child entries without a preliminary count or invented percentage; retain completed deletions on cancellation.
-- [x] Keep a visible indeterminate progress bar on streaming delete tasks alongside the removed-item count, including cancellation and reduced-motion display.
+- [x] Report actual deleted child entries; retain completed deletions on cancellation.
+- [x] Show an indeterminate bar while counting directory entries, then switch to a percentage bar with deleted/total items. Counting is cancellable and skips file contents and thumbnails; unknown-total tasks retain the animated fallback, including cancellation and reduced motion.
 - [x] Validate cancellation/resume, symlinks, parent replacement, many-child folders and end-to-end task counts; benchmark against the original delete path and OS deletion.
 - [x] Investigate and implement cache-only directory grouping. Lazy broker-owned nodes, stable ownership, revision-checked moves and bounded background delete cleanup are documented with measurements in `THUMBNAIL_LIFECYCLE_DESIGN.md`. Source filesystem scanning is not used to populate the index.
 
@@ -31,6 +31,8 @@ shared-blob and delete/recreate protections without restoring the source scan;
 see `THUMBNAIL_LIFECYCLE_DESIGN.md` for its separate measurements and validation.
 
 Delete progress-bar follow-up: the regression first failed because no progress bar was rendered for an unknown total. The fix passed 11 task checks in each browser, both mounted-path smoke checks and frontend builds, including animation, live counts, reduced motion, cancellation and completion. In the Codex browser, an active real deletion showed the animated bar with 16,307 removed items and no fabricated percentage. Generated deletions of 250,000 and 100,000 files completed with 250,001 and 100,001 items respectively, including the folders. Only those two task-history entries were removed, and the isolated test server was stopped.
+
+Counted-progress follow-up: tasks now show **Scanning** with an indeterminate bar while counting directory entries, then switch to a determinate bar and deleted/total items. The count uses bounded directory batches, never follows child symlinks, does not read file contents or thumbnails and can be cancelled before anything is removed. Totals cover all selected sources and are reconciled after each source; if actual removals exceed the snapshot, the task falls back to the unknown-total bar until completion. The API regression first failed for the missing scan/count transition, then passed with multi-source totals. Full backend race tests and vet passed; Chromium and WebKit each passed seven task checks and one mounted-path check, with frontend builds. The final Codex-browser check showed 121,067 / 150,001 items with a filled percentage bar, then completed at 150,001 / 150,001. In three native-WSL benchmark runs for 5,000 small files, median streaming deletion was 61.20 ms, count-plus-delete 63.55 ms and OS `rm` 60.58 ms; setup and task persistence are excluded, and physical/network filesystems remain unmeasured.
 
 ## Completed transfer work
 

@@ -34,6 +34,9 @@ func TestDeleteStreamsAllChildrenAndDoesNotFollowLinks(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "tree", "link")); err != nil {
 		t.Fatal(err)
 	}
+	if count, err := service.CountDeleteEntries(context.Background(), "/Files/tree"); err != nil || count != 604 {
+		t.Fatalf("count before delete: %d %v, want 604", count, err)
+	}
 	var previous int64 = -1
 	err := service.DeleteWithProgress(context.Background(), "/Files/tree", func(deleted int64) {
 		if deleted != previous+1 {
@@ -98,10 +101,71 @@ func TestDeleteCancelledBeforeStartDoesNotChangeSource(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	if _, err := service.CountDeleteEntries(ctx, "/Files/keep.txt"); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
 	if err := service.DeleteWithProgress(ctx, "/Files/keep.txt", nil); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(file); err != nil || string(data) != "keep" {
 		t.Fatalf("cancelled delete changed source: %q %v", data, err)
+	}
+}
+
+type cancelDeleteCountContext struct {
+	context.Context
+	checks int
+	cancel context.CancelFunc
+}
+
+func (c *cancelDeleteCountContext) Err() error {
+	c.checks++
+	if c.checks >= 20 {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestDeleteCountCanCancelDuringEnumerationWithoutRemovingEntries(t *testing.T) {
+	service, root := testService(t)
+	tree := filepath.Join(root, "tree")
+	if err := os.Mkdir(tree, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 300; index++ {
+		if err := os.WriteFile(filepath.Join(tree, fmt.Sprint(index)), nil, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &cancelDeleteCountContext{Context: base, cancel: cancel}
+	if _, err := service.CountDeleteEntries(ctx, "/Files/tree"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("count cancellation: %v", err)
+	}
+	entries, err := os.ReadDir(tree)
+	if err != nil || len(entries) != 300 {
+		t.Fatalf("count changed source: %d entries, %v", len(entries), err)
+	}
+}
+
+func TestDeleteCountFilesLinksEmptyDirectoriesAndRootRejection(t *testing.T) {
+	service, root := testService(t)
+	if err := os.Mkdir(filepath.Join(root, "empty"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "file"), nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing-target", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"empty", "file", "link"} {
+		if count, err := service.CountDeleteEntries(context.Background(), "/Files/"+name); err != nil || count != 1 {
+			t.Fatalf("count %s: %d %v", name, count, err)
+		}
+	}
+	if _, err := service.CountDeleteEntries(context.Background(), "/Files"); err == nil {
+		t.Fatal("configured root accepted")
 	}
 }
