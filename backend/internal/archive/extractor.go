@@ -190,13 +190,20 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 			return ExtractResult{}, runErr
 		}
 		return publishStage(ctx, stage, destinationAbs, destinationExists, options.ExistingFiles, report, func() error {
-			return validateExtractionPaths(stage, destinationRoot, destinationAbs)
+			return validateExtractionPathsContext(ctx, stage, destinationRoot, destinationAbs)
 		})
 	}
 }
 
 func validateExtractionPaths(stage string, root filesystem.Root, destination string) error {
+	return validateExtractionPathsContext(context.Background(), stage, root, destination)
+}
+
+func validateExtractionPathsContext(ctx context.Context, stage string, root filesystem.Root, destination string) error {
 	return filepath.WalkDir(stage, func(current string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -224,22 +231,21 @@ func (e *Extractor) PasswordRequired(ctx context.Context, archivePath string) (b
 	}
 	cmd := exec.CommandContext(ctx, e.cfg.Executable, args...)
 	cmd.Stdin = strings.NewReader("")
-	output, err := cmd.CombinedOutput()
-	text := strings.ToLower(string(output))
-	if incorrectPasswordOutput(text) || strings.Contains(text, "encrypted archive") {
-		return true, nil
+	output := &inspectionOutput{}
+	cmd.Stdout, cmd.Stderr = output, output
+	err := cmd.Run()
+	output.flush()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return false, ctxErr
 	}
-	for _, line := range strings.Split(string(output), "\n") {
-		fields := strings.SplitN(line, "=", 2)
-		if len(fields) == 2 && strings.EqualFold(strings.TrimSpace(fields[0]), "Encrypted") && strings.TrimSpace(fields[1]) == "+" {
-			return true, nil
-		}
+	if output.required {
+		return true, nil
 	}
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return false, ctxErr
 		}
-		return false, fmt.Errorf("archive inspection failed: %w: %s", err, sanitizeToolError(string(output)))
+		return false, fmt.Errorf("archive inspection failed: %w: %s", err, sanitizeToolError(string(output.tail)))
 	}
 	return false, nil
 }
@@ -481,19 +487,25 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 			_ = removeStage(stage)
 		}
 	}()
+	if err := ctx.Err(); err != nil {
+		return ExtractResult{}, err
+	}
 	if report != nil {
 		report(Progress{Phase: "validating", Message: "Validating extracted files"})
 	}
-	count, err := validateStage(stage)
+	count, err := validateStageContext(ctx, stage)
 	if err != nil {
 		return ExtractResult{}, err
 	}
 	for _, check := range checks {
+		if err := ctx.Err(); err != nil {
+			return ExtractResult{}, err
+		}
 		if err := check(); err != nil {
 			return ExtractResult{}, err
 		}
 	}
-	conflicts, err := preflight(stage, destination, policy)
+	conflicts, err := preflightContext(ctx, stage, destination, policy)
 	if err != nil {
 		return ExtractResult{}, err
 	}
@@ -528,8 +540,15 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 }
 
 func validateStage(stage string) (int, error) {
+	return validateStageContext(context.Background(), stage)
+}
+
+func validateStageContext(ctx context.Context, stage string) (int, error) {
 	files := 0
 	err := filepath.WalkDir(stage, func(path string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -595,15 +614,22 @@ func removeStage(stage string) error {
 }
 
 func preflight(source, destination string, policy ExistingFilePolicy) ([]string, error) {
+	return preflightContext(context.Background(), source, destination, policy)
+}
+
+func preflightContext(ctx context.Context, source, destination string, policy ExistingFilePolicy) ([]string, error) {
 	conflicts := make([]string, 0)
-	if err := preflightNode(source, destination, destination, policy, &conflicts); err != nil {
+	if err := preflightNode(ctx, source, destination, destination, policy, &conflicts); err != nil {
 		return nil, err
 	}
 	sort.Strings(conflicts)
 	return conflicts, nil
 }
 
-func preflightNode(source, destination, root string, policy ExistingFilePolicy, conflicts *[]string) error {
+func preflightNode(ctx context.Context, source, destination, root string, policy ExistingFilePolicy, conflicts *[]string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	destinationInfo, err := os.Lstat(destination)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -632,7 +658,7 @@ func preflightNode(source, destination, root string, policy ExistingFilePolicy, 
 		return err
 	}
 	for _, entry := range entries {
-		if err := preflightNode(filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name()), root, policy, conflicts); err != nil {
+		if err := preflightNode(ctx, filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name()), root, policy, conflicts); err != nil {
 			return err
 		}
 	}
@@ -653,7 +679,7 @@ func publishNode(ctx context.Context, source, destination string, policy Existin
 	}
 	destinationInfo, err := os.Lstat(destination)
 	if errors.Is(err, fs.ErrNotExist) {
-		files, countErr := countRegularFiles(source)
+		files, countErr := countRegularFilesContext(ctx, source)
 		if countErr != nil {
 			return countErr
 		}
@@ -775,7 +801,7 @@ func publishDirectoryAbsent(ctx context.Context, source, destination string, inf
 		}
 		childSource := filepath.Join(source, entry.Name())
 		childDestination := filepath.Join(destination, entry.Name())
-		files, err := countRegularFiles(childSource)
+		files, err := countRegularFilesContext(ctx, childSource)
 		if err != nil {
 			return err
 		}
@@ -793,6 +819,13 @@ func publishDirectoryAbsent(ctx context.Context, source, destination string, inf
 }
 
 func countRegularFiles(root string) (int, error) {
+	return countRegularFilesContext(context.Background(), root)
+}
+
+func countRegularFilesContext(ctx context.Context, root string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	info, err := os.Lstat(root)
 	if err != nil {
 		return 0, err
@@ -805,6 +838,9 @@ func countRegularFiles(root string) (int, error) {
 	}
 	count := 0
 	err = filepath.WalkDir(root, func(_ string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
