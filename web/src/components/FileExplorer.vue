@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import Button from 'primevue/button'
 import ContextMenu from 'primevue/contextmenu'
 import InputText from 'primevue/inputtext'
@@ -34,6 +34,7 @@ import DetailsDialog from '@/components/DetailsDialog.vue'
 import FilePreview from '@/components/FilePreview.vue'
 import VirtualFileList from '@/components/VirtualFileList.vue'
 import VirtualFileGrid from '@/components/VirtualFileGrid.vue'
+import { useExplorerWorkspace, fileDragType, dropMode, type PaneId } from '@/composables/useExplorerWorkspace'
 
 const EditorDialog = defineAsyncComponent(() => import('@/components/EditorDialog.vue'))
 const editorDialog = ref<{ confirmDiscard: () => boolean; currentPath: string } | null>(null)
@@ -41,17 +42,24 @@ const editorDialog = ref<{ confirmDiscard: () => boolean; currentPath: string } 
 type ViewMode = 'list' | 'grid'
 type GridSize = 'small' | 'medium' | 'large'
 type TransferMode = 'copy' | 'move'
-type FileClipboard = {
-  mode: TransferMode
-  paths: string[]
-}
 const props = defineProps<{
   username: string
   showLogout: boolean
   elevationAvailable: boolean
   elevated: boolean
   elevationExpiresAt?: string
+  paneId: PaneId
+  panePosition: PaneId
+  paneVisible: boolean
 }>()
+
+const workspace = useExplorerWorkspace()
+const isPrimary = props.paneId === 'left'
+const isActive = computed(() => workspace.activePane.value === props.paneId)
+const currentFolderSelected = ref(false)
+const otherPane = computed(() => workspace.panes.get(props.paneId === 'left' ? 'right' : 'left'))
+const otherPath = computed(() => workspace.split.value ? otherPane.value?.path.value ?? '' : '')
+function activatePane() { workspace.activePane.value = props.paneId }
 
 const emit = defineEmits<{
   logout: []
@@ -71,12 +79,17 @@ const {
   storePath: storeSessionPath,
   clearPath: clearSessionPath,
   storeState: storeExplorerState,
-} = useExplorerNavigation(props.username)
-const currentPath = ref(readHashPath() ?? readSessionPath())
+} = useExplorerNavigation(props.username, props.paneId)
+const currentPath = ref(readHashPath() ?? readSessionPath(otherPane.value?.path.value ?? '/'))
 const restoredExplorerState = readSessionState()
 const singleRootPath = ref('')
 const restoredStateMatchesPath = restoredExplorerState.directory === currentPath.value
-const entries = ref<FileEntry[]>([])
+// Listings are immutable snapshots. Per-entry reactive proxies are costly for
+// very large folders; changes replace the snapshot instead.
+const entries = shallowRef<FileEntry[]>([])
+let loadedDirectoryPath = ''
+let loadedDirectoryElevated = props.elevated
+let listingShareable = false
 const loading = ref(false)
 const error = ref('')
 const search = ref('')
@@ -129,6 +142,7 @@ const showHidden = ref(false)
 const sortField = ref<SortField>('name')
 const sortDirection = ref<SortDirection>('asc')
 const sortMenu = ref<any>(null)
+const paneOverflowMenu = ref<any>(null)
 const sortItems = computed(() => [
   ...(['name', 'modified', 'size', 'type'] as SortField[]).map(field => ({
     label: `Sort by ${field}`, class: sortField.value === field ? 'webfile-sort-selected' : undefined,
@@ -147,6 +161,16 @@ function chooseSort(field: SortField, direction?: SortDirection) {
   void savePreferences()
   void nextTick(() => scrollFocusedIntoView())
 }
+const paneOverflowItems = computed(() => [
+  { label: 'Folder actions', items: [
+    { label: 'Search beneath this folder', icon: 'pi pi-search-plus', disabled: currentPath.value === '/', command: () => { recursiveSearchVisible.value = true } },
+    { label: filterVisible.value ? 'Close filter' : 'Filter this folder', icon: 'pi pi-search', command: toggleFilter },
+    ...(!viewingSearch.value ? [{ label: showHidden.value ? 'Hide dot files' : 'Show dot files', icon: 'pi pi-eye', command: () => { showHidden.value = !showHidden.value } }] : []),
+    { label: 'Select all', icon: 'pi pi-list-check', command: selectAll },
+    { label: 'Clear selection', icon: 'pi pi-times', command: clearSelection },
+  ] },
+  { label: 'Sort files', items: sortItems.value },
+])
 const gridColumns = ref(1)
 const contextMenu = ref<any>(null)
 const actionsMenu = ref<any>(null)
@@ -183,24 +207,31 @@ const pendingPasswordTerminal = ref<FileOperation | null>(null)
 const extractBusy = ref(false)
 const destinationVisible = ref(false)
 const transferMode = ref<TransferMode>('copy')
-const operationsVisible = ref(false)
-const taskAttention = ref(false)
-const settingsVisible = ref(false)
+const operationsVisible = workspace.operationsVisible
+const taskAttention = workspace.taskAttention
+const settingsVisible = workspace.settingsVisible
 const settingsSaving = ref(false)
 const conflictVisible = ref(false), conflictBusy = ref(false), conflictError = ref(''), conflictOperationId = ref('')
 const shownConflicts = new Set<string>()
 const userPreferences = ref<UserPreferences>({ ...defaultPreferences })
-const thumbnailJobs = ref<VideoThumbnailJob[]>([])
+const thumbnailJobs = workspace.thumbnailJobs
 const pendingVideoThumbnailPaths = ref<Set<string>>(new Set())
 const detailsVisible = ref(restoredExplorerState.detailsVisible)
 const detailsPath = ref(restoredStateMatchesPath ? restoredExplorerState.detailsPath : currentPath.value)
 const transferEntries = ref<FileEntry[]>([])
-const fileClipboard = ref<FileClipboard | null>(null)
+const fileClipboard = workspace.clipboard
 const renameTarget = ref<FileEntry | null>(null)
 const extractTarget = ref<FileEntry | null>(null)
 const extractTargets = ref<FileEntry[]>([])
 const uploadInput = ref<HTMLInputElement | null>(null)
 const draggingOver = ref(false)
+const dragDestination = ref('')
+const folderDropTarget = computed(() => draggingOver.value && dragDestination.value !== currentPath.value ? dragDestination.value : '')
+const dragAction = ref<TransferMode>('move')
+const dragLabel = computed(() => workspace.drag.value
+  ? `${dragAction.value === 'copy' ? 'Copy' : 'Move'} to ${toVisiblePath(dragDestination.value || currentPath.value)}`
+  : 'Drop files to upload')
+watch(workspace.drag, drag => { if (!drag) draggingOver.value = false })
 let invalidateTimer: number | null = null
 let sizeFreshnessTimer: number | null = null
 let sizeRefreshPoll: number | null = null
@@ -208,6 +239,10 @@ let refreshRequest = 0
 let latestDirectoryRefresh: { path: string; promise: Promise<boolean> } | null = null
 let invalidationRefreshRunning = false
 let invalidationRefreshPending = false
+let largeDirectoryRefreshTimer: number | null = null
+let nextLargeDirectoryRefresh = 0
+const largeDirectoryThreshold = 10_000
+const largeDirectoryRefreshInterval = 5000
 let explorerDisposed = false
 let terminalRefreshTimer: number | null = null
 const uploadBatchFolders = new Map<string, number>()
@@ -239,6 +274,7 @@ const {
 const conflictOperation = computed(() => operations.value.find(operation => operation.id === conflictOperationId.value && operation.state === 'awaiting_input' && operation.input)
   ?? operations.value.find(operation => operation.state === 'awaiting_input' && operation.input) ?? null)
 watch(conflictOperation, operation => {
+  if (!isPrimary) return
   if (!operation?.input) { conflictVisible.value = false; return }
   if (!shownConflicts.has(`${operation.id}:${operation.input.revision}`)) openConflict(operation)
 })
@@ -343,12 +379,14 @@ async function cancelThumbnailJob(id: string) {
 
 const filteredEntries = computed(() => {
   const q = search.value.trim().toLocaleLowerCase()
-  return sortEntries(viewEntries.value, sortField.value, sortDirection.value).filter(entry => {
-    if (!isEntryVisible(entry, { showHidden: viewingSearch.value ? searchRequest.value!.show_hidden : showHidden.value, hideInaccessible: userPreferences.value.hide_inaccessible })) return false
+  const visibility = { showHidden: viewingSearch.value ? searchRequest.value!.show_hidden : showHidden.value, hideInaccessible: userPreferences.value.hide_inaccessible }
+  const visible = viewEntries.value.filter(entry => {
+    if (!isEntryVisible(entry, visibility)) return false
     return !q || entry.name.toLocaleLowerCase().includes(q)
   })
+  return sortEntries(visible, sortField.value, sortDirection.value)
 })
-const orderedVideoThumbnailEntries = computed(() => filteredEntries.value
+const orderedVideoThumbnailEntries = computed(() => viewMode.value !== 'grid' ? [] : filteredEntries.value
   .filter(entry => !entry.is_dir && entry.can_read !== false && fileVisualForPath(entry.path).kind === 'video')
   .map(entry => ({ path: entry.path, version: `${entry.size}:${entry.modified}` })))
 
@@ -396,7 +434,13 @@ async function queuePendingVideoThumbnails() {
   }
 }
 
-const selectedEntries = computed(() => viewEntries.value.filter(entry => selectedPaths.value.has(entry.path)))
+const entryPositions = computed(() => new Map(viewEntries.value.map((entry, index) => [entry.path, index])))
+const displayedPositions = computed(() => new Map(filteredEntries.value.map((entry, index) => [entry.path, index])))
+const selectedEntries = computed(() => [...selectedPaths.value]
+  .map(path => entryPositions.value.get(path))
+  .filter((index): index is number => index !== undefined)
+  .sort((a, b) => a - b)
+  .map(index => viewEntries.value[index]))
 const selectedOne = computed(() => selectedEntries.value.length === 1 ? selectedEntries.value[0] : null)
 const canMutate = computed(() => currentPath.value !== '/' && !viewingSearch.value)
 const canPaste = computed(() => canMutate.value && Boolean(fileClipboard.value?.paths.length))
@@ -449,6 +493,10 @@ const contextItems = computed(() => {
       { label: `Copy${items.length > 1 ? ` ${items.length} items` : ''} to…`, icon: 'pi pi-copy', command: () => openTransfer('copy', items) },
       { label: `Move${items.length > 1 ? ` ${items.length} items` : ''} to…`, icon: 'pi pi-arrow-right', command: () => openTransfer('move', items) },
     )
+    if (workspace.split.value) result.push(
+      { label: 'Copy to other pane', icon: 'pi pi-copy', disabled: !otherPath.value || otherPath.value === '/', command: () => { void transferToOtherPane('copy', items) } },
+      { label: 'Move to other pane', icon: 'pi pi-arrow-right', disabled: !otherPath.value || otherPath.value === '/', command: () => { void transferToOtherPane('move', items) } },
+    )
     if (one) result.push({ label: 'Rename…', icon: 'pi pi-pencil', command: () => openRename(one) })
     result.push({ label: 'Delete', icon: 'pi pi-trash', command: () => deleteEntries(items) })
   }
@@ -485,20 +533,28 @@ function parentPathFor(path: string): string {
 const parentPath = computed(() => parentPathFor(currentPath.value))
 
 onMounted(async () => {
+  workspace.panes.set(props.paneId, { path: currentPath, canHide: canHidePane, focus: () => fileViewHost.value?.focus(), snapshot: directorySnapshot })
   sizeFreshnessTimer = window.setInterval(() => {
-    if (!viewingSearch.value && entries.value.some(entry => entry.is_dir && entry.size_calculated_at && Date.now() - Date.parse(entry.size_calculated_at) >= 5 * 60_000)) void refreshInvalidatedDirectory()
+    if (props.paneVisible && !viewingSearch.value && entries.value.some(entry => entry.is_dir && entry.size_calculated_at && Date.now() - Date.parse(entry.size_calculated_at) >= 5 * 60_000)) void refreshInvalidatedDirectory()
   }, 30_000)
-  await loadRootLayout()
+  const shared = otherPane.value?.snapshot()
+  if (shared) singleRootPath.value = shared.singleRootPath
+  else await loadRootLayout()
   currentPath.value = toInternalPath(readHashPath() ?? currentPath.value)
+  if (!restoredStateMatchesPath && restoredExplorerState.directory === currentPath.value) {
+    replaceSelection(restoredExplorerState.selectedPaths)
+    focusedPath.value = restoredExplorerState.focusedPath
+    detailsPath.value = restoredExplorerState.detailsPath || currentPath.value
+  }
   await nextTick()
   navigationReady = true
-  startRealtime(currentPath.value)
+  if (props.paneVisible) startRealtime(currentPath.value)
   breadcrumbResizeObserver = new ResizeObserver(scrollBreadcrumbToEnd)
   if (breadcrumbScroll.value) breadcrumbResizeObserver.observe(breadcrumbScroll.value)
   window.addEventListener('keydown', onGlobalKeyDown)
   window.addEventListener('popstate', applyHashPath)
   window.addEventListener('hashchange', applyHashPath)
-  const initialFolderLoad = refresh(true)
+  const initialFolderLoad = refresh(true, true)
   await Promise.all([loadPreferences(), loadOperations()])
   restorePasswordPrompt()
   const fallbackPath = singleRootPath.value || '/'
@@ -513,23 +569,43 @@ onMounted(async () => {
 })
 
 watch(currentPath, path => {
+  currentFolderSelected.value = false
   if (!navigationReady) return
+  if (largeDirectoryRefreshTimer !== null) window.clearTimeout(largeDirectoryRefreshTimer)
+  largeDirectoryRefreshTimer = null
+  nextLargeDirectoryRefresh = 0
   closeSearch()
   clearSelection()
   clearFocus(path)
   search.value = ''
-  setRealtimeDirectory(path)
+  if (props.paneVisible) setRealtimeDirectory(path)
   void refresh(true)
 }, { flush: 'post' })
 
 watch(currentPath, () => { void scrollBreadcrumbToEnd() }, { flush: 'post' })
+
+watch(() => props.paneVisible, visible => {
+  if (!navigationReady) return
+  if (visible) { startRealtime(currentPath.value); void refresh(true, true) }
+  else {
+    listingShareable = false
+    stopRealtime(); closeSearch()
+    invalidationRefreshPending = false
+    if (largeDirectoryRefreshTimer !== null) window.clearTimeout(largeDirectoryRefreshTimer)
+    largeDirectoryRefreshTimer = null
+  }
+})
+
+watch(workspace.preferences, preferences => {
+  if (preferences && preferencesLoaded) userPreferences.value = { ...preferences }
+})
 
 watch(() => props.elevated, () => {
   if (!navigationReady) return
   hashFileRequest++
   closeSearch()
   stopRealtime()
-  startRealtime(currentPath.value)
+  if (props.paneVisible) startRealtime(currentPath.value)
   queuedVideoThumbnailVersions.clear()
   thumbnailJobs.value = []
   void refresh(true)
@@ -544,13 +620,19 @@ watch([viewMode, gridSize], () => {
 watch(showHidden, () => { if (preferencesLoaded) void savePreferences() })
 
 watch([selectedPaths, focusedPath, detailsVisible, detailsPath], storeSessionExplorerState, { flush: 'sync' })
+watch([selectedPaths, focusedPath], () => {
+  if (selectedPaths.value.size || focusedPath.value) currentFolderSelected.value = false
+}, { flush: 'sync' })
+watch([workspace.split, viewingSearch], () => { currentFolderSelected.value = false })
 
 onBeforeUnmount(() => {
+  workspace.panes.delete(props.paneId)
   explorerDisposed = true
   if (invalidateTimer !== null) window.clearTimeout(invalidateTimer)
   if (sizeFreshnessTimer !== null) window.clearInterval(sizeFreshnessTimer)
   if (sizeRefreshPoll !== null) window.clearTimeout(sizeRefreshPoll)
   if (terminalRefreshTimer !== null) window.clearTimeout(terminalRefreshTimer)
+  if (largeDirectoryRefreshTimer !== null) window.clearTimeout(largeDirectoryRefreshTimer)
   window.removeEventListener('keydown', onGlobalKeyDown)
   window.removeEventListener('popstate', applyHashPath)
   window.removeEventListener('hashchange', applyHashPath)
@@ -612,7 +694,9 @@ async function scrollBreadcrumbToEnd() {
 
 async function loadPreferences() {
   try {
-    applyPreferences(normalizePreferences(await api.preferences()))
+    const preferences = workspace.preferences.value ?? normalizePreferences(await api.preferences())
+    if (!workspace.preferences.value) workspace.preferences.value = preferences
+    applyPreferences(workspace.preferences.value ?? preferences)
   } catch {
     // Preferences are non-critical; browsing should still work.
   } finally {
@@ -620,16 +704,8 @@ async function loadPreferences() {
   }
 }
 
-let preferenceWrites: Promise<unknown> = Promise.resolve()
-
 function persistPreferences(preferences: UserPreferences) {
-  const snapshot = { ...preferences }
-  const write = preferenceWrites.catch(() => undefined).then(() => {
-    if (explorerDisposed) throw new Error('Explorer is closed')
-    return api.savePreferences(snapshot)
-  })
-  preferenceWrites = write
-  return write
+  return workspace.savePreferences({ ...preferences })
 }
 
 async function savePreferences() {
@@ -745,6 +821,16 @@ async function refreshInvalidatedDirectory() {
   invalidationRefreshRunning = true
   try {
     while (invalidationRefreshPending && !explorerDisposed) {
+      // Leave time for interaction between expensive full-directory rereads.
+      // Explicit Refresh still bypasses this background-only coalescing.
+      const delay = nextLargeDirectoryRefresh - performance.now()
+      if (entries.value.length >= largeDirectoryThreshold && delay > 0) {
+        if (largeDirectoryRefreshTimer === null) largeDirectoryRefreshTimer = window.setTimeout(() => {
+          largeDirectoryRefreshTimer = null
+          void refreshInvalidatedDirectory()
+        }, delay)
+        break
+      }
       invalidationRefreshPending = false
       await refresh(false)
     }
@@ -753,11 +839,21 @@ async function refreshInvalidatedDirectory() {
   }
 }
 
-function refresh(showSpinner: boolean): Promise<boolean> {
+function directorySnapshot() {
+  if (!listingShareable || !props.paneVisible || !watchConnected.value || loading.value || error.value || loadedDirectoryPath !== currentPath.value || loadedDirectoryElevated !== props.elevated || viewingSearch.value || invalidationRefreshPending || invalidationRefreshRunning || invalidateTimer !== null || terminalRefreshTimer !== null || sizeRefreshPoll !== null) return null
+  return { path: currentPath.value, entries: entries.value, singleRootPath: singleRootPath.value }
+}
+
+function refresh(showSpinner: boolean, reuseListing = false): Promise<boolean> {
   if (viewingSearch.value) return Promise.resolve(true)
+  if (showSpinner) {
+    invalidationRefreshPending = false
+    if (largeDirectoryRefreshTimer !== null) window.clearTimeout(largeDirectoryRefreshTimer)
+    largeDirectoryRefreshTimer = null
+  }
   const request = ++refreshRequest
   const requestedPath = currentPath.value
-  const promise = loadDirectory(request, requestedPath, showSpinner)
+  const promise = loadDirectory(request, requestedPath, showSpinner, reuseListing)
   latestDirectoryRefresh = { path: requestedPath, promise }
   return promise
 }
@@ -767,13 +863,14 @@ function waitForLatestDirectoryRefresh(path: string): Promise<boolean> {
   return latestDirectoryRefresh.promise
 }
 
-async function loadDirectory(request: number, requestedPath: string, showSpinner: boolean): Promise<boolean> {
+async function loadDirectory(request: number, requestedPath: string, showSpinner: boolean, reuseListing = false): Promise<boolean> {
   if (sizeRefreshPoll !== null) window.clearTimeout(sizeRefreshPoll)
   sizeRefreshPoll = null
   if (showSpinner) loading.value = true
   error.value = ''
   try {
-    const result = await api.list(requestedPath)
+    const shared = reuseListing ? otherPane.value?.snapshot() : null
+    const result = shared?.path === requestedPath ? { entries: shared.entries, single_root_path: shared.singleRootPath } : await api.list(requestedPath)
     // Callers that select or open an entry must wait until the owning read has
     // applied its listing, even when their own request was superseded.
     if (request !== refreshRequest) return waitForLatestDirectoryRefresh(requestedPath)
@@ -784,13 +881,17 @@ async function loadDirectory(request: number, requestedPath: string, showSpinner
       return true
     }
     entries.value = result.entries
+    loadedDirectoryPath = requestedPath
+    loadedDirectoryElevated = props.elevated
+    listingShareable = props.paneVisible
+    nextLargeDirectoryRefresh = result.entries.length >= largeDirectoryThreshold ? performance.now() + largeDirectoryRefreshInterval : 0
     if (result.entries.some(entry => entry.size_refreshing)) {
       sizeRefreshPoll = window.setTimeout(() => {
         sizeRefreshPoll = null
         if (!explorerDisposed && currentPath.value === requestedPath && !viewingSearch.value) void refreshInvalidatedDirectory()
       }, 500)
     }
-    const existing = new Set(result.entries.map(entry => entry.path))
+    const existing = entryPositions.value
     selectedPaths.value = new Set([...selectedPaths.value].filter(path => existing.has(path)))
     if (focusedPath.value && !existing.has(focusedPath.value)) clearFocus(requestedPath)
     if (detailsVisible.value && detailsPath.value !== requestedPath && !existing.has(detailsPath.value)) detailsPath.value = requestedPath
@@ -820,17 +921,22 @@ function navigateTo(path: string, replaceHistory = false) {
 function navigateHistoryAware(path: string): boolean {
   if (viewingSearch.value) { navigateTo(path); return false }
   if (path === currentPath.value) return false
-  if (goToPathInHistory(path)) return true
+  if (!workspace.split.value && goToPathInHistory(path)) return true
   navigateTo(path)
   return false
 }
 
 function navigateBreadcrumb(path: string) {
   clearParentNavigationQueue()
+  if (workspace.split.value && path === currentPath.value && path !== '/' && !viewingSearch.value) {
+    selectCurrentFolder()
+    return
+  }
   navigateHistoryAware(path)
 }
 
 function showOperationTerminalToast(operation: FileOperation) {
+  if (!isPrimary) return
   if (operation.state === 'completed') {
     if (operation.kind === 'copy' || operation.kind === 'move') return
     toast.add({ severity: 'success', summary: `${operationLabel(operation.kind)} complete`, detail: operation.message || undefined, life: 2500 })
@@ -845,6 +951,7 @@ function onOperationTerminal(operation: FileOperation) {
   } else {
     showOperationTerminalToast(operation)
   }
+  if (!props.paneVisible) return
   const folder = (path: string) => path.slice(0, path.lastIndexOf('/')) || '/'
   const paths = [...(operation.sources ?? []), operation.destination].filter((path): path is string => Boolean(path))
   if (!paths.some(path => path === currentPath.value || folder(path) === currentPath.value)) return
@@ -914,6 +1021,7 @@ function setPreviewVisible(visible: boolean) {
     return
   }
   if (previewVisible.value && readHashFile()) {
+    if (workspace.split.value) { hidePreview(); writePathHash(currentPath.value, true); return }
     window.history.back()
     return
   }
@@ -926,8 +1034,8 @@ function returnPreviewToFolder() {
 }
 
 function handleSelect(entry: FileEntry, event: MouseEvent) {
-  const index = filteredEntries.value.findIndex(item => item.path === entry.path)
-  const anchorIndex = filteredEntries.value.findIndex(item => item.path === anchorPath.value)
+  const index = event.shiftKey ? displayedPositions.value.get(entry.path) ?? -1 : -1
+  const anchorIndex = event.shiftKey ? displayedPositions.value.get(anchorPath.value) ?? -1 : -1
 
   if (event.shiftKey && anchorIndex >= 0 && index >= 0) {
     const [start, end] = anchorIndex <= index ? [anchorIndex, index] : [index, anchorIndex]
@@ -946,9 +1054,9 @@ function handleFocus(entry: FileEntry, event: MouseEvent) {
   const previousFocus = focusedPath.value
   focusedPath.value = entry.path
   if (detailsVisible.value) detailsPath.value = entry.path
-  const index = filteredEntries.value.findIndex(item => item.path === entry.path)
+  const index = event.shiftKey ? displayedPositions.value.get(entry.path) ?? -1 : -1
   const anchor = anchorPath.value || previousFocus || entry.path
-  const anchorIndex = filteredEntries.value.findIndex(item => item.path === anchor)
+  const anchorIndex = event.shiftKey ? displayedPositions.value.get(anchor) ?? -1 : -1
 
   if (event.shiftKey && anchorIndex >= 0 && index >= 0) {
     const [start, end] = anchorIndex <= index ? [anchorIndex, index] : [index, anchorIndex]
@@ -988,6 +1096,7 @@ function onContextMenuHide() {
 }
 
 function clearSelection() {
+  currentFolderSelected.value = false
   clearSelectionState()
 }
 
@@ -995,9 +1104,19 @@ function onFileViewClick(event: MouseEvent) {
   const target = event.target
   if (!(target instanceof Element)) return
   if (target.closest('[data-file-entry], button, input, textarea, select, a')) return
+  if (!target.closest('[data-file-viewport], [data-empty-list]')) return
+  selectCurrentFolder()
+}
+
+function selectCurrentFolder() {
   clearSelection()
   clearFocus()
+  currentFolderSelected.value = workspace.split.value && !viewingSearch.value && currentPath.value !== '/'
   fileViewHost.value?.focus({ preventScroll: true })
+}
+
+function onFileViewPointerDown(event: PointerEvent) {
+  if (event.target instanceof Element && event.target.closest('[data-file-entry]')) currentFolderSelected.value = false
 }
 
 function clearFocus(fallbackPath = currentPath.value) {
@@ -1080,6 +1199,7 @@ function setEditorVisible(visible: boolean) {
     return
   }
   if (editorVisible.value && readHashFile()) {
+    if (workspace.split.value) { editorVisible.value = false; writePathHash(currentPath.value, true); return }
     // The editor already confirmed this close. Unmount before history events
     // arrive so browser navigation does not prompt for the same discard again.
     editorVisible.value = false
@@ -1087,6 +1207,15 @@ function setEditorVisible(visible: boolean) {
     return
   }
   editorVisible.value = false
+}
+
+function canHidePane() {
+  if (editorVisible.value && editorDialog.value && !editorDialog.value.confirmDiscard()) return false
+  if (editorVisible.value) {
+    editorVisible.value = false
+    writePathHash(currentPath.value, true)
+  }
+  return true
 }
 
 function onEditorSaved(path: string) {
@@ -1114,6 +1243,11 @@ function openTransfer(mode: TransferMode, items: FileEntry[] = selectedEntries.v
 
 async function submitTransfer(destination: string) {
   await beginOperation(transferMode.value, transferEntries.value.map(entry => entry.path), destination)
+}
+
+async function transferToOtherPane(mode: TransferMode, items: FileEntry[] = selectedEntries.value) {
+  if (!workspace.split.value || !otherPath.value || otherPath.value === '/' || currentPath.value === '/' || !items.length) return
+  await beginOperation(mode, items.map(entry => entry.path), otherPath.value)
 }
 
 function setFileClipboard(mode: TransferMode, items: FileEntry[] = selectedEntries.value) {
@@ -1292,11 +1426,16 @@ function handleOperationUpdate(operation: FileOperation) {
 }
 
 function restorePasswordPrompt() {
+  if (!isPrimary) return
   const waiting = operations.value.find(operation => operation.kind === 'extract' && operation.phase === 'awaiting_password')
   if (waiting) showPasswordPrompt(waiting)
+  else if (extractPasswordOperationId.value) extractPasswordVisible.value = false
 }
 
+watch(() => operations.value.filter(operation => operation.kind === 'extract' && operation.phase === 'awaiting_password').map(operation => `${operation.id}:${operation.message}`).join('|'), restorePasswordPrompt)
+
 function showPasswordPrompt(operation: FileOperation) {
+  if (!isPrimary) return
   extractPasswordDialogClosed.value = false
   pendingPasswordTerminal.value = null
   extractPasswordOperationId.value = operation.id
@@ -1381,12 +1520,23 @@ async function uploadFileList(files: File[], destination: string) {
 function dropFilesOnFolder(folder: FileEntry, event: DragEvent) {
   if (!canMutate.value) return
   draggingOver.value = false
+  if (workspace.drag.value) { void dropInternal(event, folder.path); return }
   const files = [...(event.dataTransfer?.files ?? [])]
   if (files.length) void uploadFileList(files, folder.path)
 }
 
 function onViewDragOver(event: DragEvent) {
   if (!canMutate.value) return
+  const folder = (event.target as Element).closest<HTMLElement>('[data-drop-directory]')?.dataset.dropDirectory
+  dragDestination.value = folder || currentPath.value
+  if (workspace.drag.value && event.dataTransfer?.types.includes(fileDragType)) {
+    dragAction.value = dropMode(event)
+    const allowed = validDragDestination(dragDestination.value, dragAction.value)
+    draggingOver.value = allowed
+    event.preventDefault()
+    event.dataTransfer.dropEffect = allowed ? dragAction.value : 'none'
+    return
+  }
   const hasFiles = [...(event.dataTransfer?.types ?? [])].includes('Files')
   draggingOver.value = hasFiles
   if (!hasFiles) return
@@ -1398,17 +1548,54 @@ function onViewDragLeave(event: DragEvent) {
   const host = fileViewHost.value
   if (!host) return
   const next = event.relatedTarget as Node | null
-  if (!next || !host.contains(next)) draggingOver.value = false
+  if (!next || !host.contains(next)) {
+    draggingOver.value = false
+    dragDestination.value = ''
+    return
+  }
+  const element = next instanceof Element ? next : next.parentElement
+  dragDestination.value = element?.closest<HTMLElement>('[data-drop-directory]')?.dataset.dropDirectory || currentPath.value
+  if (workspace.drag.value) draggingOver.value = validDragDestination(dragDestination.value, dragAction.value)
 }
 
 function onBackgroundDrop(event: DragEvent) {
   draggingOver.value = false
   if (!canMutate.value) return
+  if (workspace.drag.value) { void dropInternal(event, currentPath.value); return }
   const files = [...(event.dataTransfer?.files ?? [])]
   if (files.length) {
     event.preventDefault()
     void uploadFileList(files, currentPath.value)
   }
+}
+
+function startEntryDrag(entry: FileEntry, event: DragEvent) {
+  if (!workspace.split.value || currentPath.value === '/' || !event.dataTransfer) { event.preventDefault(); return }
+  const items = selectedPaths.value.has(entry.path) ? selectedEntries.value : [entry]
+  if (!selectedPaths.value.has(entry.path)) replaceSelection([entry.path])
+  workspace.drag.value = { token: crypto.randomUUID(), entries: [...items] }
+  event.dataTransfer.setData(fileDragType, workspace.drag.value.token)
+  event.dataTransfer.effectAllowed = 'copyMove'
+}
+
+function endEntryDrag() { workspace.drag.value = null; draggingOver.value = false }
+
+function validDragDestination(destination: string, mode: TransferMode) {
+  return !!workspace.drag.value?.entries.length && workspace.drag.value.entries.every(entry =>
+    destination !== entry.path && !(entry.is_dir && destination.startsWith(`${entry.path}/`)) &&
+    !(mode === 'move' && destination === (entry.path.slice(0, entry.path.lastIndexOf('/')) || '/')))
+}
+
+async function dropInternal(event: DragEvent, destination: string) {
+  event.preventDefault()
+  event.stopPropagation()
+  draggingOver.value = false
+  const drag = workspace.drag.value
+  const mode = dropMode(event)
+  if (!drag || event.dataTransfer?.getData(fileDragType) !== drag.token || !validDragDestination(destination, mode)) return
+  const paths = drag.entries.map(entry => entry.path)
+  workspace.drag.value = null
+  await beginOperation(mode, paths, destination)
 }
 
 function goUp(input: 'mouse' | 'touch' = 'mouse') {
@@ -1483,6 +1670,7 @@ function handleDetailsShortcut(event: KeyboardEvent): boolean {
 }
 
 function onGlobalKeyDown(event: KeyboardEvent) {
+  if (!isActive.value || !props.paneVisible) return
   if (handleDetailsShortcut(event)) return
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
     event.preventDefault()
@@ -1502,6 +1690,7 @@ function showThemeMenu(event: Event) {
 }
 
 function onKeyDown(event: KeyboardEvent) {
+  if (!isActive.value) return
   if (handleDetailsShortcut(event)) {
     event.stopPropagation()
     return
@@ -1552,7 +1741,7 @@ function onKeyDown(event: KeyboardEvent) {
   const arrows = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']
   if (!arrows.includes(event.key) || filteredEntries.value.length === 0) return
   event.preventDefault()
-  const current = filteredEntries.value.findIndex(entry => entry.path === focusedPath.value)
+  const current = displayedPositions.value.get(focusedPath.value) ?? -1
   const columns = viewMode.value === 'grid' ? Math.max(1, gridColumns.value) : 1
   let next = current < 0 ? 0 : current
   if (current >= 0) {
@@ -1570,7 +1759,7 @@ function onKeyDown(event: KeyboardEvent) {
 }
 
 function scrollFocusedIntoView() {
-  const index = filteredEntries.value.findIndex(entry => entry.path === focusedPath.value)
+  const index = displayedPositions.value.get(focusedPath.value) ?? -1
   if (index >= 0) scrollIndexIntoView(index)
 }
 
@@ -1614,21 +1803,30 @@ function operationLabel(value: string) {
 </script>
 
 <template>
-  <section class="relative flex h-full min-h-0 flex-col bg-zinc-950">
-    <header class="border-b border-zinc-800 bg-zinc-900/90 px-3 py-2 backdrop-blur">
+  <section class="webfile-explorer relative flex h-full min-h-0 flex-col bg-zinc-950" :data-pane="paneId" :data-pane-position="panePosition" :data-active="isActive" :data-current-folder-selected="currentFolderSelected && workspace.split.value ? 'true' : undefined" :aria-label="`${panePosition === 'left' ? 'Left' : 'Right'} pane`" @pointerdown.capture="activatePane" @focusin="activatePane" @dragend="endEntryDrag">
+    <Teleport to="#webfile-workspace-toolbar" defer>
+    <header v-if="isActive" class="border-b border-zinc-800 bg-zinc-900/90 px-3 py-2 backdrop-blur">
       <div class="flex flex-wrap items-center gap-1">
         <div class="flex items-center gap-1">
           <Button v-tooltip.bottom="'New folder'" icon="pi pi-folder-plus" size="small" severity="secondary" text :disabled="!canMutate" aria-label="New folder" @click="openNewFolder" />
           <Button v-tooltip.bottom="'New file'" icon="pi pi-file-plus" size="small" severity="secondary" text :disabled="!canMutate" aria-label="New file" @click="newDocumentVisible = true" />
           <Button v-tooltip.bottom="'Upload'" icon="pi pi-upload" size="small" severity="secondary" text :disabled="!canMutate" aria-label="Upload" @click="chooseUpload" />
         </div>
-        <span class="webfile-divider mx-1 h-6 w-px" />
+        <span class="webfile-divider mx-1 hidden h-6 w-px sm:block" />
         <div class="flex items-center gap-1">
           <Button v-tooltip.bottom="detailsVisible ? 'Close details' : 'Open details'" icon="pi pi-info-circle" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': detailsVisible }" :aria-label="detailsVisible ? 'Close details' : 'Open details'" :aria-pressed="detailsVisible" @click="toggleDetailsPanel" />
           <Button v-if="selectedEntries.length || fileClipboard" v-tooltip.bottom="'Actions'" icon="pi pi-ellipsis-v" size="small" severity="secondary" text aria-label="Actions" @click="showActionsMenu" />
         </div>
 
         <span class="min-w-2 flex-1" />
+        <Button v-tooltip.bottom="workspace.split.value ? 'Close split view' : 'Split view'" size="small" severity="secondary" text :aria-label="workspace.split.value ? 'Close split view' : 'Split view'" :aria-pressed="workspace.split.value" @click="workspace.toggleSplit()">
+          <template #icon>
+            <svg class="p-button-icon h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M12 4v16" />
+            </svg>
+          </template>
+        </Button>
         <div class="flex items-center gap-1">
           <Button
             v-tooltip.bottom="operationsVisible ? 'Close tasks' : 'Open tasks'"
@@ -1645,7 +1843,7 @@ function operationLabel(value: string) {
           />
           <Button v-tooltip.bottom="'Settings'" icon="pi pi-cog" size="small" severity="secondary" text aria-label="Settings" @click="settingsVisible = true" />
         </div>
-        <span class="webfile-divider mx-1 h-6 w-px" />
+        <span class="webfile-divider mx-1 hidden h-6 w-px sm:block" />
         <Button v-tooltip.bottom="`Theme: ${themeMode}`" :icon="themeMode === 'system' ? 'pi pi-palette' : themeMode === 'dark' ? 'pi pi-moon' : 'pi pi-sun'" size="small" severity="secondary" text aria-label="Choose theme" @click="showThemeMenu" />
         <Menu ref="themeMenu" popup :model="themeItems">
           <template #item="{ item, props }">
@@ -1655,7 +1853,7 @@ function operationLabel(value: string) {
             </a>
           </template>
         </Menu>
-        <span v-if="props.username || props.showLogout" class="webfile-divider mx-1 h-6 w-px" />
+        <span v-if="props.username || props.showLogout" class="webfile-divider mx-1 hidden h-6 w-px sm:block" />
         <Button
           v-if="props.elevationAvailable && !props.elevated"
           v-tooltip.bottom="'Elevate access'"
@@ -1686,11 +1884,13 @@ function operationLabel(value: string) {
       </div>
     </header>
 
+    </Teleport>
+
     <SearchDialog v-model:visible="recursiveSearchVisible" :path="currentPath" :show-hidden="showHidden" :initial="searchRequest" @search="startSearch" />
     <div v-if="error" class="webfile-alert-error border-b px-4 py-3 text-sm">{{ error }}</div>
 
-    <div class="flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950 px-3 py-2">
-      <nav ref="breadcrumbScroll" class="min-w-0 flex-1 overflow-x-auto" aria-label="Breadcrumb" data-breadcrumb-scroll :data-single-root="singleRootPath ? 'true' : 'false'">
+    <div class="webfile-pane-navigation flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800 bg-zinc-950 px-3 py-2">
+      <nav ref="breadcrumbScroll" class="min-w-0 flex-1 basis-full overflow-x-auto" aria-label="Breadcrumb" data-breadcrumb-scroll :data-single-root="singleRootPath ? 'true' : 'false'">
         <div class="flex min-w-max items-center gap-1 text-sm">
           <template v-for="(crumb, index) in breadcrumbs" :key="crumb.path">
             <i v-if="index" class="pi pi-angle-right text-xs text-zinc-600" />
@@ -1700,12 +1900,8 @@ function operationLabel(value: string) {
           </template>
         </div>
       </nav>
+      <div class="webfile-pane-toolbar flex w-full min-w-0 items-center gap-2">
       <div class="flex shrink-0 items-center gap-1 text-xs text-zinc-400" data-selection-toolbar>
-        <template v-if="selectionControlsVisible || selectedEntries.length">
-          <span class="ml-1 min-w-[4.5rem] text-right">{{ selectedEntries.length }} selected</span>
-          <Button v-tooltip.bottom="'Select all'" icon="pi pi-list-check" size="small" severity="secondary" text rounded aria-label="Select all" :disabled="filteredEntries.length === 0 || selectedEntries.length === filteredEntries.length" @click="selectAll" />
-          <Button v-tooltip.bottom="'Clear selection'" icon="pi pi-times" size="small" severity="secondary" text rounded aria-label="Clear selection" :disabled="selectedEntries.length === 0" @click="clearSelection" />
-        </template>
         <Button
           v-tooltip.bottom="selectionControlsVisible ? 'Hide selection controls' : 'Show selection controls'"
           icon="pi pi-check-square"
@@ -1718,20 +1914,25 @@ function operationLabel(value: string) {
           :aria-pressed="selectionControlsVisible"
           @click="selectionControlsVisible = !selectionControlsVisible"
         />
+        <template v-if="selectionControlsVisible || selectedEntries.length">
+          <span class="ml-1 whitespace-nowrap tabular-nums" :aria-label="`${selectedEntries.length} selected`">{{ selectedEntries.length }}<span class="webfile-selection-count-label"> selected</span></span>
+          <Button v-tooltip.bottom="'Select all'" class="webfile-pane-secondary" icon="pi pi-list-check" size="small" severity="secondary" text rounded aria-label="Select all" :disabled="filteredEntries.length === 0 || selectedEntries.length === filteredEntries.length" @click="selectAll" />
+          <Button v-tooltip.bottom="'Clear selection'" class="webfile-pane-secondary" icon="pi pi-times" size="small" severity="secondary" text rounded aria-label="Clear selection" :disabled="selectedEntries.length === 0" @click="clearSelection" />
+        </template>
       </div>
-      <span class="h-6 w-px bg-zinc-800" />
+      <div class="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto" data-pane-actions>
       <Button v-tooltip.bottom="'Refresh'" icon="pi pi-refresh" size="small" severity="secondary" text aria-label="Refresh" @click="refreshView" />
-      <span class="h-6 w-px bg-zinc-800" />
+      <span class="webfile-pane-secondary h-6 w-px shrink-0 bg-zinc-800" />
+      <div class="webfile-pane-secondary flex shrink-0 items-center gap-2">
       <Button v-tooltip.bottom="'Sort files'" icon="pi pi-sort-alt" size="small" severity="secondary" text aria-label="Sort files" @click="sortMenu.toggle($event)" />
       <Menu ref="sortMenu" :model="sortItems" popup />
       <Button v-tooltip.bottom="'Search beneath this folder'" icon="pi pi-search-plus" size="small" severity="secondary" text aria-label="Search beneath this folder" :disabled="currentPath === '/'" @click="recursiveSearchVisible = true" />
-      <div v-if="filterVisible" class="w-64">
-        <InputText ref="filterInput" v-model="search" size="small" fluid :placeholder="viewingSearch ? 'Filter search results' : 'Filter this folder'" :aria-label="viewingSearch ? 'Filter search results' : 'Filter this folder'" @keydown.escape="closeFilter" />
-      </div>
       <Button v-tooltip.bottom="filterVisible ? 'Close filter' : 'Filter (Ctrl+F)'" icon="pi pi-search" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': filterVisible }" :aria-label="filterVisible ? 'Close filter' : 'Open filter'" :aria-pressed="filterVisible" @click="toggleFilter" />
-      <span class="h-6 w-px bg-zinc-800" />
-      <div class="flex items-center gap-1">
-        <Button v-if="!viewingSearch" v-tooltip.bottom="showHidden ? 'Hide dot files' : 'Show dot files'" icon="pi pi-eye" size="small" severity="secondary" text class="webfile-toggle" :class="{ 'webfile-toggle-active': showHidden }" :aria-label="showHidden ? 'Hide dot files' : 'Show dot files'" :aria-pressed="showHidden" @click="showHidden = !showHidden" />
+      </div>
+      <div class="flex shrink-0 items-center gap-1" data-pane-view-controls>
+        <Button v-if="!viewingSearch" v-tooltip.bottom="showHidden ? 'Hide dot files' : 'Show dot files'" icon="pi pi-eye" size="small" severity="secondary" text class="webfile-toggle webfile-pane-secondary" :class="{ 'webfile-toggle-active': showHidden }" :aria-label="showHidden ? 'Hide dot files' : 'Show dot files'" :aria-pressed="showHidden" @click="showHidden = !showHidden" />
+        <Button v-tooltip.bottom="'More folder actions'" class="webfile-pane-overflow" icon="pi pi-ellipsis-v" size="small" severity="secondary" text aria-label="More folder actions" @click="paneOverflowMenu.toggle($event)" />
+        <Menu ref="paneOverflowMenu" :model="paneOverflowItems" class="max-h-[70vh] overflow-y-auto" popup />
         <span class="inline-flex overflow-hidden rounded-md border border-zinc-700">
           <button v-tooltip.bottom="'List view'" class="px-2.5 py-1.5" :class="viewMode === 'list' ? 'webfile-view-active' : 'text-zinc-400'" aria-label="List view" @click="viewMode = 'list'"><i class="pi pi-list" /></button>
           <SplitButton
@@ -1748,8 +1949,13 @@ function operationLabel(value: string) {
           />
         </span>
       </div>
+      </div>
     </div>
 
+      <div v-if="filterVisible" class="w-full">
+        <InputText ref="filterInput" v-model="search" size="small" fluid :placeholder="viewingSearch ? 'Filter search results' : 'Filter this folder'" :aria-label="viewingSearch ? 'Filter search results' : 'Filter this folder'" @keydown.escape="closeFilter" />
+      </div>
+    </div>
     <section v-if="searchRequest" class="shrink-0 border-b border-zinc-800 px-4 py-3" aria-label="Search results">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="min-w-0"><h2 class="break-words text-sm font-semibold"><i class="pi pi-search mr-2" />Search results for “{{ searchRequest.query }}”</h2><p class="mt-1 break-all text-xs text-zinc-500">Beneath {{ searchRequest.path }} · {{ searchRequest.kind === 'all' ? 'Files and folders' : searchRequest.kind }}<span v-if="searchRequest.wildcard"> · Wildcards</span><span v-if="searchRequest.case_sensitive"> · Match case</span><span v-if="searchRequest.show_hidden"> · Including dotfiles</span></p></div>
@@ -1765,16 +1971,17 @@ function operationLabel(value: string) {
         tabindex="0"
         @keydown="onKeyDown"
         @click="onFileViewClick"
+        @pointerdown.capture="onFileViewPointerDown"
         @dragover="onViewDragOver"
         @dragleave="onViewDragLeave"
         @drop="onBackgroundDrop"
       >
-        <div v-if="draggingOver" class="webfile-drop-overlay pointer-events-none absolute inset-3 z-30 grid place-items-center rounded-xl border-2 border-dashed text-sm font-medium">
-          Drop files to upload
+        <div v-if="draggingOver && !folderDropTarget" data-pane-drop-target class="webfile-drop-overlay pointer-events-none absolute inset-3 z-30 grid place-items-center rounded-xl border-2 border-dashed text-sm font-medium">
+          {{ dragLabel }}
         </div>
 
         <div v-if="loading" class="grid h-full place-items-center"><ProgressSpinner class="h-10 w-10" /></div>
-        <div v-else-if="(search || viewingSearch) && filteredEntries.length === 0" class="grid h-full place-items-center p-8 text-center text-zinc-500">
+        <div v-else-if="(search || viewingSearch) && filteredEntries.length === 0" data-empty-list class="grid h-full place-items-center p-8 text-center text-zinc-500">
           <div><i class="pi pi-search mb-3 text-4xl" /><p>{{ searchBusy ? 'Searching for files…' : 'No matching files' }}</p></div>
         </div>
         <div v-else class="flex h-full min-h-0 flex-col">
@@ -1792,6 +1999,10 @@ function operationLabel(value: string) {
             :selection-controls-visible="selectionControlsVisible"
             :parent-path="viewingSearch ? '' : parentPath"
             :show-location="viewingSearch"
+            :compact="workspace.split.value"
+            :can-drag="workspace.split.value && currentPath !== '/'"
+            :drop-target-path="folderDropTarget"
+            @dragentry="startEntryDrag"
             @select="handleSelect"
             @focus="handleFocus"
             @activate="openEntry"
@@ -1812,6 +2023,9 @@ function operationLabel(value: string) {
             :thumbnail-pending-paths="[...pendingVideoThumbnailPaths]"
             :parent-path="viewingSearch ? '' : parentPath"
             :show-location="viewingSearch"
+            :can-drag="workspace.split.value && currentPath !== '/'"
+            :drop-target-path="folderDropTarget"
+            @dragentry="startEntryDrag"
             @select="handleSelect"
             @focus="handleFocus"
             @activate="openEntry"
@@ -1822,7 +2036,7 @@ function operationLabel(value: string) {
           />
         </div>
       </div>
-      <DetailsDialog v-model:visible="detailsVisible" :path="detailsPath" @error="showError($event, 'Could not load details')" @size-ready="applyCachedFolderSize" />
+      <DetailsDialog :visible="detailsVisible && paneVisible" @update:visible="detailsVisible = $event" :path="detailsPath" @error="showError($event, 'Could not load details')" @size-ready="applyCachedFolderSize" />
     </div>
 
     <ContextMenu ref="contextMenu" :model="contextItems" :base-z-index="1100" @hide="onContextMenuHide" />
@@ -1837,12 +2051,12 @@ function operationLabel(value: string) {
       :submit-label="nameDialogMode === 'folder' ? 'Create' : 'Rename'"
       @submit="onNameDialogSubmit"
     />
-    <ConflictDialog v-model:visible="conflictVisible" :operation="conflictOperation" :busy="conflictBusy" :error="conflictError" @submit="resolveConflict" @cancel="cancelConflictTask" />
-    <SettingsDialog v-model:visible="settingsVisible" :preferences="currentPreferences()" :saving="settingsSaving" @save="saveSettings" />
-    <EditorDialog v-if="editorVisible" ref="editorDialog" :visible="editorVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" :preferences="userPreferences" @update:visible="setEditorVisible" @saved="onEditorSaved" />
-    <FilePreview :visible="previewVisible" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="filteredEntries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
+    <ConflictDialog v-if="isPrimary" v-model:visible="conflictVisible" :operation="conflictOperation" :busy="conflictBusy" :error="conflictError" @submit="resolveConflict" @cancel="cancelConflictTask" />
+    <SettingsDialog v-if="isPrimary" v-model:visible="settingsVisible" :preferences="currentPreferences()" :saving="settingsSaving" @save="saveSettings" />
+    <EditorDialog v-if="editorVisible && paneVisible" ref="editorDialog" :visible="editorVisible" :active="isActive && paneVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" :preferences="userPreferences" @update:visible="setEditorVisible" @saved="onEditorSaved" />
+    <FilePreview :visible="previewVisible && paneVisible" :active="isActive" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="filteredEntries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
     <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTargets.length === 1 ? extractTargets[0].name : `${extractTargets.length} archives`" :destination="extractDestination" :busy="extractBusy" :existing-files="userPreferences.extract_existing_files" @extract="prepareExtraction" />
-    <ArchivePasswordDialog v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="extractBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @cancel="cancelPasswordPrompt" @after-hide="onArchivePasswordAfterHide" />
+    <ArchivePasswordDialog v-if="isPrimary" v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="extractBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @cancel="cancelPasswordPrompt" @after-hide="onArchivePasswordAfterHide" />
     <DestinationDialog
       v-model:visible="destinationVisible"
       :mode="transferMode"
@@ -1852,6 +2066,6 @@ function operationLabel(value: string) {
       :hide-inaccessible="userPreferences.hide_inaccessible"
       @submit="submitTransfer"
     />
-    <OperationsPanel v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @cancel="requestOperationCancellation" @resolve="openConflict" @reorder="reorderOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" @download="downloadOperation" />
+    <OperationsPanel v-if="isPrimary" v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @cancel="requestOperationCancellation" @resolve="openConflict" @reorder="reorderOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" @download="downloadOperation" />
   </section>
 </template>

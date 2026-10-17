@@ -1,6 +1,23 @@
 @import "tailwindcss";
 @import "primeicons/primeicons.css";
 
+.webfile-explorer { container-type: inline-size; }
+.webfile-pane-overflow { display: none !important; }
+.webfile-explorer[data-current-folder-selected="true"] [data-file-viewport],
+.webfile-explorer[data-current-folder-selected="true"] [data-empty-list] {
+  box-shadow: inset 0 0 0 1px var(--webfile-processing-border);
+}
+@container (max-width: 600px) {
+  .webfile-pane-navigation { flex-wrap: wrap; }
+  .webfile-pane-navigation > nav { flex-basis: 100%; }
+  .webfile-pane-toolbar { width: 100%; }
+  .webfile-pane-secondary { display: none !important; }
+  .webfile-pane-overflow { display: inline-flex !important; }
+}
+@container (max-width: 400px) {
+  .webfile-selection-count-label { display: none; }
+}
+
 html,
 body,
 #app {
@@ -252,6 +269,12 @@ body {
   border-color: var(--webfile-processing-border) !important;
   background: var(--webfile-drop-bg) !important;
   color: var(--webfile-info-text) !important;
+}
+
+.webfile-drop-target {
+  outline: 2px solid var(--webfile-processing-border) !important;
+  outline-offset: -2px;
+  background: var(--webfile-drop-bg) !important;
 }
 
 .webfile-gallery-footer {

@@ -5,7 +5,7 @@ import ConfirmDialog from 'primevue/confirmdialog'
 import ProgressSpinner from 'primevue/progressspinner'
 import Toast from 'primevue/toast'
 import { useToast } from 'primevue/usetoast'
-import FileExplorer from '@/components/FileExplorer.vue'
+import ExplorerWorkspace from '@/components/ExplorerWorkspace.vue'
 import LoginView from '@/components/LoginView.vue'
 import ElevationDialog from '@/components/ElevationDialog.vue'
 import { api, ApiError, type SessionStatus } from '@/api/client'
@@ -160,7 +160,7 @@ function requestElevation() {
       :error="loginError"
       @login="login"
     />
-    <FileExplorer
+    <ExplorerWorkspace
       v-else
       :key="`${session.mode}:${session.user?.uid}:${session.user?.username}`"
       :username="session.user?.username ?? ''"

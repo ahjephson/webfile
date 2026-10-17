@@ -17,4 +17,10 @@ test('browser traffic remains inside the configured application path', async ({ 
   await expect.poll(() => requests).toContain(`${prefix}/api/fs/dir`)
   await expect.poll(() => requests.some(path => path.startsWith(`${prefix}/assets/`))).toBe(true)
   await expect.poll(() => websocketPath).toBe(`${prefix}/api/fs/ws`)
+
+  await page.getByRole('button', { name: 'Split view', exact: true }).click()
+  await expect(page.locator('[data-pane="left"] nav[aria-label="Breadcrumb"]')).toBeVisible()
+  await expect(page.locator('[data-pane="right"] nav[aria-label="Breadcrumb"]')).toBeVisible()
+  expect(new URL(page.url()).pathname).toBe(`${prefix}/`)
+  await expect.poll(() => requests.filter(path => path.includes('/api/')).every(path => path.startsWith(`${prefix}/api/`))).toBe(true)
 })

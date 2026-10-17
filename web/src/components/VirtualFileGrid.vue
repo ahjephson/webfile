@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { FileEntry } from '@/types/files'
 import FileVisual from '@/components/FileVisual.vue'
 import LevelUpIcon from '@/components/LevelUpIcon.vue'
+import { acceptsFileDrop } from '@/composables/useExplorerWorkspace'
 
 const props = defineProps<{
   entries: FileEntry[]
@@ -14,6 +15,8 @@ const props = defineProps<{
   thumbnailPendingPaths: string[]
   parentPath?: string
   showLocation?: boolean
+  canDrag?: boolean
+  dropTargetPath?: string
 }>()
 
 const emit = defineEmits<{
@@ -24,6 +27,7 @@ const emit = defineEmits<{
   dropfiles: [entry: FileEntry, event: DragEvent]
   'columns-change': [columns: number]
   parent: [input: 'mouse' | 'touch']
+  dragentry: [entry: FileEntry, event: DragEvent]
 }>()
 
 const viewport = ref<HTMLElement | null>(null)
@@ -100,14 +104,14 @@ function scrollToIndexAtTop(index: number) {
 }
 
 function onDropFolder(entry: FileEntry, event: DragEvent) {
-  if (!entry.is_dir || ![...(event.dataTransfer?.types ?? [])].includes('Files')) return
+  if (!entry.is_dir || !acceptsFileDrop(event)) return
   event.preventDefault()
   event.stopPropagation()
   emit('dropfiles', entry, event)
 }
 
 function onDragOverFolder(entry: FileEntry, event: DragEvent) {
-  if (entry.is_dir && [...(event.dataTransfer?.types ?? [])].includes('Files')) event.preventDefault()
+  if (entry.is_dir && acceptsFileDrop(event)) event.preventDefault()
 }
 
 function onEntryPointerDown(event: PointerEvent) {
@@ -211,6 +215,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: columns })
             focusedPath === cell.entry.path && selected.has(cell.entry.path) ? 'webfile-focus-tint' : selected.has(cell.entry.path) ? 'webfile-selection-tint' : '',
             selected.has(cell.entry.path) || focusedPath === cell.entry.path ? 'outline outline-1 outline-sky-500/70' : '',
             cut.has(cell.entry.path) ? 'opacity-50' : '',
+            dropTargetPath === cell.entry.path ? 'webfile-drop-target' : '',
           ]"
           :data-cut="cut.has(cell.entry.path) ? 'true' : undefined"
           data-file-entry
@@ -219,6 +224,10 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: columns })
           @pointerdown="onEntryPointerDown($event)"
           @contextmenu="onContextMenu(cell.entry, $event)"
           @dragover="onDragOverFolder(cell.entry, $event)"
+          :draggable="canDrag"
+          :data-drop-directory="cell.entry.is_dir ? cell.entry.path : undefined"
+          :data-drop-target="dropTargetPath === cell.entry.path ? 'true' : undefined"
+          @dragstart="emit('dragentry', cell.entry, $event)"
           @drop="onDropFolder(cell.entry, $event)"
         >
           <button

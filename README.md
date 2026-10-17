@@ -24,10 +24,14 @@ and persistent application state.
   and rejected when accessed directly. Descendants of an excluded directory
   are excluded too; glob patterns are not supported.
 - List/grid views are virtualised for very large individual directories.
-- One inotify watch for the directory each browser connection is currently
+- Listings with at least 10,000 entries coalesce background invalidations until
+  five seconds after the previous listing finishes. Explicit Refresh remains
+  immediate. Listings still fetch the complete directory; virtualisation limits
+  rendered rows, not response size.
+- One inotify watch for the directory each visible browsing pane is currently
   viewing. inotify only invalidates the view; the browser then rereads the
   filesystem, which remains authoritative.
-- One WebSocket per browser session carries directory invalidations and
+- One WebSocket per visible pane carries directory invalidations and
   operation progress/cancellation.
 
 ### Linux identity and security
@@ -55,6 +59,7 @@ and persistent application state.
 ### File manager
 
 - Browse, filter and navigate directories.
+- Optional split-pane browsing provides independent navigation, selection, filtering and view controls, a resizable divider, and a shared toolbar and task list. Copy/move actions and a shared clipboard transfer items between panes. Dragging moves by default; Ctrl-drag copies and Shift-drag moves, with the operation determined at drop time. Narrow screens stack the panes vertically. Pane locations, selection, layout and divider position are retained for the browser tab; closing split view keeps the active pane. Cross-window dragging remains a planned feature.
 - Preview audio using the browser's native player, with playback, seeking and volume controls and no autoplay. Common audio formats include MP3, WAV, FLAC, AAC, M4A, Ogg and Opus; decoding support depends on the browser. Audio streams through the existing inline download endpoint with byte-range support.
 - Sort by name, modified time, size or type in either direction, with folders
   first and the choice saved per user. Sorting uses the loaded listing; it does

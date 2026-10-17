@@ -5,8 +5,19 @@ export type SortDirection = 'asc' | 'desc'
 
 export function sortEntries(entries: readonly FileEntry[], field: SortField, direction: SortDirection): FileEntry[] {
   const sign = direction === 'desc' ? -1 : 1
+  // The backend supplies host-collated name order. Preserve that ordering
+  // without decorating and comparison-sorting every entry again.
+  if (field === 'name') {
+    const folders: FileEntry[] = [], files: FileEntry[] = []
+    for (const entry of entries) (entry.is_dir ? folders : files).push(entry)
+    if (direction === 'desc') { folders.reverse(); files.reverse() }
+    return folders.concat(files)
+  }
   const type = (entry: FileEntry) => entry.name.includes('.') ? entry.name.split('.').pop()!.toLocaleLowerCase() : ''
-  return entries.map((entry, index) => ({ entry, index })).sort((a, b) => {
+  return entries.map((entry, index) => ({ entry, index,
+    modified: field === 'modified' ? Date.parse(entry.modified) : 0,
+    type: field === 'type' ? type(entry) : '',
+  })).sort((a, b) => {
     if (a.entry.is_dir !== b.entry.is_dir) return a.entry.is_dir ? -1 : 1
     if (field === 'size') {
       const unknownA = a.entry.is_dir && a.entry.size_status !== 'ready'
@@ -15,13 +26,13 @@ export function sortEntries(entries: readonly FileEntry[], field: SortField, dir
       if (!unknownA && a.entry.size !== b.entry.size) return (a.entry.size - b.entry.size) * sign
     }
     if (field === 'modified') {
-      const difference = Date.parse(a.entry.modified) - Date.parse(b.entry.modified)
+      const difference = a.modified - b.modified
       if (Number.isFinite(difference) && difference !== 0) return difference * sign
     }
     if (field === 'type') {
-      const difference = type(a.entry).localeCompare(type(b.entry))
+      const difference = a.type.localeCompare(b.type)
       if (difference !== 0) return difference * sign
     }
-    return (a.index - b.index) * (field === 'name' ? sign : 1)
+    return a.index - b.index
   }).map(value => value.entry)
 }

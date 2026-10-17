@@ -20,16 +20,19 @@ type WebFileHistoryState = {
 
 const maxFolderTrailEntries = 128
 
-export function useExplorerNavigation(username: string) {
-  const currentPathStorageKey = `webfile-current-path:${username}`
-  const explorerStateStorageKey = `webfile-explorer-state:${username}`
+export function useExplorerNavigation(username: string, pane: 'left' | 'right' = 'left') {
+  const suffix = pane === 'right' ? ':right' : ''
+  const pathParameter = pane === 'right' ? 'rightPath' : 'path'
+  const fileParameter = pane === 'right' ? 'rightFile' : 'file'
+  const currentPathStorageKey = `webfile-current-path:${username}${suffix}`
+  const explorerStateStorageKey = `webfile-explorer-state:${username}${suffix}`
 
-  function readSessionPath(): string {
+  function readSessionPath(fallback = '/'): string {
     try {
       const stored = window.sessionStorage.getItem(currentPathStorageKey)
-      return stored?.startsWith('/') ? stored : '/'
+      return stored?.startsWith('/') ? stored : fallback
     } catch {
-      return '/'
+      return fallback
     }
   }
 
@@ -52,27 +55,31 @@ export function useExplorerNavigation(username: string) {
   }
 
   function readHashPath(): string | null {
-    const value = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('path')
+    const value = new URLSearchParams(window.location.hash.replace(/^#/, '')).get(pathParameter)
     return value?.startsWith('/') ? value : null
   }
 
   function readHashFile(): string | null {
     const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
-    const value = params.get('file')
+    const value = params.get(fileParameter)
     if (!value) return null
     if (value.startsWith('/')) return value
     if (value.includes('/')) return null
-    const directory = params.get('path')
+    const directory = params.get(pathParameter)
     if (!directory?.startsWith('/')) return null
     return `${directory.replace(/\/$/, '')}/${value}`
   }
 
   function writeHash(path: string, replace = false, file: string | null = null, visiblePath = path) {
     const fileName = file?.split('/').at(-1) ?? ''
-    const filePart = fileName ? `&file=${encodeURIComponent(fileName)}` : ''
-    const url = `${window.location.pathname}${window.location.search}#path=${encodeURIComponent(visiblePath)}${filePart}`
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+    params.set(pathParameter, visiblePath)
+    if (fileName) params.set(fileParameter, fileName)
+    else params.delete(fileParameter)
+    const url = `${window.location.pathname}${window.location.search}#${params}`
     const current = readWebFileHistoryState()
-    const position = replace ? (current?.webfilePosition ?? 0) : (current?.webfilePosition ?? 0) + 1
+    const previousPosition = Number.isInteger(window.history.state?.webfilePosition) ? window.history.state.webfilePosition : 0
+    const position = replace ? previousPosition : previousPosition + 1
     let folderTrail = current?.webfileFolderTrail ? [...current.webfileFolderTrail] : []
     if (!fileName) {
       folderTrail = folderTrail.filter(entry => entry.position !== position)
@@ -85,7 +92,9 @@ export function useExplorerNavigation(username: string) {
       webfilePosition: position,
       webfileFolderTrail: folderTrail,
     }
-    window.history[replace ? 'replaceState' : 'pushState'](state, '', url)
+    const sharedState = { ...window.history.state, webfilePosition: position }
+    const nextState = pane === 'right' ? { ...sharedState, webfileRightHistory: state } : { ...sharedState, ...state }
+    window.history[replace ? 'replaceState' : 'pushState'](nextState, '', url)
   }
 
   function goToPathInHistory(path: string): boolean {
@@ -100,8 +109,9 @@ export function useExplorerNavigation(username: string) {
   }
 
   function readWebFileHistoryState(): WebFileHistoryState | null {
-    const value = window.history.state as Partial<WebFileHistoryState> | null
-    const position = value?.webfilePosition
+    const shared = window.history.state
+    const value = (pane === 'right' ? shared?.webfileRightHistory : shared) as Partial<WebFileHistoryState> | null
+    const position = shared?.webfilePosition
     if (!value || typeof position !== 'number' || !Number.isInteger(position) || !Array.isArray(value.webfileFolderTrail)) return null
     const folderTrail = value.webfileFolderTrail.filter((entry): entry is FolderHistoryEntry => (
       typeof entry?.path === 'string' && entry.path.startsWith('/') && Number.isInteger(entry.position)

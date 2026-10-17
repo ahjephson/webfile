@@ -12,6 +12,7 @@ import type { UserPreferences } from '@/preferences'
 
 const props = defineProps<{
   visible: boolean
+  active?: boolean
   path: string
   isNew: boolean
   theme: 'light' | 'dark'
@@ -76,6 +77,7 @@ function syncFullscreenState() {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  if (props.active === false) return
   const saveShortcut = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's'
   if (saveShortcut) {
     event.preventDefault()

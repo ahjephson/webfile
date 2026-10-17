@@ -7,6 +7,7 @@ import type { FileEntry } from '@/types/files'
 import { previewKindForContentType, previewKindForPath } from '@/utils/preview'
 
 const props = defineProps<{
+  active?: boolean
   path: string
   folderPath: string
   entries: FileEntry[]
@@ -727,6 +728,7 @@ function refitAfterLayout() {
 }
 
 function onKeyDown(event: KeyboardEvent) {
+  if (props.active === false) return
   if (event.key === 'Escape' && immersive.value) void toggleFullscreen()
   else if (event.key === 'Escape') emit('back')
   else if (event.key === 'ArrowLeft') animateNavigate(-1)

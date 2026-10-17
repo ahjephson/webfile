@@ -4,6 +4,7 @@ import type { FileEntry } from '@/types/files'
 import FileVisual from '@/components/FileVisual.vue'
 import LevelUpIcon from '@/components/LevelUpIcon.vue'
 import type { SortField, SortDirection } from '@/utils/sorting'
+import { acceptsFileDrop } from '@/composables/useExplorerWorkspace'
 
 const props = defineProps<{
   entries: FileEntry[]
@@ -15,6 +16,9 @@ const props = defineProps<{
   sortField?: SortField
   sortDirection?: SortDirection
   showLocation?: boolean
+  compact?: boolean
+  canDrag?: boolean
+  dropTargetPath?: string
 }>()
 
 const emit = defineEmits<{
@@ -25,6 +29,7 @@ const emit = defineEmits<{
   dropfiles: [entry: FileEntry, event: DragEvent]
   parent: [input: 'mouse' | 'touch']
   sort: [field: SortField]
+  dragentry: [entry: FileEntry, event: DragEvent]
 }>()
 
 const viewport = ref<HTMLElement | null>(null)
@@ -38,7 +43,10 @@ let ignoreTouchActivationUntil = 0
 let touchPointerUntil = 0
 
 const selected = computed(() => new Set(props.selectedPaths))
-const columnsStyle = computed(() => ({ gridTemplateColumns: props.showLocation ? 'minmax(18rem,1fr) minmax(16rem,1fr) 8rem 13rem 8rem' : 'minmax(18rem,1fr) 8rem 13rem 8rem' }))
+const columnsStyle = computed(() => ({ gridTemplateColumns: props.compact
+  ? (props.showLocation ? 'minmax(10rem,1fr) minmax(8rem,1fr) 6rem' : 'minmax(10rem,1fr) 6rem')
+  : props.showLocation ? 'minmax(18rem,1fr) minmax(16rem,1fr) 8rem 13rem 8rem' : 'minmax(18rem,1fr) 8rem 13rem 8rem' }))
+const minimumWidth = computed(() => props.compact ? (props.showLocation ? '26rem' : '16rem') : props.showLocation ? '65rem' : '49rem')
 function containingFolder(entry: FileEntry) { return entry.path.slice(0, entry.path.lastIndexOf('/')) || '/' }
 const cut = computed(() => new Set(props.cutPaths))
 const startIndex = computed(() => Math.max(0, Math.floor(scrollTop.value / rowHeight) - overscan))
@@ -80,14 +88,14 @@ function scrollToIndexAtTop(index: number) {
 }
 
 function onDropFolder(entry: FileEntry, event: DragEvent) {
-  if (!entry.is_dir || ![...(event.dataTransfer?.types ?? [])].includes('Files')) return
+  if (!entry.is_dir || !acceptsFileDrop(event)) return
   event.preventDefault()
   event.stopPropagation()
   emit('dropfiles', entry, event)
 }
 
 function onDragOverFolder(entry: FileEntry, event: DragEvent) {
-  if (entry.is_dir && [...(event.dataTransfer?.types ?? [])].includes('Files')) event.preventDefault()
+  if (entry.is_dir && acceptsFileDrop(event)) event.preventDefault()
 }
 
 function onEntryPointerDown(event: PointerEvent) {
@@ -169,13 +177,13 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
 <template>
   <div class="flex h-full min-h-0 flex-col">
     <div ref="headerViewport" class="shrink-0 overflow-hidden border-b border-zinc-800" aria-label="File sorting">
-    <div class="grid px-3 py-2 text-xs text-zinc-500" :style="{ ...columnsStyle, minWidth: showLocation ? '65rem' : '49rem' }">
+    <div class="grid px-3 py-2 text-xs text-zinc-500" :style="{ ...columnsStyle, minWidth: minimumWidth }">
       <button class="text-left" aria-label="Sort by Name" @click="emit('sort', 'name')">Name <i v-if="sortField === 'name'" class="pi text-[0.6rem]" :class="sortDirection === 'desc' ? 'pi-arrow-down' : 'pi-arrow-up'" /></button>
       <span v-if="showLocation">Location</span>
-      <button v-for="column in [{ field: 'size', label: 'Size' }, { field: 'modified', label: 'Modified' }]" :key="column.field" class="text-left" :aria-label="`Sort by ${column.label}`" @click="emit('sort', column.field as SortField)">
+      <button v-for="column in (compact ? [{ field: 'size', label: 'Size' }] : [{ field: 'size', label: 'Size' }, { field: 'modified', label: 'Modified' }])" :key="column.field" class="text-left" :aria-label="`Sort by ${column.label}`" @click="emit('sort', column.field as SortField)">
         {{ column.label }} <i v-if="sortField === column.field" class="pi text-[0.6rem]" :class="sortDirection === 'desc' ? 'pi-arrow-down' : 'pi-arrow-up'" />
       </button>
-      <span>Permissions</span>
+      <span v-if="!compact">Permissions</span>
     </div>
     </div>
     <button
@@ -192,7 +200,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
       <span class="text-zinc-500">—</span><span /><span />
     </button>
     <div ref="viewport" class="min-h-0 flex-1 overflow-auto overscroll-contain" data-file-viewport @scroll="onScroll">
-    <div class="relative select-none" :style="{ height: `${totalHeight}px`, minWidth: showLocation ? '65rem' : '49rem' }">
+    <div class="relative select-none" :style="{ height: `${totalHeight}px`, minWidth: minimumWidth }">
       <div
         v-for="row in visible"
         :key="row.entry.path"
@@ -201,10 +209,15 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
           focusedPath === row.entry.path && selected.has(row.entry.path) ? 'webfile-focus-tint' : selected.has(row.entry.path) ? 'webfile-selection-tint' : '',
           selected.has(row.entry.path) || focusedPath === row.entry.path ? 'outline outline-1 -outline-offset-1 outline-sky-500/70' : '',
           cut.has(row.entry.path) ? 'opacity-50' : '',
+          dropTargetPath === row.entry.path ? 'webfile-drop-target' : '',
         ]"
         :style="{ ...columnsStyle, height: `${rowHeight}px`, transform: `translateY(${row.index * rowHeight}px)` }"
         :data-cut="cut.has(row.entry.path) ? 'true' : undefined"
         data-file-entry
+        :draggable="canDrag"
+        :data-drop-directory="row.entry.is_dir ? row.entry.path : undefined"
+        :data-drop-target="dropTargetPath === row.entry.path ? 'true' : undefined"
+        @dragstart="emit('dragentry', row.entry, $event)"
         v-longpress="longPressEntry(row.entry)"
         @click="onEntryClick(row.entry, $event)"
         @pointerdown="onEntryPointerDown($event)"
@@ -238,8 +251,8 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
         </div>
         <span v-if="showLocation" class="truncate pr-3 text-xs text-zinc-500" :title="containingFolder(row.entry)" data-result-location>{{ containingFolder(row.entry) }}</span>
         <span class="text-zinc-400">{{ row.entry.is_dir && row.entry.size_status !== 'ready' ? '—' : formatBytes(row.entry.size) }}</span>
-        <span class="text-zinc-400">{{ formatDate(row.entry.modified) }}</span>
-        <span class="font-mono text-xs text-zinc-500">{{ row.entry.mode }}</span>
+        <span v-if="!compact" class="text-zinc-400">{{ formatDate(row.entry.modified) }}</span>
+        <span v-if="!compact" class="font-mono text-xs text-zinc-500">{{ row.entry.mode }}</span>
       </div>
     </div>
     </div>

@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, provide, ref, type InjectionKey } from 'vue'
 import { api } from '@/api/client'
 import type { FileOperation } from '@/types/files'
 
@@ -18,7 +18,24 @@ function updatedAfter(left: FileOperation, right: FileOperation): boolean {
   return fraction(left.updated_at) > fraction(right.updated_at)
 }
 
-export function useFileOperations(onTerminal: (operation: FileOperation, previous?: FileOperation) => void) {
+type TerminalHandler = (operation: FileOperation, previous?: FileOperation) => void
+const operationsKey: InjectionKey<{ store: ReturnType<typeof createFileOperations>; listeners: Set<TerminalHandler> }> = Symbol('workspace-operations')
+
+export function provideFileOperations() {
+  const listeners = new Set<TerminalHandler>()
+  const store = createFileOperations((operation, previous) => listeners.forEach(listener => listener(operation, previous)))
+  provide(operationsKey, { store, listeners })
+}
+
+export function useFileOperations(onTerminal: TerminalHandler) {
+  const shared = inject(operationsKey, null)
+  if (!shared) return createFileOperations(onTerminal)
+  shared.listeners.add(onTerminal)
+  onBeforeUnmount(() => shared.listeners.delete(onTerminal))
+  return shared.store
+}
+
+function createFileOperations(onTerminal: TerminalHandler) {
   const operations = ref<FileOperation[]>([])
   const activeOperations = computed(() => operations.value.filter(operation => activeStates.includes(operation.state)))
   const announcedTerminalStates = new Set<string>()

@@ -8,6 +8,7 @@ import ImageGallery from '@/components/ImageGallery.vue'
 
 const props = defineProps<{
   visible: boolean
+  active?: boolean
   path: string
   kind: PreviewKind
   contentType: string
@@ -77,7 +78,7 @@ function onFullscreenChange() {
 }
 
 function onKeyDown(event: KeyboardEvent) {
-  if (!props.visible || props.kind === 'image') return
+  if (!props.visible || props.active === false || props.kind === 'image') return
   if (event.key === 'Escape' && immersiveActive.value) leaveImmersive()
   else if (event.key === 'Escape') returnToFolder()
 }
@@ -89,6 +90,7 @@ function onKeyDown(event: KeyboardEvent) {
     :path="path"
     :folder-path="folderPath"
     :entries="entries"
+    :active="active"
     @back="emit('return-to-folder')"
     @close="close"
     @navigate="emit('navigate', $event)"

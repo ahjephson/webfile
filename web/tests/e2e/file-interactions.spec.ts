@@ -1231,6 +1231,7 @@ test('Alt+Enter toggles details for the focused item', async ({ page }) => {
 })
 
 test('an overflowing breadcrumb starts at the current rightmost location', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
   const path = '/root/very-long-project-name/source/generated/build/output/framework/current-location'
   await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path, entries: [] } }))
 
