@@ -8,7 +8,6 @@ export type FileVisual = {
 }
 
 const archives = new Set(['7z', 'bz2', 'gz', 'rar', 'tar', 'tgz', 'xz', 'zip'])
-const audio = new Set(['aac', 'flac', 'm4a', 'mp3', 'oga', 'ogg', 'opus', 'wav'])
 const databases = new Set(['db', 'mdb', 'sqlite', 'sqlite3'])
 const documents = new Set(['doc', 'docx', 'odt', 'rtf'])
 const pdfs = new Set(['pdf'])
@@ -30,7 +29,7 @@ export function fileVisualForPath(path: string): FileVisual {
   const ext = extension(path)
   if (kind === 'image') return { icon: 'pi pi-image', color: 'webfile-accent-info', kind, known: true }
   if (kind === 'video') return { icon: 'pi pi-video', color: 'webfile-accent-violet', kind, known: true }
-  if (audio.has(ext)) return { icon: 'pi pi-volume-up', color: 'webfile-accent-fuchsia', kind: 'unsupported', known: true }
+  if (kind === 'audio') return { icon: 'pi pi-volume-up', color: 'webfile-accent-fuchsia', kind, known: true }
   if (archives.has(ext)) return { icon: 'pi pi-box', color: 'webfile-accent-warning', kind: 'unsupported', known: true }
   if (pdfs.has(ext)) return { icon: 'pi pi-file-pdf', color: 'webfile-accent-danger', kind: 'unsupported', known: true }
   if (documents.has(ext)) return { icon: 'pi pi-file-word', color: 'webfile-accent-blue', kind: 'unsupported', known: true }

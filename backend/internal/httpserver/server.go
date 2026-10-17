@@ -261,7 +261,9 @@ func inlineContentTypeAllowed(contentType string) bool {
 	}
 	switch mediaType {
 	case "image/avif", "image/bmp", "image/gif", "image/jpeg", "image/png", "image/webp",
-		"video/mp4", "video/ogg", "video/quicktime", "video/webm":
+		"video/mp4", "video/ogg", "video/quicktime", "video/webm",
+		"audio/aac", "audio/flac", "audio/x-flac", "audio/mp4", "audio/mpeg", "audio/ogg",
+		"audio/wav", "audio/wave", "audio/x-wav", "audio/webm":
 		return true
 	default:
 		return false

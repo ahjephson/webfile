@@ -247,6 +247,27 @@ func TestInlineDownloadRejectsActiveContent(t *testing.T) {
 	}
 }
 
+func TestInlineAudioDownloadSupportsRangeRequests(t *testing.T) {
+	target, root := testDownloadServer(t)
+	data := append([]byte("RIFF\x28\x00\x00\x00WAVE"), make([]byte, 36)...)
+	if err := os.WriteFile(filepath.Join(root, "recording.wav"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/fs/download?path=%2FFiles%2Frecording.wav&inline=true", nil)
+	request.Header.Set("Range", "bytes=12-19")
+	response := httptest.NewRecorder()
+	target.download(response, request)
+	if response.Code != http.StatusPartialContent || !bytes.Equal(response.Body.Bytes(), data[12:20]) {
+		t.Fatalf("range response = %d %q", response.Code, response.Body.Bytes())
+	}
+	if response.Header().Get("Content-Type") != "audio/wave" || response.Header().Get("Content-Range") != "bytes 12-19/48" {
+		t.Fatalf("unexpected audio headers: %v", response.Header())
+	}
+	if response.Header().Get("Content-Security-Policy") == "" || response.Header().Get("Content-Disposition") != "inline; filename*=UTF-8''recording.wav" {
+		t.Fatalf("missing inline protections: %v", response.Header())
+	}
+}
+
 func TestDeleteOperationPermanentlyRemovesEntry(t *testing.T) {
 	target, root := testDownloadServer(t)
 	target.ops = operations.New(10)

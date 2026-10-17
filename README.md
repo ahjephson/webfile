@@ -55,6 +55,7 @@ and persistent application state.
 ### File manager
 
 - Browse, filter and navigate directories.
+- Preview audio using the browser's native player, with playback, seeking and volume controls and no autoplay. Common audio formats include MP3, WAV, FLAC, AAC, M4A, Ogg and Opus; decoding support depends on the browser. Audio streams through the existing inline download endpoint with byte-range support.
 - Sort by name, modified time, size or type in either direction, with folders
   first and the choice saved per user. Sorting uses the loaded listing; it does
   not trigger recursive folder-size calculations.

@@ -289,6 +289,34 @@ func TestDetectContentTypeRecognisesExtensionlessText(t *testing.T) {
 	}
 }
 
+func TestDetectContentTypeRecognisesAudioContainers(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"recording", []byte("ID3\x00"), "audio/mpeg"},
+		{"recording.wav", []byte("RIFF\x28\x00\x00\x00WAVE"), "audio/wave"},
+		{"recording.ogg", []byte("OggS\x00\x02\x00"), "audio/ogg"},
+		{"recording.opus", []byte("OggS\x00\x02\x00"), "audio/ogg"},
+		{"recording.flac", []byte("fLaC\x00"), "audio/flac"},
+		{"recording.aac", []byte{0xff, 0xf1, 0x00}, "audio/aac"},
+		{"recording.m4a", []byte("\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"), "audio/mp4"},
+		{"page.mp3", []byte("<html><script>alert(1)</script></html>"), "text/html; charset=utf-8"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			svc, root := testService(t)
+			if err := os.WriteFile(filepath.Join(root, test.name), test.data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			result, err := svc.DetectContentType(context.Background(), "/Files/"+test.name)
+			if err != nil || result.ContentType != test.want {
+				t.Fatalf("content type = %q, %v; want %q", result.ContentType, err, test.want)
+			}
+		})
+	}
+}
+
 func TestDetectContentTypeDoesNotTreatExtensionlessBinaryAsText(t *testing.T) {
 	svc, root := testService(t)
 	if err := os.WriteFile(filepath.Join(root, "payload"), []byte{0, 1, 2, 3, 4}, 0o644); err != nil {

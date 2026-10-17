@@ -257,6 +257,13 @@ func (s *Service) DetectContentType(ctx context.Context, virtualPath string) (Fi
 	if extensionType := mime.TypeByExtension(filepath.Ext(virtualPath)); strings.HasPrefix(extensionType, "video/") && contentType == "application/octet-stream" {
 		contentType = extensionType
 	}
+	// Ogg and MP4 sniffing identifies the container rather than whether its
+	// tracks are audio. Use an audio extension for these ambiguous containers
+	// and formats without a sniff signature, but never override active/text content.
+	if extensionType := mime.TypeByExtension(filepath.Ext(virtualPath)); strings.HasPrefix(extensionType, "audio/") &&
+		(contentType == "application/octet-stream" || contentType == "application/ogg" || contentType == "video/mp4") {
+		contentType = extensionType
+	}
 	return FileType{Path: CleanVirtual(virtualPath), ContentType: contentType}, nil
 }
 

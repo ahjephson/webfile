@@ -16,6 +16,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:visible': [value: boolean]; navigate: [path: string]; 'return-to-folder': [] }>()
 const mediaError = ref(false)
+const audioPlayer = ref<HTMLAudioElement | null>(null)
 const previewRoot = ref<HTMLElement | null>(null)
 const immersive = ref(false)
 const source = computed(() => api.previewUrl(props.path))
@@ -23,12 +24,11 @@ const name = computed(() => props.path.split('/').pop() || props.path)
 const canImmerse = computed(() => props.kind === 'video' && !mediaError.value)
 const immersiveActive = computed(() => canImmerse.value && immersive.value)
 
-watch(() => props.path, () => {
+watch(() => [props.path, props.kind, props.visible], () => {
+  audioPlayer.value?.pause()
   mediaError.value = false
   leaveImmersive()
 }, { flush: 'sync' })
-watch(() => props.kind, leaveImmersive, { flush: 'sync' })
-watch(() => props.visible, leaveImmersive, { flush: 'sync' })
 watch(mediaError, failed => {
   if (failed) leaveImmersive()
 }, { flush: 'sync' })
@@ -44,6 +44,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  audioPlayer.value?.pause()
   window.removeEventListener('keydown', onKeyDown)
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   leaveImmersive()
@@ -119,10 +120,23 @@ function onKeyDown(event: KeyboardEvent) {
         playsinline
         @error="mediaError = true"
       />
+      <div v-else-if="kind === 'audio' && !mediaError" class="flex w-full max-w-lg flex-col items-center gap-6 px-4">
+        <i class="pi pi-volume-up text-6xl webfile-accent-fuchsia" aria-hidden="true" />
+        <audio
+          :key="source"
+          ref="audioPlayer"
+          :src="source"
+          :aria-label="`Play ${name}`"
+          class="w-full"
+          controls
+          preload="metadata"
+          @error="mediaError = true"
+        />
+      </div>
       <div v-else class="max-w-lg text-center text-zinc-400">
         <i :class="mediaError ? 'pi pi-exclamation-triangle' : 'pi pi-file'" class="mb-4 text-5xl text-zinc-600" />
         <h2 class="mb-2 text-base font-semibold text-zinc-200">{{ mediaError ? 'Preview unavailable' : 'No preview available' }}</h2>
-        <p class="mb-4 text-sm">{{ mediaError ? 'The browser could not display this file.' : "This type of file can't be previewed." }}</p>
+        <p class="mb-4 text-sm">{{ mediaError ? (kind === 'audio' ? 'The browser could not play this audio file.' : 'The browser could not display this file.') : "This type of file can't be previewed." }}</p>
       </div>
     </div>
   </section>
