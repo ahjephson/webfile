@@ -9,6 +9,7 @@ import SplitButton from 'primevue/splitbutton'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '@/api/client'
+import { appPath } from '@/base'
 import type { ConflictDecision, FileEntry, FileOperation, SearchRequest, VideoThumbnailJob } from '@/types/files'
 import { resolvedTheme, setTheme, themeMode, type ThemeMode } from '@/theme'
 import { defaultPreferences, normalizePreferences, type UserPreferences } from '@/preferences'
@@ -1807,6 +1808,7 @@ function operationLabel(value: string) {
     <Teleport to="#webfile-workspace-toolbar" defer>
     <header v-if="isActive" class="border-b border-zinc-800 bg-zinc-900/90 px-3 py-2 backdrop-blur">
       <div class="flex flex-wrap items-center gap-1">
+        <img :src="appPath('favicon.svg')" alt="WebFile" width="32" height="32" class="mr-1 h-6 w-6 shrink-0 sm:mr-2 sm:h-8 sm:w-8" draggable="false" />
         <div class="flex items-center gap-1">
           <Button v-tooltip.bottom="'New folder'" icon="pi pi-folder-plus" size="small" severity="secondary" text :disabled="!canMutate" aria-label="New folder" @click="openNewFolder" />
           <Button v-tooltip.bottom="'New file'" icon="pi pi-file-plus" size="small" severity="secondary" text :disabled="!canMutate" aria-label="New file" @click="newDocumentVisible = true" />
