@@ -139,17 +139,26 @@ resync, and validate again. Never broadly mirror WSL back into Windows.
 ### Validation in WSL
 
 Use the narrowest relevant checks while iterating, then run the applicable full
-checks before delivery. Before completing any task, perform an appropriate
-visual final check of the result. For browser-facing work, run the application
-in the applicable operating mode and inspect the affected workflow in the
-in-app browser using the computer-use skill (or the Playwright MCP server when
-that is the available browser-control integration). Exercise the changed UI,
-check the rendered result at a representative viewport, and look for visible
-errors or regressions; automated unit, build, and headless end-to-end results do
-not replace this final visual check. For work with no browser-visible effect,
-visually inspect the relevant output instead (for example a rendered artefact,
-generated package contents, command output, or final diff). Report what was
-checked and any limitation in the task handoff.
+checks before delivery.
+
+For development tasks with browser-visible effects, run the application in the
+applicable operating mode and inspect the affected workflow in the in-app
+browser using the computer-use skill (or the Playwright MCP server when that
+is the available browser-control integration). Exercise the changed UI, check
+the rendered result at a representative viewport, and look for visible errors
+or regressions; automated unit, build, and headless end-to-end results do not
+replace this development visual check. For development work with no
+browser-visible effect, inspect the relevant output or final diff instead.
+
+Release tasks do not require interactive UI or browser visual inspection.
+Follow `RELEASE_CHECKLIST.md`, including its required automated production,
+Chromium and WebKit validation, and inspect the package contents, checksums,
+embedded version/toolchain metadata, provenance and final diff as applicable.
+A toolchain or security patch release does not by itself justify opening the
+UI. Documentation-only corrections after a full local pass require document
+review, not another full application test/build cycle; the final release
+commit must still pass CI before tagging. Report the checks performed and any
+limitations in the task handoff.
 
 Backend:
 
