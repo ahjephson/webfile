@@ -14,6 +14,7 @@ const emit = defineEmits<{
   'update:visible': [value: boolean]
   submit: [password: string]
   cancel: []
+  dismiss: []
   'after-hide': []
 }>()
 const password = ref('')
@@ -63,6 +64,7 @@ function updateVisible(value: boolean) {
         />
       </div>
       <div class="flex justify-end gap-2">
+        <Button label="Later" severity="secondary" text :disabled="busy" @click="emit('dismiss')" />
         <Button label="Cancel" severity="secondary" text :disabled="busy" @click="emit('cancel')" />
         <Button label="Continue" type="submit" :loading="busy" :disabled="busy || !password" />
       </div>

@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 
 async function touchPoint(page: Page, target: Locator) {
   const box = await target.boundingBox()
@@ -3207,6 +3207,111 @@ test('Extract defaults to an archive-named folder and prompts when the task requ
   await expect.poll(() => submittedPassword).not.toBeNull()
   expect(submittedPassword).toEqual({ password: 'secret' })
   releasePasswordRequest()
+})
+
+for (const action of ['Extract…', 'Extract here']) {
+  test(`${action} keeps the password prompt when the queued HTTP response trails realtime`, async ({ page }) => {
+    let socket: WebSocketRoute | undefined
+    await page.routeWebSocket('**/api/fs/ws', ws => { socket = ws })
+    const queued = {
+      id: 'password-race', kind: 'extract', sources: ['/folder/secure.7z'], destination: '/target',
+      state: 'queued', phase: 'queued', message: '', cancellable: true,
+      bytes_done: 0, bytes_total: 0, items_done: 0, items_total: 0,
+      started_at: '2000-01-01T00:00:00Z', updated_at: '2000-01-01T00:00:00Z',
+    }
+    let current = { ...queued, state: 'awaiting_input', phase: 'awaiting_password', message: 'Password required', updated_at: '2000-01-01T00:00:01Z' }
+    let started = false
+    let responseSent = false
+    let releaseResponse = () => {}
+    const responseHold = new Promise<void>(resolve => { releaseResponse = resolve })
+    await page.route('**/api/fs/dir**', route => route.fulfill({ json: {
+      path: '/folder', entries: [{ name: 'secure.7z', path: '/folder/secure.7z', is_dir: false, size: 100, modified: queued.started_at, mode: '-rw-r--r--' }],
+    } }))
+    await page.route('**/api/fs/operations', async route => {
+      if (route.request().method() === 'GET') return route.fulfill({ json: { operations: started ? [current] : [] } })
+      started = true
+      socket!.send(JSON.stringify({ type: 'operation-updated', operation: current }))
+      await responseHold
+      await route.fulfill({ json: { operations: [queued] } })
+      responseSent = true
+    })
+    await page.goto('/#path=%2Ffolder')
+    await expect.poll(() => !!socket).toBe(true)
+    await page.locator('[data-file-entry]').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: action, exact: true }).click()
+    if (action === 'Extract…') {
+      const destination = page.getByRole('dialog', { name: 'Extract secure.7z', exact: true })
+      await destination.getByLabel('Destination folder').fill('/target')
+      await destination.getByRole('button', { name: 'Extract', exact: true }).click()
+    }
+    const prompt = page.getByRole('dialog', { name: 'Password required — secure.7z', exact: true })
+    await expect(prompt).toBeVisible()
+    await prompt.getByLabel('Password', { exact: true }).fill('keep this input')
+    releaseResponse()
+    await expect.poll(() => responseSent).toBe(true)
+    // A stale realtime event must also leave the accepted waiting state alone.
+    socket!.send(JSON.stringify({ type: 'operation-updated', operation: queued }))
+    await expect(prompt.getByLabel('Password', { exact: true })).toHaveValue('keep this input')
+    await prompt.getByRole('button', { name: 'Later', exact: true }).click()
+    await expect(prompt).toBeHidden()
+    await page.getByRole('button', { name: 'Open tasks' }).click()
+    await page.getByRole('button', { name: 'Enter password', exact: true }).click()
+    await expect(prompt).toBeVisible()
+    await expect(prompt.getByLabel('Password', { exact: true })).toHaveValue('')
+
+    // Repeated identical wrong-password messages are distinct requests.
+    let attempts = 0
+    await page.route('**/api/fs/operations/password-race/password', async route => {
+      attempts++
+      current = { ...current, message: 'Incorrect password', updated_at: `2000-01-01T00:00:0${attempts + 1}Z` }
+      socket!.send(JSON.stringify({ type: 'operation-updated', operation: current }))
+      await route.fulfill({ status: 202, json: { ok: true } })
+    })
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await prompt.getByLabel('Password', { exact: true }).fill('wrong')
+      await prompt.getByRole('button', { name: 'Continue', exact: true }).click()
+      await expect(prompt.getByRole('alert')).toHaveText('Incorrect password')
+      await expect(prompt.getByLabel('Password', { exact: true })).toHaveValue('')
+    }
+    current = { ...current, state: 'completed', phase: 'completed', message: '', updated_at: '2000-01-01T00:00:05Z' }
+    socket!.send(JSON.stringify({ type: 'operation-updated', operation: current }))
+    await expect(prompt).toBeHidden()
+    await expect(page.getByRole('button', { name: 'Enter password', exact: true })).toHaveCount(0)
+  })
+}
+
+test('recovered archive password prompts keep the current task in focus', async ({ page }) => {
+  let socket: WebSocketRoute | undefined
+  await page.routeWebSocket('**/api/fs/ws', ws => { socket = ws })
+  const first = {
+    id: 'first-password', kind: 'extract', sources: ['/first.7z'], destination: '/target',
+    state: 'awaiting_input', phase: 'awaiting_password', message: 'Password required', cancellable: true,
+    bytes_done: 0, bytes_total: 0, items_done: 0, items_total: 0,
+    started_at: '2000-01-01T00:00:00Z', updated_at: '2000-01-01T00:00:01Z',
+  }
+  const second = { ...first, id: 'second-password', sources: ['/second.7z'] }
+  let waiting = [first]
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries: [] } }))
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: waiting } }))
+  await page.goto('/')
+  const prompt = page.getByRole('dialog', { name: 'Password required — first.7z', exact: true })
+  await expect(prompt).toBeVisible()
+  await prompt.getByLabel('Password', { exact: true }).fill('retain me')
+  await expect.poll(() => !!socket).toBe(true)
+  waiting = [second, first]
+  socket!.send(JSON.stringify({ type: 'operation-updated', operation: second }))
+  await expect(prompt.getByLabel('Password', { exact: true })).toHaveValue('retain me')
+  await expect(page.getByRole('dialog', { name: 'Password required — second.7z', exact: true })).toHaveCount(0)
+  await prompt.getByRole('button', { name: 'Later', exact: true }).click()
+  await expect(prompt).toBeHidden()
+  await page.getByRole('button', { name: 'Open tasks' }).click()
+  // Refreshing history recovers the other request without a realtime event.
+  const secondPrompt = page.getByRole('dialog', { name: 'Password required — second.7z', exact: true })
+  await expect(secondPrompt).toBeVisible()
+  await secondPrompt.getByRole('button', { name: 'Later', exact: true }).click()
+  await expect(secondPrompt).toBeHidden()
+  await page.getByRole('complementary').locator('article').filter({ hasText: 'Extract first.7z' }).getByRole('button', { name: 'Enter password' }).click()
+  await expect(prompt).toBeVisible()
 })
 
 test('multiple selected archives can be queued as independent extraction tasks', async ({ page }) => {

@@ -202,6 +202,8 @@ const extractVisible = ref(false)
 const extractPasswordVisible = ref(false)
 const extractPasswordOperationId = ref('')
 const extractPasswordError = ref('')
+const passwordBusy = ref(false)
+const shownPasswordRequests = new Set<string>()
 const extractDestination = ref('')
 const extractPasswordDialogClosed = ref(true)
 const pendingPasswordTerminal = ref<FileOperation | null>(null)
@@ -1404,40 +1406,54 @@ async function submitExtractionPassword(password: string) {
   if (!operationId) return
   extractPasswordVisible.value = false
   extractPasswordError.value = ''
-  extractBusy.value = true
+  passwordBusy.value = true
   try {
     await api.submitOperationPassword(operationId, password)
+    await loadOperations()
   } catch (err) {
     if (extractPasswordOperationId.value === operationId) {
       extractPasswordVisible.value = true
     }
     showError(err, 'Could not submit archive password')
   } finally {
-    extractBusy.value = false
+    passwordBusy.value = false
+    restorePasswordPrompt()
   }
 }
 
 function handleOperationUpdate(operation: FileOperation) {
   updateOperation(operation)
-  if (operation.kind === 'extract' && operation.phase === 'awaiting_password') {
-    showPasswordPrompt(operation)
-  } else if (operation.id === extractPasswordOperationId.value && operation.phase !== 'awaiting_password') {
-    extractPasswordVisible.value = false
-    extractPasswordError.value = ''
-  }
+}
+
+function awaitingPassword(operation: FileOperation) {
+  return operation.kind === 'extract' && operation.state === 'awaiting_input' && operation.phase === 'awaiting_password'
+}
+
+function passwordRequestKey(operation: FileOperation) {
+  return `${operation.id}:${operation.updated_at}:${operation.message}`
 }
 
 function restorePasswordPrompt() {
-  if (!isPrimary) return
-  const waiting = operations.value.find(operation => operation.kind === 'extract' && operation.phase === 'awaiting_password')
+  if (!isPrimary || passwordBusy.value) return
+  const waitingOperations = operations.value.filter(awaitingPassword)
+  const current = waitingOperations.find(operation => operation.id === extractPasswordOperationId.value)
+  // Keep the current archive in focus when another task requests a password.
+  if (extractPasswordVisible.value && current) {
+    showPasswordPrompt(current)
+    return
+  }
+  const waiting = waitingOperations.find(operation => !shownPasswordRequests.has(passwordRequestKey(operation)))
   if (waiting) showPasswordPrompt(waiting)
   else if (extractPasswordOperationId.value) extractPasswordVisible.value = false
 }
 
-watch(() => operations.value.filter(operation => operation.kind === 'extract' && operation.phase === 'awaiting_password').map(operation => `${operation.id}:${operation.message}`).join('|'), restorePasswordPrompt)
+// Only accepted store updates may control the dialog. HTTP responses can arrive
+// after newer WebSocket events, and updateOperation rejects those stale states.
+watch(operations, restorePasswordPrompt)
 
 function showPasswordPrompt(operation: FileOperation) {
   if (!isPrimary) return
+  shownPasswordRequests.add(passwordRequestKey(operation))
   extractPasswordDialogClosed.value = false
   pendingPasswordTerminal.value = null
   extractPasswordOperationId.value = operation.id
@@ -1451,6 +1467,11 @@ function showPasswordPrompt(operation: FileOperation) {
     mode: '',
   }
   extractPasswordVisible.value = true
+}
+
+function reopenPasswordPrompt(operation: FileOperation) {
+  const current = operations.value.find(item => item.id === operation.id)
+  if (current && awaitingPassword(current) && !passwordBusy.value) showPasswordPrompt(current)
 }
 
 async function cancelPasswordPrompt() {
@@ -2060,7 +2081,7 @@ function operationLabel(value: string) {
     <EditorDialog v-if="editorVisible && paneVisible" ref="editorDialog" :visible="editorVisible" :active="isActive && paneVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" :preferences="userPreferences" @update:visible="setEditorVisible" @saved="onEditorSaved" />
     <FilePreview :visible="previewVisible && paneVisible" :active="isActive" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="filteredEntries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
     <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTargets.length === 1 ? extractTargets[0].name : `${extractTargets.length} archives`" :destination="extractDestination" :busy="extractBusy" :existing-files="userPreferences.extract_existing_files" @extract="prepareExtraction" />
-    <ArchivePasswordDialog v-if="isPrimary" v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="extractBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @cancel="cancelPasswordPrompt" @after-hide="onArchivePasswordAfterHide" />
+    <ArchivePasswordDialog v-if="isPrimary" v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="passwordBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @dismiss="extractPasswordVisible = false" @cancel="cancelPasswordPrompt" @after-hide="onArchivePasswordAfterHide" />
     <DestinationDialog
       v-model:visible="destinationVisible"
       :mode="transferMode"
@@ -2070,6 +2091,6 @@ function operationLabel(value: string) {
       :hide-inaccessible="userPreferences.hide_inaccessible"
       @submit="submitTransfer"
     />
-    <OperationsPanel v-if="isPrimary" v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @cancel="requestOperationCancellation" @resolve="openConflict" @reorder="reorderOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" @download="downloadOperation" />
+    <OperationsPanel v-if="isPrimary" v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @cancel="requestOperationCancellation" @password="reopenPasswordPrompt" @resolve="openConflict" @reorder="reorderOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" @download="downloadOperation" />
   </section>
 </template>
