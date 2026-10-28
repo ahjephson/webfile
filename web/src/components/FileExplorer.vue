@@ -1594,7 +1594,7 @@ function onBackgroundDrop(event: DragEvent) {
 }
 
 function startEntryDrag(entry: FileEntry, event: DragEvent) {
-  if (!workspace.split.value || currentPath.value === '/' || !event.dataTransfer) { event.preventDefault(); return }
+  if (currentPath.value === '/' || !event.dataTransfer) { event.preventDefault(); return }
   const items = selectedPaths.value.has(entry.path) ? selectedEntries.value : [entry]
   if (!selectedPaths.value.has(entry.path)) replaceSelection([entry.path])
   workspace.drag.value = { token: crypto.randomUUID(), entries: [...items] }
@@ -2025,7 +2025,7 @@ function operationLabel(value: string) {
             :parent-path="viewingSearch ? '' : parentPath"
             :show-location="viewingSearch"
             :compact="workspace.split.value"
-            :can-drag="workspace.split.value && currentPath !== '/'"
+            :can-drag="currentPath !== '/'"
             :drop-target-path="folderDropTarget"
             @dragentry="startEntryDrag"
             @select="handleSelect"
@@ -2048,7 +2048,7 @@ function operationLabel(value: string) {
             :thumbnail-pending-paths="[...pendingVideoThumbnailPaths]"
             :parent-path="viewingSearch ? '' : parentPath"
             :show-location="viewingSearch"
-            :can-drag="workspace.split.value && currentPath !== '/'"
+            :can-drag="currentPath !== '/'"
             :drop-target-path="folderDropTarget"
             @dragentry="startEntryDrag"
             @select="handleSelect"

@@ -8,7 +8,7 @@ WebFile primarily serves file browsing and moving. Keep additions focused on tho
 
 ## 1. Drag and drop into folders in the same pane
 
-- Status: investigated; not scheduled or implemented.
+- Status: implemented locally; awaiting release.
 - Enhancement reported on 2026-10-28: allow a file or folder to be dragged onto another folder in the same browsing pane, without enabling split-pane mode.
 - Expected behaviour: the destination folder accepts the drop and starts the transfer using the existing move/copy modifier behaviour and task handling.
 - Finding: confirmed restriction in `FileExplorer.vue`. Both list/grid `can-drag` bindings require split view, and `startEntryDrag` independently rejects single-pane drags. Folder drop handlers, modifier handling and self/descendant destination checks already exist.

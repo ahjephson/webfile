@@ -102,6 +102,28 @@ test('reopening split view keeps the current view on the left without reloading 
 })
 
 for (const view of ['list', 'grid'] as const) {
+  for (const modifier of ['plain', 'control', 'shift'] as const) {
+    test(`${view} single-pane drag uses ${modifier} modifiers for selected files`, async ({ page }) => {
+      const { left, right, started } = await workspace(page, false)
+      await left.getByText('a', { exact: true }).dblclick()
+      await left.getByRole('button', { name: `${view === 'grid' ? 'Grid' : 'List'} view`, exact: true }).click()
+      const source = left.locator('[data-file-entry]').filter({ hasText: 'first.txt' })
+      const second = left.locator('[data-file-entry]').filter({ hasText: 'second.txt' })
+      const folder = left.locator('[data-file-entry]').filter({ hasText: 'child' })
+      await expect(source).toHaveAttribute('draggable', 'true')
+      await source.click()
+      await second.click({ modifiers: ['Control'] })
+      await drag(page, source, folder, modifier === 'control', modifier === 'shift')
+      await expect.poll(() => started.length).toBe(1)
+      expect(started[0]).toMatchObject({ kind: modifier === 'control' ? 'copy' : 'move', sources: ['/Files/a/first.txt', '/Files/a/second.txt'], destination: '/Files/a/child' })
+      await expect(right).toHaveCount(0)
+      await drag(page, folder, folder)
+      expect(started).toHaveLength(1)
+      await drag(page, folder, left.locator('[data-file-viewport]'))
+      expect(started).toHaveLength(1)
+    })
+  }
+
   for (const input of ['mouse', 'touch'] as const) {
     test(`full ${view} ${input} current breadcrumb selects the open folder without reloading`, async ({ page }) => {
       const { left } = await workspace(page)
