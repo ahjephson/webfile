@@ -37,6 +37,9 @@ test('sort changes preserve focus and selection in list and grid and persist aft
   await page.reload()
   await expect(page.locator('[data-file-entry]').nth(1)).toContainText('b.csv')
   await page.getByRole('button', { name: 'Sort files' }).click()
+  // WebKit can report stable item bounds before the popup's enter animation
+  // finishes, then deliver the click at a position the menu has moved past.
+  await expect(page.locator('.p-menu-overlay')).not.toHaveClass(/p-connected-overlay-enter-(?:from|active|to)/)
   const fieldLabels = page.getByRole('menuitem').filter({ hasText: /^Sort by / })
   const positions = await fieldLabels.evaluateAll(items => items.map(item => item.querySelector('.p-menu-item-label')!.getBoundingClientRect().x))
   expect(new Set(positions).size).toBe(1)

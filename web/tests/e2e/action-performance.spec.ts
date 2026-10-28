@@ -32,7 +32,9 @@ test('a batch upload coalesces folder refreshes', async ({ page }) => {
   await page.waitForLoadState('networkidle')
   const initial = reads
   await page.locator('input[type=file]').setInputFiles(Array.from({ length: 25 }, (_, index) => ({ name: `file-${index}.txt`, mimeType: 'text/plain', buffer: Buffer.from('x') })))
-  await expect.poll(() => completed).toBe(25)
+  // This checks refresh coalescing, not the throughput of 50 sequential routed
+  // requests. Allow the batch to finish on a cold CI browser before counting.
+  await expect.poll(() => completed, { timeout: 15_000 }).toBe(25)
   await page.waitForLoadState('networkidle')
   expect(reads - initial).toBeLessThanOrEqual(3)
 })
