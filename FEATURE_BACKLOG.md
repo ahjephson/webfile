@@ -29,3 +29,9 @@ WebFile primarily serves file browsing and moving. Keep additions focused on tho
 - Status: recorded; not scheduled or investigated.
 - Enhancement reported on 2026-10-28: the normal Extract… dialog should show the archive name in the destination path so it is clear that extraction creates an archive-named folder.
 - Expected behaviour: extracting `archive.7z` beneath `/Files` visibly shows the resulting `/Files/archive` path before extraction starts.
+
+## 5. Cancel queued video thumbnail conversions
+
+- Status: recorded; not scheduled or investigated.
+- Bug reported on 2026-10-28: attempting to cancel a queued video thumbnail conversion shows `video thumbnail job is not active`.
+- Expected behaviour: a queued video thumbnail job can be cancelled before conversion starts, and Tasks reflects the cancellation without an error.
