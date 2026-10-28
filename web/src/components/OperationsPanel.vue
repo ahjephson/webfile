@@ -228,7 +228,6 @@ function formatDate(value?: string) {
               </div>
               <span class="webfile-status-processing rounded px-2 py-0.5 text-xs capitalize">{{ stateLabel(operation) }}</span>
               <Button v-if="operation.input && operation.state === 'awaiting_input'" label="Review conflict" size="small" severity="warn" @click="emit('resolve', operation)" />
-              <Button v-if="operation.kind === 'extract' && operation.state === 'awaiting_input' && operation.phase === 'awaiting_password'" label="Enter password" size="small" severity="warn" @click="emit('password', operation)" />
             </div>
             <div class="mt-3">
               <div v-if="operation.state === 'queued'" class="flex items-center justify-between gap-3 text-xs text-zinc-500">
@@ -250,7 +249,8 @@ function formatDate(value?: string) {
                 <span>{{ formatProgress(operation) }}</span>
               </div>
               <div v-if="operation.state !== 'queued'" class="mt-2 flex items-center justify-between gap-3 text-xs text-zinc-500">
-                <span v-if="operation.progress_total > 0 || (operation.kind === 'delete' && operation.progress_unit === 'items')">{{ formatProgress(operation) }}</span>
+                <Button v-if="operation.kind === 'extract' && operation.state === 'awaiting_input' && operation.phase === 'awaiting_password'" label="Enter password" icon="pi pi-key" size="small" severity="secondary" outlined @click="emit('password', operation)" />
+                <span v-else-if="operation.progress_total > 0 || (operation.kind === 'delete' && operation.progress_unit === 'items')">{{ formatProgress(operation) }}</span>
                 <span v-else />
                 <Button v-if="operation.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel', operation)" />
               </div>
