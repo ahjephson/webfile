@@ -35,7 +35,8 @@ for (const rejectedRequest of ['init-response', 'chunk']) {
       await expect(upload.locator('[data-task-status]')).toHaveText('failed', { timeout: 10000 })
       await expect(upload.getByText('The transfer was interrupted. Please try again to resume it.', { exact: true })).toBeVisible()
       if (blockedReport) {
-        expect((await readTask()).state).toBe('running')
+        // Neither rejected request reached the backend's first-chunk transition.
+        expect((await readTask()).state).toBe('queued')
         await page.reload()
         await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
         await expect(upload.locator('[data-task-status]')).toHaveText('failed')

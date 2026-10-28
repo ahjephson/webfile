@@ -8,7 +8,7 @@ import ProgressSpinner from 'primevue/progressspinner'
 import SplitButton from 'primevue/splitbutton'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
-import { api } from '@/api/client'
+import { api, type PreparedUpload } from '@/api/client'
 import { appPath } from '@/base'
 import type { ConflictDecision, FileEntry, FileOperation, SearchRequest, VideoThumbnailJob } from '@/types/files'
 import { resolvedTheme, setTheme, themeMode, type ThemeMode } from '@/theme'
@@ -1521,21 +1521,32 @@ async function uploadFiles(event: Event) {
 async function uploadFileList(files: File[], destination: string) {
   uploadBatchFolders.set(destination, (uploadBatchFolders.get(destination) ?? 0) + 1)
   try {
+    const queued: Array<{ file: File; prepared: PreparedUpload }> = []
     for (const file of files) {
       try {
-        let announced = false
-        const operation = await api.upload(destination, file, current => {
-          updateOperation(current)
-          if (announced) return
-          announced = true
-          signalTaskAdded()
-        })
-        updateOperation(operation)
+        const prepared = await api.queueUpload(destination, file)
+        queued.push({ file, prepared })
+        updateOperation(prepared.operation)
+        signalTaskAdded()
       } catch (err) {
         await loadOperations()
         showError(err, `Could not upload ${file.name}`)
       }
     }
+    await Promise.all(queued.map(({ file, prepared }) => workspace.enqueueUpload(async () => {
+      const current = operations.value.find(operation => operation.id === prepared.operation.id)
+      if (current && (['cancelled', 'cancelling', 'failed', 'interrupted'].includes(current.state) || current.attempt_id && current.attempt_id !== prepared.operation.attempt_id)) {
+        api.forgetPreparedUpload(prepared.attempt)
+        return
+      }
+      try {
+        updateOperation(await api.upload(destination, file, updateOperation, prepared))
+      } catch (err) {
+        await loadOperations()
+        const latest = operations.value.find(operation => operation.id === prepared.operation.id)
+        if (!latest || !['cancelled', 'cancelling'].includes(latest.state)) showError(err, `Could not upload ${file.name}`)
+      }
+    })))
   } finally {
     const remaining = (uploadBatchFolders.get(destination) ?? 1) - 1
     if (remaining > 0) uploadBatchFolders.set(destination, remaining)

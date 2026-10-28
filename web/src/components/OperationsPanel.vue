@@ -231,10 +231,10 @@ function formatDate(value?: string) {
             </div>
             <div class="mt-3">
               <div v-if="operation.state === 'queued'" class="flex items-center justify-between gap-3 text-xs text-zinc-500">
-                <span>Queue position {{ operation.queue_position }}</span>
+                <span>{{ operation.kind === 'upload' ? 'Waiting to upload' : `Queue position ${operation.queue_position}` }}</span>
                 <div class="flex items-center gap-1">
-                  <Button v-tooltip.top="'Move up'" icon="pi pi-arrow-up" size="small" severity="secondary" text :disabled="(operation.queue_position ?? 0) <= 1" :aria-label="`Move ${label(operation)} up`" @click="emit('reorder', operation.id, 'up')" />
-                  <Button v-tooltip.top="'Move down'" icon="pi pi-arrow-down" size="small" severity="secondary" text :disabled="(operation.queue_position ?? 0) >= maxQueuePosition" :aria-label="`Move ${label(operation)} down`" @click="emit('reorder', operation.id, 'down')" />
+                  <Button v-if="operation.kind !== 'upload'" v-tooltip.top="'Move up'" icon="pi pi-arrow-up" size="small" severity="secondary" text :disabled="(operation.queue_position ?? 0) <= 1" :aria-label="`Move ${label(operation)} up`" @click="emit('reorder', operation.id, 'up')" />
+                  <Button v-if="operation.kind !== 'upload'" v-tooltip.top="'Move down'" icon="pi pi-arrow-down" size="small" severity="secondary" text :disabled="(operation.queue_position ?? 0) >= maxQueuePosition" :aria-label="`Move ${label(operation)} down`" @click="emit('reorder', operation.id, 'down')" />
                   <Button label="Cancel" size="small" severity="secondary" text @click="emit('cancel', operation)" />
                 </div>
               </div>

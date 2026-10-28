@@ -18,8 +18,9 @@ export function createExplorerWorkspace() {
   const preferences = shallowRef<UserPreferences | null>(null)
   const thumbnails = createThumbnailJobs()
   let preferenceWrites: Promise<unknown> = Promise.resolve()
+  let uploadTail: Promise<void> = Promise.resolve()
   let disposed = false
-  onBeforeUnmount(() => { disposed = true })
+  onBeforeUnmount(() => { disposed = true; api.abandonUploads() })
   return {
     split: ref(false),
     activePane: ref<PaneId>('left'),
@@ -32,6 +33,14 @@ export function createExplorerWorkspace() {
     thumbnailJobs: thumbnails.jobs,
     thumbnails,
     preferences,
+    enqueueUpload(run: () => Promise<void>) {
+      const transfer = uploadTail.catch(() => undefined).then(() => {
+        if (disposed) return
+        return run()
+      })
+      uploadTail = transfer
+      return transfer
+    },
     savePreferences(snapshot: UserPreferences) {
       preferences.value = { ...snapshot }
       const write = preferenceWrites.catch(() => undefined).then(() => {

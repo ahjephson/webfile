@@ -17,7 +17,7 @@ WebFile primarily serves file browsing and moving. Keep additions focused on tho
 
 ## 2. Show every item in a multiple-item upload
 
-- Status: investigated; not scheduled or implemented.
+- Status: implemented locally; awaiting release.
 - Bug reported on 2026-10-28: uploading multiple items shows only one item in the task list.
 - Expected behaviour: every upload item appears in Tasks, with items waiting to upload shown as queued.
 - Finding: confirmed scheduling gap in `FileExplorer.vue` and `api/client.ts`. `uploadFileList` awaits each complete upload before starting the next. A task is created only by that file's upload-init request, so the remaining selected files have no task records yet. The backend init handler currently creates a running task, not a queued task.
@@ -52,8 +52,15 @@ WebFile primarily serves file browsing and moving. Keep additions focused on tho
 - Proposed change: reconcile active thumbnail jobs, reject stale state updates, and refresh authoritative state when cancellation races with completion/removal. Distinguish an already finished job from a real cancellation failure. Verify the backend transition races before choosing the final fix.
 - Validation needed: cancel an actually queued job behind occupied workers, cancel during the queued-to-running transition, completion before click, lost terminal events under a large queue, delayed list responses and repeated cancellation.
 
-## Investigation checks
+## Initial investigation checks
 
-- Investigated on 2026-10-28 through source and existing test review; no implementation changes made.
+- Initially investigated on 2026-10-28 through source and existing test review, before implementation began.
 - Existing focused Go tests passed in native WSL: filesystem `TestVideoThumbnail(Batch|Queue|Requests|Retries)` tests and HTTP-server `TestUpload|Test.*Extract` tests.
-- These checks do not reproduce the exact reported thumbnail cancellation sequence or provide new browser regression coverage for the proposed changes.
+- Those initial checks did not reproduce the exact reported thumbnail cancellation sequence or provide new browser regression coverage.
+
+## Local implementation validation (unreleased)
+
+- All five items are implemented locally, each in a separate feature commit. Keep these entries until the changes are released, then remove them.
+- Development and production/PAM backend tests and vet passed. The frontend type check and build passed.
+- Chromium and WebKit checks cover same-pane/split-pane dragging, background Paste, extraction output paths, thumbnail reconciliation and cancellation races, upload queuing, queued cancellation, multiple batches, navigation, per-file failures and reload recovery.
+- Inspected the affected UI in the Codex in-app browser, including a real queued-thumbnail cancellation. Browser permission declined advanced drag inspection and a manual file-upload preview; automated real-file transfer/upload checks passed, and upload task cards were inspected read-only.

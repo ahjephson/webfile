@@ -428,6 +428,29 @@ func (m *Manager) UpsertExternal(id, kind string, sources []string, destination 
 	return m.upsertExternalLocked(id, kind, sources, destination, state, bytesDone, bytesTotal, itemsDone, itemsTotal, message, errText, attempt)
 }
 
+// QueueExternal registers browser-driven work without occupying a worker slot.
+// An existing active attempt must not be replaced by another selected batch.
+func (m *Manager) QueueExternal(id, kind string, sources []string, destination string, bytesDone, bytesTotal int64, attempt string) (Operation, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if rec := m.records[id]; rec != nil && activeState(rec.op.State) {
+		return cloneOperation(rec.op), false
+	}
+	return m.upsertExternalLocked(id, kind, sources, destination, StateQueued, bytesDone, bytesTotal, 0, 1, "Queued", "", attempt), true
+}
+
+// StartExternal fences the transition against cancellation and newer attempts.
+func (m *Manager) StartExternal(id, attempt, message string) (Operation, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec := m.records[id]
+	if rec == nil || !rec.external || attempt == "" || rec.op.AttemptID != attempt || rec.op.State != StateQueued {
+		return Operation{}, false
+	}
+	op := rec.op
+	return m.upsertExternalLocked(id, op.Kind, op.Sources, op.Destination, StateRunning, op.BytesDone, op.BytesTotal, op.ItemsDone, op.ItemsTotal, message, "", attempt), true
+}
+
 func (m *Manager) upsertExternalLocked(id, kind string, sources []string, destination string, state State, bytesDone, bytesTotal, itemsDone, itemsTotal int64, message, errText, attempt string) Operation {
 	now := time.Now().UTC()
 	rec := m.records[id]
@@ -503,7 +526,7 @@ func (m *Manager) ReportExternalFailure(id, attempt string, stop func(string)) (
 	if rec == nil || !rec.external || rec.op.Kind != "upload" {
 		return Operation{}, false
 	}
-	if attempt != "" && rec.op.AttemptID == attempt && rec.op.State == StateRunning {
+	if attempt != "" && rec.op.AttemptID == attempt && (rec.op.State == StateRunning || rec.op.State == StateQueued) {
 		if stop != nil {
 			stop(rec.op.ID)
 		}
@@ -545,7 +568,7 @@ func (m *Manager) Cancel(id string) bool {
 		m.mu.Unlock()
 		return false
 	}
-	if rec.op.State == StateQueued || rec.op.State == StateAwaitingInput && rec.cancel == nil && !rec.external {
+	if !rec.external && (rec.op.State == StateQueued || rec.op.State == StateAwaitingInput && rec.cancel == nil) {
 		rec.op.Input = nil
 		now := time.Now().UTC()
 		rec.op.State = StateCancelled

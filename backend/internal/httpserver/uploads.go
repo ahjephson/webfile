@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ type uploadInitRequest struct {
 	Size         int64  `json:"size"`
 	LastModified int64  `json:"last_modified,omitempty"`
 	AttemptID    string `json:"attempt_id,omitempty"`
+	Queued       bool   `json:"queued,omitempty"`
 }
 
 func (s *Server) initUpload(w http.ResponseWriter, r *http.Request) {
@@ -34,13 +36,27 @@ func (s *Server) initUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.Queued && req.AttemptID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "An upload attempt ID is required."})
+		return
+	}
 	upload, err := s.uploads.Init(r.Context(), req.Dir, req.Name, req.Size, req.LastModified)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	op := s.ops.UpsertExternal(upload.OperationID, "upload", []string{upload.Path}, upload.Path, operations.StateRunning,
-		upload.Offset, upload.Size, 0, 1, "Uploading "+upload.Name, "", req.AttemptID)
+	var op operations.Operation
+	if req.Queued {
+		var ok bool
+		op, ok = s.ops.QueueExternal(upload.OperationID, "upload", []string{upload.Path}, upload.Path, upload.Offset, upload.Size, req.AttemptID)
+		if !ok {
+			writeError(w, filesystem.ErrConflict)
+			return
+		}
+	} else {
+		op = s.ops.UpsertExternal(upload.OperationID, "upload", []string{upload.Path}, upload.Path, operations.StateRunning,
+			upload.Offset, upload.Size, 0, 1, "Uploading "+upload.Name, "", req.AttemptID)
+	}
 	if cancellable, ok := s.ops.SetExternalCancel(upload.OperationID, func() {
 		_ = s.uploads.Cancel(upload.ID)
 	}); ok {
@@ -60,6 +76,14 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	var observed operations.Operation
 	if s.ops != nil {
 		observed, _ = s.ops.Get("upload-" + id)
+		if observed.State == operations.StateQueued {
+			var ok bool
+			observed, ok = s.ops.StartExternal(observed.ID, r.URL.Query().Get("attempt_id"), "Uploading "+path.Base(observed.Destination))
+			if !ok {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "This upload attempt is no longer active. Retry the upload to resume it."})
+				return
+			}
+		}
 		if observed.State != operations.StateRunning || (r.URL.Query().Get("attempt_id") != "" && r.URL.Query().Get("attempt_id") != observed.AttemptID) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "This upload attempt is no longer active. Retry the upload to resume it."})
 			return

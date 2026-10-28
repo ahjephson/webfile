@@ -93,22 +93,48 @@ interface UploadInitResponse {
   operation: FileOperation
 }
 
+export interface PreparedUpload extends UploadInitResponse {
+  attempt: string
+}
+
 interface UploadChunkResponse extends UploadInitResponse {
   complete: boolean
 }
 
 const uploadFailureMessage = 'The transfer was interrupted. Please try again to resume it.'
 const failureStorageKey = appPath('pending-upload-failures-v1')
+const queuedStorageKey = appPath('prepared-uploads-v1')
 type PendingUploadFailure = { id: string; attempt_id: string }
 const pendingUploadFailures = new Map<string, PendingUploadFailure>()
+const preparedUploads = new Map<string, PendingUploadFailure>()
 const reportingUploadFailures = new Map<string, Promise<FileOperation | undefined>>()
 const failureKey = (failure: PendingUploadFailure) => failure.attempt_id
 try {
-  const saved: unknown = JSON.parse(sessionStorage.getItem(failureStorageKey) ?? '[]')
-  if (Array.isArray(saved)) for (const item of saved) {
-    if (item && typeof item.id === 'string' && typeof item.attempt_id === 'string') pendingUploadFailures.set(failureKey(item), item)
+  for (const storageKey of [failureStorageKey, queuedStorageKey]) {
+    const saved: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? '[]')
+    if (Array.isArray(saved)) for (const item of saved) {
+      if (item && typeof item.id === 'string' && typeof item.attempt_id === 'string') pendingUploadFailures.set(failureKey(item), item)
+    }
   }
+  saveUploadFailures()
+  sessionStorage.removeItem(queuedStorageKey)
 } catch { /* Storage may be unavailable; keep reports in memory. */ }
+
+function savePreparedUploads() {
+  try { sessionStorage.setItem(queuedStorageKey, JSON.stringify([...preparedUploads.values()])) } catch { /* Keep metadata in memory. */ }
+}
+
+function forgetPreparedUpload(attempt: string) {
+  preparedUploads.delete(attempt)
+  savePreparedUploads()
+}
+
+function abandonUploads() {
+  for (const upload of preparedUploads.values()) pendingUploadFailures.set(failureKey(upload), upload)
+  saveUploadFailures()
+  for (const upload of [...preparedUploads.values()].slice(0, 8)) void reportUploadFailure(upload)
+}
+window.addEventListener('pagehide', abandonUploads)
 
 function saveUploadFailures() {
   try { sessionStorage.setItem(failureStorageKey, JSON.stringify([...pendingUploadFailures.values()])) } catch { /* Keep reports in memory. */ }
@@ -120,7 +146,7 @@ function failedUpload(operation: FileOperation): FileOperation {
 }
 
 function reconcileUploadFailure(operation: FileOperation): FileOperation {
-  return operation.kind === 'upload' && operation.state === 'running' && operation.attempt_id
+  return operation.kind === 'upload' && ['queued', 'running'].includes(operation.state) && operation.attempt_id
     && pendingUploadFailures.has(failureKey({ id: operation.id, attempt_id: operation.attempt_id })) ? failedUpload(operation) : operation
 }
 
@@ -131,7 +157,7 @@ function reportUploadFailure(failure: PendingUploadFailure): Promise<FileOperati
   const reporting = (async () => {
     try {
       const operation = await request<FileOperation>('/api/fs/uploads/failure', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(failure), signal: AbortSignal.timeout(2000),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(failure), signal: AbortSignal.timeout(2000), keepalive: true,
       })
       pendingUploadFailures.delete(key)
       saveUploadFailures()
@@ -150,6 +176,8 @@ function reportUploadFailure(failure: PendingUploadFailure): Promise<FileOperati
 }
 
 export const api = {
+  abandonUploads,
+  forgetPreparedUpload,
   reconcileUploadFailure,
   hasPendingUploadFailures: () => pendingUploadFailures.size > 0,
   resolveConflict(id: string, decision: ConflictDecision) {
@@ -295,11 +323,33 @@ export const api = {
     })
   },
 
-  async upload(dir: string, file: File, onProgress?: (operation: FileOperation) => void): Promise<FileOperation> {
+  async queueUpload(dir: string, file: File): Promise<PreparedUpload> {
     const attempt = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
-    let operation: FileOperation | undefined
+    const failure = { id: '', attempt_id: attempt }
+    preparedUploads.set(attempt, failure)
+    savePreparedUploads()
     try {
       const initial = await request<UploadInitResponse>('/api/fs/uploads/init', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir, name: file.name, size: file.size, last_modified: file.lastModified, attempt_id: attempt, queued: true }),
+      })
+      failure.id = initial.operation.id
+      savePreparedUploads()
+      return { ...initial, attempt }
+    } catch (error) {
+      pendingUploadFailures.set(attempt, failure)
+      saveUploadFailures()
+      forgetPreparedUpload(attempt)
+      await reportUploadFailure(failure)
+      throw error
+    }
+  },
+
+  async upload(dir: string, file: File, onProgress?: (operation: FileOperation) => void, prepared?: PreparedUpload): Promise<FileOperation> {
+    const attempt = prepared?.attempt ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
+    let operation: FileOperation | undefined
+    try {
+      const initial = prepared ?? await request<UploadInitResponse>('/api/fs/uploads/init', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dir, name: file.name, size: file.size, last_modified: file.lastModified, attempt_id: attempt }),
@@ -330,6 +380,8 @@ export const api = {
       const reported = await reportUploadFailure(failure)
       if (reported) onProgress?.(reported)
       throw error
+    } finally {
+      if (prepared) forgetPreparedUpload(attempt)
     }
   },
 
