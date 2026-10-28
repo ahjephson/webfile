@@ -96,6 +96,8 @@ export interface UploadSession {
 export type OperationState = 'queued' | 'preparing' | 'awaiting_input' | 'running' | 'cancelling' | 'cleaning_up' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 
 export interface FileOperation {
+  attempt_id?: string
+  client_failure?: boolean
   input?: TransferConflict
   id: string
   kind: 'copy' | 'move' | 'delete' | 'extract' | 'archive' | 'upload' | string

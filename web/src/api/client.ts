@@ -97,7 +97,61 @@ interface UploadChunkResponse extends UploadInitResponse {
   complete: boolean
 }
 
+const uploadFailureMessage = 'The transfer was interrupted. Please try again to resume it.'
+const failureStorageKey = appPath('pending-upload-failures-v1')
+type PendingUploadFailure = { id: string; attempt_id: string }
+const pendingUploadFailures = new Map<string, PendingUploadFailure>()
+const reportingUploadFailures = new Map<string, Promise<FileOperation | undefined>>()
+const failureKey = (failure: PendingUploadFailure) => failure.attempt_id
+try {
+  const saved: unknown = JSON.parse(sessionStorage.getItem(failureStorageKey) ?? '[]')
+  if (Array.isArray(saved)) for (const item of saved) {
+    if (item && typeof item.id === 'string' && typeof item.attempt_id === 'string') pendingUploadFailures.set(failureKey(item), item)
+  }
+} catch { /* Storage may be unavailable; keep reports in memory. */ }
+
+function saveUploadFailures() {
+  try { sessionStorage.setItem(failureStorageKey, JSON.stringify([...pendingUploadFailures.values()])) } catch { /* Keep reports in memory. */ }
+}
+
+function failedUpload(operation: FileOperation): FileOperation {
+  return { ...operation, state: 'failed', phase: 'failed', message: 'Upload stopped', error: uploadFailureMessage,
+    cancellable: false, finished_at: operation.updated_at, client_failure: true }
+}
+
+function reconcileUploadFailure(operation: FileOperation): FileOperation {
+  return operation.kind === 'upload' && operation.state === 'running' && operation.attempt_id
+    && pendingUploadFailures.has(failureKey({ id: operation.id, attempt_id: operation.attempt_id })) ? failedUpload(operation) : operation
+}
+
+function reportUploadFailure(failure: PendingUploadFailure): Promise<FileOperation | undefined> {
+  const key = failureKey(failure)
+  const existing = reportingUploadFailures.get(key)
+  if (existing) return existing
+  const reporting = (async () => {
+    try {
+      const operation = await request<FileOperation>('/api/fs/uploads/failure', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(failure), signal: AbortSignal.timeout(2000),
+      })
+      pendingUploadFailures.delete(key)
+      saveUploadFailures()
+      return operation
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        pendingUploadFailures.delete(key)
+        saveUploadFailures()
+      }
+      // The proxy may reject this request too. Retry during task reconciliation.
+      return undefined
+    } finally { reportingUploadFailures.delete(key) }
+  })()
+  reportingUploadFailures.set(key, reporting)
+  return reporting
+}
+
 export const api = {
+  reconcileUploadFailure,
+  hasPendingUploadFailures: () => pendingUploadFailures.size > 0,
   resolveConflict(id: string, decision: ConflictDecision) {
     return request<FileOperation>(`/api/fs/operations/${encodeURIComponent(id)}/input`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(decision),
@@ -242,41 +296,41 @@ export const api = {
   },
 
   async upload(dir: string, file: File, onProgress?: (operation: FileOperation) => void): Promise<FileOperation> {
-    const initial = await request<UploadInitResponse>('/api/fs/uploads/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dir, name: file.name, size: file.size, last_modified: file.lastModified }),
-    })
-    let upload = initial.upload
-    let operation = initial.operation
-    onProgress?.(operation)
-    const chunkSize = 8 * 1024 * 1024
-
-    if (upload.offset === upload.size) {
-      const query = new URLSearchParams({ id: upload.id, offset: String(upload.offset) })
-      const finished = await request<UploadChunkResponse>(`/api/fs/uploads/chunk?${query}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: new Blob([]),
+    const attempt = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
+    let operation: FileOperation | undefined
+    try {
+      const initial = await request<UploadInitResponse>('/api/fs/uploads/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir, name: file.name, size: file.size, last_modified: file.lastModified, attempt_id: attempt }),
       })
-      onProgress?.(finished.operation)
-      return finished.operation
-    }
-
-    while (upload.offset < upload.size) {
-      const end = Math.min(upload.offset + chunkSize, upload.size)
-      const chunk = file.slice(upload.offset, end)
-      const query = new URLSearchParams({ id: upload.id, offset: String(upload.offset) })
-      const result = await request<UploadChunkResponse>(`/api/fs/uploads/chunk?${query}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: chunk,
-      })
-      upload = result.upload
-      operation = result.operation
+      let upload = initial.upload
+      operation = initial.operation
+      let currentOperation = initial.operation
       onProgress?.(operation)
+      const chunkSize = 8 * 1024 * 1024
+      // Even empty files and fully staged resumes need one publication request.
+      do {
+        const end = Math.min(upload.offset + chunkSize, upload.size)
+        const query = new URLSearchParams({ id: upload.id, offset: String(upload.offset), attempt_id: currentOperation.attempt_id ?? attempt })
+        const result: UploadChunkResponse = await request<UploadChunkResponse>(`/api/fs/uploads/chunk?${query}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: file.slice(upload.offset, end),
+        })
+        upload = result.upload
+        operation = result.operation
+        currentOperation = result.operation
+        onProgress?.(currentOperation)
+      } while (upload.offset < upload.size)
+      return currentOperation
+    } catch (error) {
+      const failure = { id: operation?.id ?? '', attempt_id: operation?.attempt_id ?? attempt }
+      pendingUploadFailures.set(failureKey(failure), failure)
+      saveUploadFailures()
+      if (operation) onProgress?.(failedUpload({ ...operation, attempt_id: operation.attempt_id ?? attempt }))
+      const reported = await reportUploadFailure(failure)
+      if (reported) onProgress?.(reported)
+      throw error
     }
-    return operation
   },
 
   startOperation(kind: 'copy' | 'move' | 'delete' | 'extract' | 'archive', sources: string[], destination?: string, copyChunkMiB?: number) {
@@ -302,8 +356,9 @@ export const api = {
   },
 
   async operations(): Promise<{ operations: FileOperation[] }> {
+    await Promise.all([...pendingUploadFailures.values()].slice(0, 8).map(reportUploadFailure))
     const response = await request<{ operations?: FileOperation[] | null }>('/api/fs/operations')
-    return { operations: arrayOrEmpty(response.operations) }
+    return { operations: arrayOrEmpty(response.operations).map(reconcileUploadFailure) }
   },
 
   cancelOperation(id: string) {

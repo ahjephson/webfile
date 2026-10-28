@@ -271,6 +271,15 @@ func (m *UploadManager) Active(id string) bool {
 	return m.active[id] != nil
 }
 
+// Interrupt stops an in-flight request without discarding its resumable bytes.
+func (m *UploadManager) Interrupt(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cancel := m.active[id]; cancel != nil {
+		cancel()
+	}
+}
+
 type uploadContextReader struct {
 	ctx    context.Context
 	reader io.Reader

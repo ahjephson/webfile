@@ -82,6 +82,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/fs/chown", s.chown)
 	s.mux.HandleFunc("POST /api/fs/uploads/init", s.initUpload)
 	s.mux.HandleFunc("PUT /api/fs/uploads/chunk", s.uploadChunk)
+	s.mux.HandleFunc("POST /api/fs/uploads/failure", s.reportUploadFailure)
 	s.mux.HandleFunc("DELETE /api/fs/uploads", s.cancelUpload)
 	s.mux.HandleFunc("GET /api/fs/operations", s.listOperations)
 	s.mux.HandleFunc("GET /api/fs/operations/{id}/download", s.downloadOperationArtifact)

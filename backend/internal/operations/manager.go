@@ -40,6 +40,7 @@ const (
 type Operation struct {
 	Input          json.RawMessage `json:"input,omitempty"`
 	ID             string          `json:"id"`
+	AttemptID      string          `json:"attempt_id,omitempty"`
 	Kind           string          `json:"kind"`
 	Sources        []string        `json:"sources,omitempty"`
 	Destination    string          `json:"destination,omitempty"`
@@ -149,6 +150,7 @@ type record struct {
 	cleanup          CleanupFunc
 	cancel           context.CancelFunc
 	external         bool
+	clientFailure    bool
 	lastBroadcast    time.Time
 	lastPersistence  time.Time
 	rateSamples      []transferRateSample
@@ -416,10 +418,18 @@ func taskError(run func() error) (err error) {
 	return run()
 }
 
-func (m *Manager) UpsertExternal(id, kind string, sources []string, destination string, state State, bytesDone, bytesTotal, itemsDone, itemsTotal int64, message, errText string) Operation {
-	now := time.Now().UTC()
+func (m *Manager) UpsertExternal(id, kind string, sources []string, destination string, state State, bytesDone, bytesTotal, itemsDone, itemsTotal int64, message, errText string, requestedAttempt ...string) Operation {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	attempt := newID()
+	if len(requestedAttempt) > 0 && requestedAttempt[0] != "" {
+		attempt = requestedAttempt[0]
+	}
+	return m.upsertExternalLocked(id, kind, sources, destination, state, bytesDone, bytesTotal, itemsDone, itemsTotal, message, errText, attempt)
+}
+
+func (m *Manager) upsertExternalLocked(id, kind string, sources []string, destination string, state State, bytesDone, bytesTotal, itemsDone, itemsTotal int64, message, errText, attempt string) Operation {
+	now := time.Now().UTC()
 	rec := m.records[id]
 	previousState := State("")
 	if rec == nil {
@@ -429,6 +439,8 @@ func (m *Manager) UpsertExternal(id, kind string, sources []string, destination 
 		previousState = rec.op.State
 	}
 	rec.external = true
+	rec.clientFailure = false
+	rec.op.AttemptID = attempt
 	rec.op.Kind = kind
 	rec.op.Sources = append([]string(nil), sources...)
 	rec.op.Destination = destination
@@ -459,6 +471,48 @@ func (m *Manager) UpsertExternal(id, kind string, sources []string, destination 
 	return cloneOperation(rec.op)
 }
 
+// AdvanceExternal cannot revive a stopped upload or overwrite a newer retry.
+// Confirmed publication may still win a race with a client reporting a lost response.
+func (m *Manager) AdvanceExternal(op Operation, attempt string) (Operation, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec := m.records[op.ID]
+	if rec == nil || !rec.external {
+		return Operation{}, false
+	}
+	if rec.op.AttemptID != attempt || (rec.op.State != StateRunning && !(rec.clientFailure && op.State == StateCompleted)) {
+		return cloneOperation(rec.op), false
+	}
+	return m.upsertExternalLocked(op.ID, op.Kind, op.Sources, op.Destination, op.State, op.BytesDone, op.BytesTotal, op.ItemsDone, op.ItemsTotal, op.Message, op.Error, attempt), true
+}
+
+// ReportExternalFailure handles failures outside the worker, including proxy
+// rejections. stop must preserve staging and must not call back into Manager.
+func (m *Manager) ReportExternalFailure(id, attempt string, stop func(string)) (Operation, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec := m.records[id]
+	if id == "" && attempt != "" {
+		for _, candidate := range m.records {
+			if candidate.op.AttemptID == attempt {
+				rec = candidate
+				break
+			}
+		}
+	}
+	if rec == nil || !rec.external || rec.op.Kind != "upload" {
+		return Operation{}, false
+	}
+	if attempt != "" && rec.op.AttemptID == attempt && rec.op.State == StateRunning {
+		if stop != nil {
+			stop(rec.op.ID)
+		}
+		m.failExternalLocked(rec, clienterror.New("upload request failed outside the worker", clienterror.Incomplete))
+		rec.clientFailure = true
+	}
+	return cloneOperation(rec.op), true
+}
+
 // FailExternal preserves cancellation and newer upload attempts when an older
 // HTTP request finishes with an error. Staging is owned by the upload manager.
 func (m *Manager) FailExternal(id string, observed time.Time, err error) {
@@ -468,9 +522,13 @@ func (m *Manager) FailExternal(id string, observed time.Time, err error) {
 	if rec == nil || !rec.external || rec.op.State != StateRunning || !rec.op.UpdatedAt.Equal(observed) {
 		return
 	}
+	m.failExternalLocked(rec, err)
+}
+
+func (m *Manager) failExternalLocked(rec *record, err error) {
 	now := time.Now().UTC()
 	rec.op.State, rec.op.Phase = StateFailed, "failed"
-	slog.Error("external task failed", "id", id, "kind", rec.op.Kind, "err", err)
+	slog.Error("external task failed", "id", rec.op.ID, "kind", rec.op.Kind, "err", err)
 	rec.op.Error, rec.op.Message = clienterror.Text(err), "Upload stopped"
 	rec.op.UpdatedAt, rec.op.FinishedAt = now, timePointer(now)
 	rec.op.Cancellable, rec.cancel = false, nil

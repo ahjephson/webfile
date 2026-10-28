@@ -42,17 +42,18 @@ function createFileOperations(onTerminal: TerminalHandler) {
   let historyRevision = 0
   let reconciliationTimer: ReturnType<typeof setInterval> | undefined
   let reconciling = false
+  const pendingFailureReports = ref(api.hasPendingUploadFailures())
 
   // WebSocket delivery is best effort. Reconcile while work is active so a
   // dropped terminal event cannot leave any kind of task pending indefinitely.
-  watch(() => activeOperations.value.length > 0, active => {
+  watch(() => activeOperations.value.length > 0 || operations.value.some(operation => operation.client_failure) || pendingFailureReports.value, active => {
     if (reconciliationTimer !== undefined) clearInterval(reconciliationTimer)
     reconciliationTimer = active ? setInterval(async () => {
       if (reconciling) return
       reconciling = true
       try { await load() } finally { reconciling = false }
     }, 5000) : undefined
-  })
+  }, { immediate: true })
   onBeforeUnmount(() => {
     if (reconciliationTimer !== undefined) clearInterval(reconciliationTimer)
   })
@@ -80,11 +81,20 @@ function createFileOperations(onTerminal: TerminalHandler) {
       }
     } catch {
       // Operation history is supplementary; realtime updates can still populate it.
+    } finally {
+      pendingFailureReports.value = api.hasPendingUploadFailures()
     }
   }
 
   function update(operation: FileOperation) {
+    operation = api.reconcileUploadFailure(operation)
     const previous = operations.value.find(item => item.id === operation.id)
+    if (operation.client_failure && previous && previous.attempt_id === operation.attempt_id) {
+      if (terminalStates.includes(previous.state) && !previous.client_failure) return
+      // A lost HTTP response may trail a newer WebSocket progress update.
+      // Fail that same attempt using its newest progress, without clock guesses.
+      if (previous.state === 'running') operation = api.reconcileUploadFailure(previous)
+    }
     if (previous && !acceptUpdate(operation, previous)) return
     resetAnnouncements(operation, previous)
     operations.value = retainOperations([operation, ...operations.value.filter(item => item.id !== operation.id)])
@@ -93,6 +103,7 @@ function createFileOperations(onTerminal: TerminalHandler) {
 
   function acceptUpdate(operation: FileOperation, previous: FileOperation) {
     if (updatedAfter(previous, operation)) return false
+    if (previous.client_failure && previous.attempt_id === operation.attempt_id && activeStates.includes(operation.state)) return false
     if (terminalStates.includes(previous.state) && !terminalStates.includes(operation.state)) {
       return previous.kind === 'upload' && operation.kind === 'upload' && activeStates.includes(operation.state) && updatedAfter(operation, previous)
     }

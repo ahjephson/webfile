@@ -6,6 +6,60 @@ const task = (id: string, state: string, updated = 1) => ({ id, kind: 'upload', 
   progress_done: 1, progress_total: 10, progress_unit: 'bytes', cancellable: state === 'running',
   started_at: '2000-01-01T00:00:00Z', updated_at: `2000-01-01T00:00:00.00000${updated}Z` })
 
+for (const rejectedRequest of ['init-response', 'chunk']) {
+  for (const blockedReport of [false, true]) {
+    test(`proxy 500 on ${rejectedRequest} fails the task${blockedReport ? ' even while failure reports are blocked and after reload' : ''}`, async ({ page }) => {
+      const fixture = await featureFixture(page, 'proxy-upload-failure')
+      let reportsBlocked = blockedReport
+      let initial: { upload: { id: string; source_modified: number }; operation: { id: string; attempt_id: string } } | undefined
+      await page.route('**/api/fs/uploads/init', async route => {
+        const response = await route.fetch()
+        initial = await response.json()
+        if (rejectedRequest === 'init-response') {
+          await route.fulfill({ status: 500, contentType: 'text/html', body: '<html>nginx upstream failure</html>' })
+        } else await route.fulfill({ response })
+      })
+      await page.route('**/api/fs/uploads/chunk?**', route => route.fulfill({ status: 500, contentType: 'text/html', body: '<html>nginx upload failure</html>' }))
+      await page.route('**/api/fs/uploads/failure', async route => {
+        if (reportsBlocked) await route.fulfill({ status: 502, contentType: 'text/html', body: '<html>nginx unavailable</html>' })
+        else await route.continue()
+      })
+      await page.goto(`/#path=${encodeURIComponent(fixture.path)}`)
+      const name = `proxy-${fixture.path.split('/').pop()}.txt`
+      await page.locator('input[type=file]').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from('data') })
+      await expect.poll(() => initial?.operation.id).toBeTruthy()
+      const readTask = async () => (await (await page.request.get('/api/fs/operations')).json()).operations.find((op: { id: string }) => op.id === initial!.operation.id)
+      await expect(page.getByRole('button', { name: 'Open tasks', exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+      const upload = page.getByRole('complementary').getByRole('article').filter({ hasText: name })
+      await expect(upload.locator('[data-task-status]')).toHaveText('failed', { timeout: 10000 })
+      await expect(upload.getByText('The transfer was interrupted. Please try again to resume it.', { exact: true })).toBeVisible()
+      if (blockedReport) {
+        expect((await readTask()).state).toBe('running')
+        await page.reload()
+        await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+        await expect(upload.locator('[data-task-status]')).toHaveText('failed')
+        await expect(upload.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0)
+        reportsBlocked = false
+      }
+      await expect.poll(async () => (await readTask()).state, { timeout: 12000 }).toBe('failed')
+      expect((await readTask()).error).toBe('The transfer was interrupted. Please try again to resume it.')
+      // The report retains staging. Retry the same file identity and publish it.
+      const resumedResponse = await page.request.post('/api/fs/uploads/init', { data: {
+        dir: fixture.path, name, size: 4, last_modified: initial!.upload.source_modified,
+      } })
+      expect(resumedResponse.ok()).toBe(true)
+      const resumed = await resumedResponse.json()
+      expect(resumed.upload.id).toBe(initial!.upload.id)
+      expect(resumed.operation.attempt_id).not.toBe(initial!.operation.attempt_id)
+      const completed = await page.request.put(`/api/fs/uploads/chunk?id=${resumed.upload.id}&offset=0&attempt_id=${resumed.operation.attempt_id}`, { data: 'data', headers: { 'Content-Type': 'application/octet-stream' } })
+      expect(completed.ok()).toBe(true)
+      expect((await completed.json()).operation.state).toBe('completed')
+      await expect.poll(() => fixture.read(`${fixture.path}/${name}`)).toBe('data')
+    })
+  }
+}
+
 test('real task failures expose a useful reason without server paths, including after reload', async ({ page }) => {
   const fixture = await featureFixture(page, 'task-error-privacy')
   const name = `missing-${fixture.path.split('/').pop()}.txt`
@@ -173,6 +227,24 @@ async function taskFolder(page: Page) {
   await page.routeWebSocket('**/api/fs/ws', socket => { send = message => socket.send(JSON.stringify(message)) })
   return { send: (message: unknown) => send(message) }
 }
+
+test('a proxy failure still fails newer realtime progress when history and reporting are unavailable', async ({ page }) => {
+  const realtime = await taskFolder(page)
+  const running = { ...task('newer-progress', 'running'), attempt_id: 'a'.repeat(32) }
+  await page.route('**/api/fs/operations', route => route.fulfill({ status: 502, body: 'proxy unavailable' }))
+  await page.route('**/api/fs/uploads/failure', route => route.fulfill({ status: 502, body: 'proxy unavailable' }))
+  await page.route('**/api/fs/uploads/init', route => route.fulfill({ json: { upload: { id: 'newer-progress', offset: 0, size: 4 }, operation: running } }))
+  await page.route('**/api/fs/uploads/chunk?**', async route => {
+    realtime.send({ type: 'operation-updated', operation: { ...running, bytes_done: 2, progress_done: 2, updated_at: '2000-01-01T00:00:01Z' } })
+    await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+    await expect(page.getByRole('complementary').getByRole('article').getByRole('progressbar')).toHaveAttribute('aria-valuenow', '20')
+    await route.fulfill({ status: 500, contentType: 'text/html', body: '<html>nginx error</html>' })
+  })
+  await page.goto('/#path=%2Fdocs')
+  await page.locator('input[type=file]').setInputFiles({ name: 'newer-progress.txt', mimeType: 'text/plain', buffer: Buffer.from('data') })
+  const upload = page.getByRole('complementary').getByRole('article').filter({ hasText: 'newer-progress.txt' })
+  await expect(upload.locator('[data-task-status]')).toHaveText('failed')
+})
 
 for (const action of ['clear', 'remove']) {
   test(`a delayed history response cannot undo ${action} while live active updates are retained`, async ({ page }) => {

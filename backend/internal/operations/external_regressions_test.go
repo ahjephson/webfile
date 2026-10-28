@@ -24,6 +24,28 @@ func TestExternalFailureDoesNotOverwriteNewerAttemptOrCancellation(t *testing.T)
 	}
 }
 
+func TestClientFailureFencesOldProgressButConfirmedPublicationWins(t *testing.T) {
+	m := New(50)
+	defer m.Close(context.Background())
+	op := m.UpsertExternal("upload-one", "upload", nil, "", StateRunning, 0, 4, 0, 1, "uploading", "")
+	failed, _ := m.ReportExternalFailure(op.ID, op.AttemptID, nil)
+	if failed.State != StateFailed {
+		t.Fatal(failed)
+	}
+	op.BytesDone = 2
+	if current, changed := m.AdvanceExternal(op, op.AttemptID); changed || current.State != StateFailed {
+		t.Fatalf("late progress revived task: %#v", current)
+	}
+	op.State = StateCompleted
+	if current, changed := m.AdvanceExternal(op, op.AttemptID); !changed || current.State != StateCompleted {
+		t.Fatalf("confirmed publication was lost: %#v", current)
+	}
+	newer := m.UpsertExternal(op.ID, "upload", nil, "", StateRunning, 0, 4, 0, 1, "retry", "")
+	if current, changed := m.AdvanceExternal(op, op.AttemptID); changed || current.AttemptID != newer.AttemptID || current.State != StateRunning {
+		t.Fatalf("stale result overwrote retry: %#v", current)
+	}
+}
+
 func TestExplicitHistoryRemovalCleansArtifactsAndRetainsFailures(t *testing.T) {
 	for _, clear := range []bool{false, true} {
 		t.Run(map[bool]string{false: "remove", true: "clear"}[clear], func(t *testing.T) {
