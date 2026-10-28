@@ -1090,6 +1090,18 @@ function openContext(entry: FileEntry, event: MouseEvent | PointerEvent) {
   contextMenu.value?.show(event)
 }
 
+function openBackgroundContext(event: MouseEvent) {
+  const target = event.target
+  if (!(target instanceof Element) || target.closest('[data-file-entry], button, input, textarea, select, a')) return
+  if (!fileClipboard.value) return
+  event.preventDefault()
+  activatePane()
+  clearSelection()
+  clearFocus()
+  contextEntry.value = null
+  contextMenu.value?.show(event)
+}
+
 function showActionsMenu(event: Event) {
   contextEntry.value = null
   actionsMenu.value?.toggle(event)
@@ -1996,6 +2008,7 @@ function operationLabel(value: string) {
         tabindex="0"
         @keydown="onKeyDown"
         @click="onFileViewClick"
+        @contextmenu="openBackgroundContext"
         @pointerdown.capture="onFileViewPointerDown"
         @dragover="onViewDragOver"
         @dragleave="onViewDragLeave"

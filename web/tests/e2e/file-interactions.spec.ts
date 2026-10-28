@@ -519,7 +519,8 @@ for (const view of ['list', 'grid'] as const) {
 }
 
 for (const action of ['Copy', 'Cut'] as const) {
-  test(`${action.toLowerCase()} and paste targets the currently open directory`, async ({ page }) => {
+  for (const view of ['list', 'grid'] as const) {
+  test(`${view} ${action.toLowerCase()} and background paste targets the currently open directory`, async ({ page }) => {
     let submitted: Record<string, unknown> | undefined
     await page.route('**/api/fs/dir**', async route => {
       const path = new URL(route.request().url()).searchParams.get('path') ?? '/Files'
@@ -565,6 +566,7 @@ for (const action of ['Copy', 'Cut'] as const) {
     })
 
     await page.goto('/#path=%2Fsource')
+    await chooseView(page, view)
     await showSelectionControls(page)
     await page.getByRole('button', { name: 'Select item.txt' }).click()
     await page.getByRole('button', { name: 'Actions' }).click()
@@ -579,12 +581,21 @@ for (const action of ['Copy', 'Cut'] as const) {
     await expect(page.getByText(`${action === 'Copy' ? 'Copied' : 'Cut'} 1 item`, { exact: false })).toHaveCount(0)
     await expect(page.getByText('Navigate to the destination and choose Paste.', { exact: true })).toHaveCount(0)
 
+    const sourceViewport = page.locator('[data-file-viewport]')
+    const sourceBox = (await sourceViewport.boundingBox())!
+    await sourceViewport.click({ button: 'right', position: { x: sourceBox.width - 20, y: sourceBox.height - 20 } })
+    await expect(page.locator('.p-contextmenu').getByRole('menuitem', { name: 'Paste', exact: true })).toBeVisible()
+    await expect(page.locator('.p-contextmenu').getByRole('menuitem', { name: 'Delete', exact: true })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+
     await page.getByRole('button', { name: 'Files', exact: true }).click()
     await page.locator('[data-file-entry]').filter({ hasText: 'destination' }).dblclick()
     await expect(page).toHaveURL(/#path=%2Fdestination$/)
     await expect(page.getByRole('button', { name: 'Actions' })).toBeVisible()
-    await page.getByRole('button', { name: 'Actions' }).click()
-    await page.getByRole('menu').filter({ visible: true }).getByRole('menuitem', { name: 'Paste', exact: true }).click()
+    const viewport = page.locator('[data-file-viewport]')
+    const box = (await viewport.boundingBox())!
+    await viewport.click({ button: 'right', position: { x: box.width - 20, y: box.height - 20 } })
+    await page.locator('.p-contextmenu').getByRole('menuitem', { name: 'Paste', exact: true }).click()
 
     await expect(page.getByText(/^(Copy|Move) complete$/)).toHaveCount(0)
 
@@ -596,6 +607,7 @@ for (const action of ['Copy', 'Cut'] as const) {
     if (action === 'Copy') await expect(page.getByRole('button', { name: 'Actions' })).toBeVisible()
     else await expect(page.getByRole('button', { name: 'Actions' })).toHaveCount(0)
   })
+  }
 }
 
 test('the grid split button changes and persists tile size', async ({ page }) => {

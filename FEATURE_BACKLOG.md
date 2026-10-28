@@ -26,7 +26,7 @@ WebFile primarily serves file browsing and moving. Keep additions focused on tho
 
 ## 3. Paste from the context menu in an empty folder
 
-- Status: investigated; not scheduled or implemented.
+- Status: implemented locally; awaiting release.
 - Bug reported on 2026-10-28: after copying or cutting a file, right-clicking inside an empty destination folder does not open a context menu, preventing Paste through that menu.
 - Expected behaviour: right-clicking the empty folder background opens a context menu with Paste available when the clipboard contains copied or cut items.
 - Finding: confirmed missing event handler. List/grid entries emit context-menu events, but the file-view background has no context-menu handler. The menu model already supports Paste with no selected entries, and the keyboard and Actions-menu paste paths already exist.
