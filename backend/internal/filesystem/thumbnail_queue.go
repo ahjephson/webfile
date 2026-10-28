@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"webfile/internal/clienterror"
 )
 
 var ErrThumbnailQueueFull = errors.New("video thumbnail queue is full")
@@ -242,10 +245,11 @@ func (q *videoThumbnailQueue) settle(job *videoThumbnailJob) {
 }
 
 func (q *videoThumbnailQueue) discardSettling(job *videoThumbnailJob, err error) {
+	slog.Error("thumbnail preparation failed", "id", job.view.ID, "err", err)
 	q.mu.Lock()
 	if q.jobs[job.logicalKey] == job {
 		now := time.Now().UTC()
-		job.view.State, job.view.Error, job.view.Cancellable = "failed", err.Error(), false
+		job.view.State, job.view.Error, job.view.Cancellable = "failed", clienterror.Text(err), false
 		job.view.UpdatedAt, job.view.FinishedAt = now, &now
 		job.cancel, job.ctx = nil, nil
 		delete(q.jobs, job.logicalKey)
@@ -366,7 +370,8 @@ func (q *videoThumbnailQueue) run(job *videoThumbnailJob) {
 		if errors.Is(err, context.Canceled) {
 			state = "cancelled"
 		}
-		q.finish(job, state, err.Error(), expected.key)
+		slog.Error("thumbnail task failed", "id", job.view.ID, "err", err)
+		q.finish(job, state, clienterror.Text(err), expected.key)
 		return
 	}
 	q.finish(job, "ready", "", expected.key)

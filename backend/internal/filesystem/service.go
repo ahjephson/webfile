@@ -18,13 +18,14 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"webfile/internal/clienterror"
 	"webfile/internal/thumbnailcache"
 )
 
 var (
-	ErrTooLarge     = errors.New("file is too large for the editor")
-	ErrConflict     = errors.New("file changed or already exists")
-	ErrNotDirectory = errors.New("path is not a directory")
+	ErrTooLarge     = clienterror.New("file is too large for the editor", clienterror.TooLarge)
+	ErrConflict     = clienterror.New("file changed or already exists", clienterror.Exists)
+	ErrNotDirectory = clienterror.New("path is not a directory", clienterror.NotDirectory)
 )
 
 type Entry struct {

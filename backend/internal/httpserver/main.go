@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"crypto/subtle"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -224,7 +225,8 @@ func (s *MainServer) proxyFilesystem(w http.ResponseWriter, r *http.Request) {
 		process, err = s.opts.Workers.Ensure(r.Context(), id)
 	}
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		slog.Error("filesystem worker unavailable", "err", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "The file service is currently unavailable. Please try again."})
 		return
 	}
 	process.Proxy.ServeHTTP(w, r)

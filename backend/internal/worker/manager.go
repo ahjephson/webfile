@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -299,7 +300,8 @@ func proxyForSocket(socket string) *httputil.ReverseProxy {
 	proxy.Transport = transport
 	proxy.FlushInterval = -1
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		http.Error(w, "filesystem worker unavailable: "+err.Error(), http.StatusBadGateway)
+		slog.Error("filesystem worker request failed", "err", err)
+		http.Error(w, "The file service is currently unavailable. Please try again.", http.StatusBadGateway)
 	}
 	return proxy
 }

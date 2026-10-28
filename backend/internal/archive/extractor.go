@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"webfile/internal/clienterror"
 	"webfile/internal/filesystem"
 
 	"golang.org/x/sys/unix"
@@ -479,6 +480,8 @@ func (e *PublicationRecoveryError) Error() string {
 }
 
 func (e *PublicationRecoveryError) Unwrap() error { return e.Err }
+
+func (e *PublicationRecoveryError) ClientMessage() clienterror.Message { return clienterror.Recovery }
 
 func publishStage(ctx context.Context, stage, destination string, destinationExists bool, policy ExistingFilePolicy, report ProgressReporter, checks ...func() error) (result ExtractResult, err error) {
 	retainStage := false

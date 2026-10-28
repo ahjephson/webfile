@@ -10,6 +10,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"webfile/internal/clienterror"
 )
 
 type State string
@@ -186,6 +188,13 @@ func Open(databasePath string, maxKeep, maxConcurrent int) (*Manager, error) {
 	}
 	now := time.Now().UTC()
 	for _, operation := range stored {
+		if operation.Error != clienterror.Stored(operation.Error) || operation.CleanupError != clienterror.Stored(operation.CleanupError) {
+			slog.Error("legacy task failure", "id", operation.ID, "err", operation.Error, "cleanup_err", operation.CleanupError)
+			operation.Error = clienterror.Stored(operation.Error)
+			if operation.CleanupError != "" {
+				operation.CleanupError = string(clienterror.Cleanup)
+			}
+		}
 		if activeState(operation.State) {
 			operation.Input = nil
 			operation.State = StateInterrupted
@@ -249,7 +258,7 @@ func (m *Manager) StartTask(kind string, sources []string, destination string, o
 	m.mu.Lock()
 	if m.closed {
 		op.State = StateFailed
-		op.Error = "task manager is closed"
+		op.Error = string(clienterror.Unavailable)
 		op.Cancellable = false
 		op.FinishedAt = timePointer(now)
 		m.mu.Unlock()
@@ -354,7 +363,8 @@ func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 		m.mu.Lock()
 		rec = m.records[id]
 		if rec != nil && cleanupErr != nil {
-			rec.op.CleanupError = cleanupErr.Error()
+			slog.Error("task cleanup failed", "id", id, "kind", kind, "err", cleanupErr)
+			rec.op.CleanupError = string(clienterror.Cleanup)
 			err = cleanupErr
 			cancelled = false
 		}
@@ -375,7 +385,8 @@ func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 		case err != nil:
 			rec.op.State = StateFailed
 			rec.op.Phase = "failed"
-			rec.op.Error = err.Error()
+			slog.Error("task failed", "id", id, "kind", kind, "err", err)
+			rec.op.Error = clienterror.Text(err)
 		default:
 			rec.op.State = StateCompleted
 			rec.op.Phase = "completed"
@@ -430,7 +441,10 @@ func (m *Manager) UpsertExternal(id, kind string, sources []string, destination 
 	rec.op.ItemsDone = itemsDone
 	rec.op.ItemsTotal = itemsTotal
 	rec.op.Message = message
-	rec.op.Error = errText
+	if errText != "" {
+		slog.Error("external task failed", "id", id, "kind", kind, "err", errText)
+	}
+	rec.op.Error = clienterror.Stored(errText)
 	rec.op.UpdatedAt = now
 	rec.op.Cancellable = rec.cancel != nil && activeState(state)
 	if terminalState(state) {
@@ -456,7 +470,8 @@ func (m *Manager) FailExternal(id string, observed time.Time, err error) {
 	}
 	now := time.Now().UTC()
 	rec.op.State, rec.op.Phase = StateFailed, "failed"
-	rec.op.Error, rec.op.Message = err.Error(), "Upload stopped"
+	slog.Error("external task failed", "id", id, "kind", rec.op.Kind, "err", err)
+	rec.op.Error, rec.op.Message = clienterror.Text(err), "Upload stopped"
 	rec.op.UpdatedAt, rec.op.FinishedAt = now, timePointer(now)
 	rec.op.Cancellable, rec.cancel = false, nil
 	resetTransferRate(rec)

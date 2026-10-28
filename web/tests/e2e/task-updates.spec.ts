@@ -1,9 +1,32 @@
 import { expect, test, type Page } from '@playwright/test'
+import { featureFixture } from './feature-fixture'
 
 const task = (id: string, state: string, updated = 1) => ({ id, kind: 'upload', sources: [`/docs/${id}.txt`],
   state, phase: state, message: state, bytes_done: 1, bytes_total: 10,
   progress_done: 1, progress_total: 10, progress_unit: 'bytes', cancellable: state === 'running',
   started_at: '2000-01-01T00:00:00Z', updated_at: `2000-01-01T00:00:00.00000${updated}Z` })
+
+test('real task failures expose a useful reason without server paths, including after reload', async ({ page }) => {
+  const fixture = await featureFixture(page, 'task-error-privacy')
+  const name = `missing-${fixture.path.split('/').pop()}.txt`
+  const started = await fixture.start('copy', [`${fixture.path}/${name}`], fixture.path)
+  let failed: { state: string; error?: string } | undefined
+  await expect.poll(async () => {
+    const response = await page.request.get('/api/fs/operations')
+    failed = (await response.json()).operations.find((operation: { id: string }) => operation.id === started.id)
+    return failed?.state
+  }).toBe('failed')
+  expect(failed?.error).toBe('The file or folder no longer exists.')
+  for (const reload of [false, true]) {
+    if (reload) await page.reload()
+    await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+    const task = page.getByRole('complementary').getByRole('article').filter({ hasText: name })
+    await expect(task.locator('[data-task-status]')).toHaveText('failed')
+    await expect(task.getByText('The file or folder no longer exists.', { exact: true })).toBeVisible()
+    await expect(task).not.toContainText(/lstat|\/home\/|\/tmp\/|\.part/)
+    await page.getByRole('complementary').getByRole('button', { name: 'Close', exact: true }).click()
+  }
+})
 
 test('upload HTTP 500 reconciles failed history without a WebSocket event', async ({ page }) => {
   await taskFolder(page)

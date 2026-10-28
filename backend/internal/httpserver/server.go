@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"webfile/internal/archive"
+	"webfile/internal/clienterror"
 	"webfile/internal/filesystem"
 	"webfile/internal/operations"
 	"webfile/internal/ui"
@@ -377,20 +378,21 @@ func ioReadAllLimit(r *http.Request, max int64) ([]byte, error) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	slog.Error("request failed", slog.String("err", err.Error()))
+	message := clienterror.Text(err)
 	switch {
 	case errors.Is(err, filesystem.ErrConflict):
-		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": err.Error(), "code": "conflict"})
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": message, "code": "conflict"})
 	case errors.Is(err, filesystem.ErrTooLarge):
-		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": message})
 	case errors.Is(err, fs.ErrNotExist):
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "path not found"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": message})
 	case errors.Is(err, fs.ErrPermission):
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": message})
 	case errors.Is(err, filesystem.ErrInvalidPath), errors.Is(err, filesystem.ErrOutsideRoot), errors.Is(err, filesystem.ErrNotDirectory):
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": message})
 	default:
-		slog.Error("request failed", slog.String("err", err.Error()))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": message})
 	}
 }
 

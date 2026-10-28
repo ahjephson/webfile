@@ -10,12 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"webfile/internal/clienterror"
 	"webfile/internal/thumbnailcache"
 )
 
 var (
-	ErrInvalidPath = errors.New("invalid path")
-	ErrOutsideRoot = errors.New("path escapes configured root")
+	ErrInvalidPath = clienterror.New("invalid path", clienterror.InvalidPath)
+	ErrOutsideRoot = clienterror.New("path escapes configured root", clienterror.InvalidPath)
 )
 
 type Root struct {

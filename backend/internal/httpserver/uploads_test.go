@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"webfile/internal/clienterror"
 	"webfile/internal/filesystem"
 	"webfile/internal/operations"
 )
@@ -79,6 +80,9 @@ func testUploadInternalError(t *testing.T, panicOnRead bool) {
 	op, _ := target.ops.Get(initial.Upload.OperationID)
 	if response.Code != 500 || op.State != operations.StateFailed || op.FinishedAt == nil || op.Cancellable || op.Error == "" {
 		t.Fatalf("HTTP %d task %#v", response.Code, op)
+	}
+	if op.Error != string(clienterror.Unknown) || strings.Contains(response.Body.String(), "upload IO failed") || strings.Contains(response.Body.String(), "unexpected upload failure") {
+		t.Fatalf("upload diagnostic leaked: task %#v HTTP %s", op, response.Body.String())
 	}
 	response = httptest.NewRecorder()
 	target.initUpload(response, httptest.NewRequest(http.MethodPost, "/api/fs/uploads/init", strings.NewReader(`{"dir":"/Files","name":"retry.bin","size":1}`)))

@@ -200,7 +200,7 @@ func TestExcludedAndMissingDirectoriesHaveIdenticalResponses(t *testing.T) {
 	if err := json.NewDecoder(excluded.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["error"] != "path not found" {
+	if payload["error"] != "The file or folder no longer exists." {
 		t.Fatalf("error = %q", payload["error"])
 	}
 }

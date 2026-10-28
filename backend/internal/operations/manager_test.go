@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"webfile/internal/clienterror"
 )
 
 func TestHistoryLimitCountsOnlyFinishedTasks(t *testing.T) {
@@ -295,8 +297,8 @@ func TestCancellationCleanupFailureReportsRecoveryInsteadOfCancelled(t *testing.
 		t.Fatal("cancel failed")
 	}
 	finished := waitForState(t, manager, op.ID, StateFailed)
-	if finished.Error != recovery.Error() || finished.CleanupError != recovery.Error() {
-		t.Fatalf("recovery details hidden: %#v", finished)
+	if finished.Error != string(clienterror.Unknown) || finished.CleanupError != string(clienterror.Cleanup) {
+		t.Fatalf("unsafe or missing recovery message: %#v", finished)
 	}
 	stored, err := manager.store.List(10)
 	if err != nil || len(stored) != 1 || stored[0].Error != finished.Error || stored[0].CleanupError != finished.CleanupError {
@@ -312,7 +314,7 @@ func TestFailedOperationStoresError(t *testing.T) {
 	for time.Now().Before(deadline) {
 		for _, current := range manager.List() {
 			if current.ID == op.ID && current.State == StateFailed {
-				if current.Error != want.Error() {
+				if current.Error != string(clienterror.Unknown) {
 					t.Fatalf("got error %q", current.Error)
 				}
 				return
