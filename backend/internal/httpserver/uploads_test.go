@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -19,6 +20,75 @@ import (
 	"webfile/internal/filesystem"
 	"webfile/internal/operations"
 )
+
+type failedUploadReader struct{ panicOnRead bool }
+
+func (r failedUploadReader) Read([]byte) (int, error) {
+	if r.panicOnRead {
+		panic("unexpected upload failure")
+	}
+	return 0, errors.New("upload IO failed")
+}
+
+func TestUploadCancellationFinishesTask(t *testing.T) {
+	target, _ := testDownloadServer(t)
+	target.uploads = filesystem.NewUploadManager(target.files.Resolver(), t.TempDir())
+	target.ops = operations.New(50)
+	defer target.ops.Close(context.Background())
+	response := httptest.NewRecorder()
+	target.initUpload(response, httptest.NewRequest(http.MethodPost, "/api/fs/uploads/init", strings.NewReader(`{"dir":"/Files","name":"cancel.bin","size":1}`)))
+	var initial struct {
+		Upload filesystem.UploadSession `json:"upload"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &initial); err != nil {
+		t.Fatal(err)
+	}
+	response = httptest.NewRecorder()
+	target.cancelUpload(response, httptest.NewRequest(http.MethodDelete, "/api/fs/uploads?id="+initial.Upload.ID, nil))
+	op, _ := target.ops.Get(initial.Upload.OperationID)
+	if response.Code != 204 || op.State != operations.StateCancelled || op.FinishedAt == nil || op.Cancellable {
+		t.Fatalf("HTTP %d task %#v", response.Code, op)
+	}
+}
+
+func TestUploadInternalErrorFinishesTaskAndCanResume(t *testing.T) {
+	for _, panicOnRead := range []bool{false, true} {
+		t.Run(fmt.Sprintf("panic=%v", panicOnRead), func(t *testing.T) {
+			testUploadInternalError(t, panicOnRead)
+		})
+	}
+}
+
+func testUploadInternalError(t *testing.T, panicOnRead bool) {
+	target, _ := testDownloadServer(t)
+	target.uploads = filesystem.NewUploadManager(target.files.Resolver(), t.TempDir())
+	target.ops = operations.New(50)
+	defer target.ops.Close(context.Background())
+	response := httptest.NewRecorder()
+	target.initUpload(response, httptest.NewRequest(http.MethodPost, "/api/fs/uploads/init", strings.NewReader(`{"dir":"/Files","name":"retry.bin","size":1}`)))
+	var initial struct {
+		Upload filesystem.UploadSession `json:"upload"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &initial); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "/api/fs/uploads/chunk?id="+initial.Upload.ID+"&offset=0", failedUploadReader{panicOnRead: panicOnRead})
+	request.ContentLength = 1
+	response = httptest.NewRecorder()
+	target.uploadChunk(response, request)
+	op, _ := target.ops.Get(initial.Upload.OperationID)
+	if response.Code != 500 || op.State != operations.StateFailed || op.FinishedAt == nil || op.Cancellable || op.Error == "" {
+		t.Fatalf("HTTP %d task %#v", response.Code, op)
+	}
+	response = httptest.NewRecorder()
+	target.initUpload(response, httptest.NewRequest(http.MethodPost, "/api/fs/uploads/init", strings.NewReader(`{"dir":"/Files","name":"retry.bin","size":1}`)))
+	response = httptest.NewRecorder()
+	target.uploadChunk(response, httptest.NewRequest(http.MethodPut, request.URL.String(), strings.NewReader("x")))
+	op, _ = target.ops.Get(initial.Upload.OperationID)
+	if response.Code != 200 || op.State != operations.StateCompleted {
+		t.Fatalf("retry: HTTP %d task %#v", response.Code, op)
+	}
+}
 
 func TestUploadPublicationErrorFinishesTaskAndRetainsResumeData(t *testing.T) {
 	target, root := testDownloadServer(t)

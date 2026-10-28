@@ -303,7 +303,7 @@ func (m *Manager) scheduleLocked() {
 
 func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 	defer m.wg.Done()
-	err := run(ctx, Reporter{manager: m, id: id})
+	err := taskError(func() error { return run(ctx, Reporter{manager: m, id: id}) })
 
 	m.mu.Lock()
 	rec := m.records[id]
@@ -348,7 +348,7 @@ func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 		m.mu.Unlock()
 
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		cleanupErr := cleanup(cleanupCtx, snapshot)
+		cleanupErr := taskError(func() error { return cleanup(cleanupCtx, snapshot) })
 		cancel()
 
 		m.mu.Lock()
@@ -391,6 +391,18 @@ func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 	m.trimLocked()
 	m.scheduleLocked()
 	m.mu.Unlock()
+}
+
+// Keep unexpected handler failures inside the task lifecycle so they cannot
+// strand a task, consume a worker slot forever, or terminate the worker process.
+func taskError(run func() error) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Error("task handler panicked", "panic", recovered)
+			err = errors.New("task handler failed unexpectedly")
+		}
+	}()
+	return run()
 }
 
 func (m *Manager) UpsertExternal(id, kind string, sources []string, destination string, state State, bytesDone, bytesTotal, itemsDone, itemsTotal int64, message, errText string) Operation {

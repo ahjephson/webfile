@@ -1,9 +1,9 @@
-import { computed, inject, onBeforeUnmount, provide, ref, type InjectionKey } from 'vue'
+import { computed, inject, onBeforeUnmount, provide, ref, watch, type InjectionKey } from 'vue'
 import { api } from '@/api/client'
 import type { FileOperation } from '@/types/files'
 
 const activeStates = ['queued', 'preparing', 'awaiting_input', 'running', 'cancelling', 'cleaning_up']
-const terminalStates = ['completed', 'failed', 'cancelled']
+const terminalStates = ['completed', 'failed', 'cancelled', 'interrupted']
 
 function retainOperations(operations: FileOperation[]): FileOperation[] {
   let history = 0
@@ -40,6 +40,22 @@ function createFileOperations(onTerminal: TerminalHandler) {
   const activeOperations = computed(() => operations.value.filter(operation => activeStates.includes(operation.state)))
   const announcedTerminalStates = new Set<string>()
   let historyRevision = 0
+  let reconciliationTimer: ReturnType<typeof setInterval> | undefined
+  let reconciling = false
+
+  // WebSocket delivery is best effort. Reconcile while work is active so a
+  // dropped terminal event cannot leave any kind of task pending indefinitely.
+  watch(() => activeOperations.value.length > 0, active => {
+    if (reconciliationTimer !== undefined) clearInterval(reconciliationTimer)
+    reconciliationTimer = active ? setInterval(async () => {
+      if (reconciling) return
+      reconciling = true
+      try { await load() } finally { reconciling = false }
+    }, 5000) : undefined
+  })
+  onBeforeUnmount(() => {
+    if (reconciliationTimer !== undefined) clearInterval(reconciliationTimer)
+  })
 
   async function load() {
     const revision = historyRevision
@@ -53,9 +69,15 @@ function createFileOperations(onTerminal: TerminalHandler) {
         ...operations.value.filter(operation => !idsBeforeLoad.has(operation.id) && !loadedIds.has(operation.id)),
         ...loaded.map(operation => {
           const existing = current.get(operation.id)
-          return existing && updatedAfter(existing, operation) ? existing : operation
+          if (existing && !acceptUpdate(operation, existing)) return existing
+          resetAnnouncements(operation, existing)
+          return operation
         }),
       ])
+      for (const operation of operations.value) {
+        const previous = current.get(operation.id)
+        if (previous && activeStates.includes(previous.state)) announceTerminal(operation, previous)
+      }
     } catch {
       // Operation history is supplementary; realtime updates can still populate it.
     }
@@ -63,12 +85,27 @@ function createFileOperations(onTerminal: TerminalHandler) {
 
   function update(operation: FileOperation) {
     const previous = operations.value.find(item => item.id === operation.id)
-    if (previous && updatedAfter(previous, operation)) return
-    if (previous && terminalStates.includes(previous.state) && !terminalStates.includes(operation.state)) {
-      if (previous.kind !== 'upload' || operation.kind !== 'upload' || !activeStates.includes(operation.state) || !updatedAfter(operation, previous)) return
+    if (previous && !acceptUpdate(operation, previous)) return
+    resetAnnouncements(operation, previous)
+    operations.value = retainOperations([operation, ...operations.value.filter(item => item.id !== operation.id)])
+    announceTerminal(operation, previous)
+  }
+
+  function acceptUpdate(operation: FileOperation, previous: FileOperation) {
+    if (updatedAfter(previous, operation)) return false
+    if (terminalStates.includes(previous.state) && !terminalStates.includes(operation.state)) {
+      return previous.kind === 'upload' && operation.kind === 'upload' && activeStates.includes(operation.state) && updatedAfter(operation, previous)
+    }
+    return true
+  }
+
+  function resetAnnouncements(operation: FileOperation, previous?: FileOperation) {
+    if (previous && terminalStates.includes(previous.state) && activeStates.includes(operation.state)) {
       for (const state of terminalStates) announcedTerminalStates.delete(`${operation.id}:${state}`)
     }
-    operations.value = retainOperations([operation, ...operations.value.filter(item => item.id !== operation.id)])
+  }
+
+  function announceTerminal(operation: FileOperation, previous?: FileOperation) {
     if (previous?.state === operation.state || !terminalStates.includes(operation.state)) return
     const terminalKey = `${operation.id}:${operation.state}`
     if (announcedTerminalStates.has(terminalKey)) return

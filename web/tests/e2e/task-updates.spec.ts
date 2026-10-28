@@ -5,6 +5,51 @@ const task = (id: string, state: string, updated = 1) => ({ id, kind: 'upload', 
   progress_done: 1, progress_total: 10, progress_unit: 'bytes', cancellable: state === 'running',
   started_at: '2000-01-01T00:00:00Z', updated_at: `2000-01-01T00:00:00.00000${updated}Z` })
 
+test('upload HTTP 500 reconciles failed history without a WebSocket event', async ({ page }) => {
+  await taskFolder(page)
+  let failed = false
+  const running = task('retry', 'running')
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: failed
+    ? [{ ...task('retry', 'failed', 2), error: 'Disk full', cancellable: false }] : [] } }))
+  await page.route('**/api/fs/uploads/init', route => route.fulfill({ json: {
+    upload: { id: 'retry', offset: 0, size: 1 }, operation: running,
+  } }))
+  await page.route('**/api/fs/uploads/chunk?**', route => {
+    failed = true
+    return route.fulfill({ status: 500, json: { error: 'Disk full' } })
+  })
+  await page.goto('/#path=%2Fdocs')
+  await page.locator('input[type=file]').setInputFiles({ name: 'retry.txt', mimeType: 'text/plain', buffer: Buffer.from('x') })
+  await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+  const upload = page.getByRole('complementary').getByRole('article').filter({ hasText: 'Upload retry.txt' })
+  await expect(upload.locator('[data-task-status]')).toHaveText('failed')
+  await expect(page.getByRole('button', { name: 'Collapse History (1)', exact: true })).toBeVisible()
+  await expect(upload.getByText('Disk full', { exact: true })).toBeVisible()
+  await expect(upload.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0)
+})
+
+for (const kind of ['upload', 'copy', 'move', 'delete', 'extract', 'archive']) {
+  test(`${kind} reconciles a dropped failure event while tasks remain closed`, async ({ page }) => {
+    await taskFolder(page)
+    let failed = false, reads = 0
+    await page.route('**/api/fs/operations', route => {
+      reads++
+      return route.fulfill({ json: { operations: [{ ...task('lost', failed ? 'failed' : 'running', failed ? 2 : 1), kind,
+        error: failed ? 'Filesystem write failed' : undefined, cancellable: !failed }] } })
+    })
+    await page.goto('/#path=%2Fdocs')
+    await expect.poll(() => reads).toBeGreaterThanOrEqual(2)
+    failed = true
+    await expect(page.getByText(/^(Upload|Copy|Move|Delete|Extract|Archive) failed$/, { exact: true })).toBeVisible({ timeout: 10000 })
+    await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+    const operation = page.getByRole('complementary').getByRole('article').filter({ hasText: 'lost.txt' })
+    await expect(operation.locator('[data-task-status]')).toHaveText('failed')
+    await expect(operation.getByText('Filesystem write failed', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Collapse History (1)', exact: true })).toBeVisible()
+    await expect(operation.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0)
+  })
+}
+
 test('large-folder deletion shows an indeterminate bar and removed count without inventing a total', async ({ page }) => {
   const realtime = await taskFolder(page)
   const operation = { ...task('large-folder', 'running'), kind: 'delete', phase: 'deleting', sources: ['/docs/large-folder'],

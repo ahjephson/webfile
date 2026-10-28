@@ -333,6 +333,7 @@ const taskBadgeCount = computed(() => activeOperations.value.length + activeThum
 watch(operationsVisible, visible => {
   if (!visible) return
   clearTaskAttention()
+  void loadOperations()
   void loadThumbnailJobs()
 })
 
@@ -1505,6 +1506,7 @@ async function uploadFileList(files: File[], destination: string) {
         })
         updateOperation(operation)
       } catch (err) {
+        await loadOperations()
         showError(err, `Could not upload ${file.name}`)
       }
     }

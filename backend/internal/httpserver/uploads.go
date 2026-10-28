@@ -3,6 +3,7 @@ package httpserver
 import (
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,7 +54,15 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 		observed, _ = s.ops.Get("upload-" + id)
 	}
 	body := cancellableUploadBody{ReadCloser: r.Body, response: http.NewResponseController(w)}
-	upload, complete, err := s.uploads.Append(r.Context(), id, offset, body, length)
+	upload, complete, err := func() (upload filesystem.UploadSession, complete bool, err error) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				slog.Error("upload handler panicked", "panic", recovered)
+				err = errors.New("upload failed unexpectedly")
+			}
+		}()
+		return s.uploads.Append(r.Context(), id, offset, body, length)
+	}()
 	if err != nil {
 		if s.ops != nil && !s.uploads.Active(id) {
 			s.ops.FailExternal("upload-"+id, observed.UpdatedAt, err)
@@ -74,7 +83,9 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	message := "Uploading " + upload.Name
 	itemsDone := int64(0)
 	if complete {
-		if s.files != nil { s.files.InvalidateFolderSizes(upload.Path) }
+		if s.files != nil {
+			s.files.InvalidateFolderSizes(upload.Path)
+		}
 		state = operations.StateCompleted
 		message = "Uploaded " + upload.Name
 		itemsDone = 1
@@ -100,6 +111,10 @@ func (s *Server) cancelUpload(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if id == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
+		return
+	}
+	if s.ops != nil && s.ops.Cancel("upload-"+id) {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if err := s.uploads.Cancel(id); err != nil {
