@@ -44,7 +44,7 @@ WebFile primarily serves file browsing and moving. Keep additions focused on tho
 
 ## 5. Cancel queued video thumbnail conversions
 
-- Status: investigated; exact reported sequence not yet reproduced; not scheduled or implemented.
+- Status: implemented locally; awaiting release. Exact original sequence was not reproduced; stale-state and completion-race paths are addressed.
 - Bug reported on 2026-10-28: attempting to cancel a queued video thumbnail conversion shows `video thumbnail job is not active`.
 - Expected behaviour: a queued video thumbnail job can be cancelled before conversion starts, and Tasks reflects the cancellation without an error.
 - Finding: the backend explicitly supports cancelling queued jobs in `thumbnail_queue.go`. The reported HTTP error is returned when cancellation reports false, which includes missing jobs and jobs that are already non-cancellable; it does not establish that queued cancellation is unsupported.

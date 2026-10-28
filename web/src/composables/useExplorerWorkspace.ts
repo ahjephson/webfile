@@ -1,6 +1,7 @@
 import { inject, onBeforeUnmount, ref, shallowReactive, shallowRef, type InjectionKey, type Ref } from 'vue'
 import { api } from '@/api/client'
-import type { FileEntry, VideoThumbnailJob } from '@/types/files'
+import type { FileEntry } from '@/types/files'
+import { createThumbnailJobs } from '@/composables/useThumbnailJobs'
 import type { UserPreferences } from '@/preferences'
 
 export type PaneId = 'left' | 'right'
@@ -15,6 +16,7 @@ export type PaneController = {
 
 export function createExplorerWorkspace() {
   const preferences = shallowRef<UserPreferences | null>(null)
+  const thumbnails = createThumbnailJobs()
   let preferenceWrites: Promise<unknown> = Promise.resolve()
   let disposed = false
   onBeforeUnmount(() => { disposed = true })
@@ -27,7 +29,8 @@ export function createExplorerWorkspace() {
     operationsVisible: ref(false),
     settingsVisible: ref(false),
     taskAttention: ref(false),
-    thumbnailJobs: ref<VideoThumbnailJob[]>([]),
+    thumbnailJobs: thumbnails.jobs,
+    thumbnails,
     preferences,
     savePreferences(snapshot: UserPreferences) {
       preferences.value = { ...snapshot }

@@ -355,28 +355,20 @@ function signalTaskAdded() {
 
 async function loadThumbnailJobs() {
   try {
-    thumbnailJobs.value = (await api.thumbnailJobs()).jobs
+    await workspace.thumbnails.load()
   } catch {
     // Realtime updates or the next drawer open will retry.
   }
 }
 
 function updateThumbnailJob(job: VideoThumbnailJob) {
-  const index = thumbnailJobs.value.findIndex(current => current.id === job.id)
-  if (index === -1) thumbnailJobs.value = [job, ...thumbnailJobs.value]
-  else thumbnailJobs.value.splice(index, 1, job)
-  if (job.state === 'ready' || job.state === 'cancelled') {
-    window.setTimeout(() => {
-      thumbnailJobs.value = thumbnailJobs.value.filter(current => current.id !== job.id || !['ready', 'cancelled'].includes(current.state))
-    }, 3200)
-  }
+  workspace.thumbnails.update(job)
 }
 
 async function cancelThumbnailJob(id: string) {
   const failed = thumbnailJobs.value.some(job => job.id === id && job.state === 'failed')
   try {
-    await api.cancelThumbnailJob(id)
-    if (failed) thumbnailJobs.value = thumbnailJobs.value.filter(job => job.id !== id)
+    await workspace.thumbnails.cancel(id)
   } catch (err) {
     showError(err, failed ? 'Could not dismiss thumbnail task' : 'Could not cancel thumbnail')
   }
