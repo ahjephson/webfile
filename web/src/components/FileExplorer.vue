@@ -16,6 +16,7 @@ import { defaultPreferences, normalizePreferences, type UserPreferences } from '
 import { isEntryVisible } from '@/utils/entryVisibility'
 import { fileVisualForPath } from '@/utils/fileVisual'
 import { sortEntries, type SortField, type SortDirection } from '@/utils/sorting'
+import { archiveExtensions } from '@/utils/archives'
 import SettingsDialog from '@/components/SettingsDialog.vue'
 import SearchDialog from '@/components/SearchDialog.vue'
 import ConflictDialog from '@/components/ConflictDialog.vue'
@@ -1815,8 +1816,6 @@ function isArchive(entry: FileEntry) {
   return archiveExtensions.some(ext => name.endsWith(ext))
 }
 
-const archiveExtensions = ['.tar.bz2', '.tar.gz', '.tar.xz', '.zip', '.7z', '.rar', '.tar', '.tgz']
-
 function joinPath(base: string, name: string): string {
   return `${base === '/' ? '' : base}/${name}`.replace(/\/+/g, '/') || '/'
 }
@@ -2093,7 +2092,7 @@ function operationLabel(value: string) {
     <SettingsDialog v-if="isPrimary" v-model:visible="settingsVisible" :preferences="currentPreferences()" :saving="settingsSaving" @save="saveSettings" />
     <EditorDialog v-if="editorVisible && paneVisible" ref="editorDialog" :visible="editorVisible" :active="isActive && paneVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" :preferences="userPreferences" @update:visible="setEditorVisible" @saved="onEditorSaved" />
     <FilePreview :visible="previewVisible && paneVisible" :active="isActive" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="filteredEntries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
-    <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTargets.length === 1 ? extractTargets[0].name : `${extractTargets.length} archives`" :destination="extractDestination" :busy="extractBusy" :existing-files="userPreferences.extract_existing_files" @extract="prepareExtraction" />
+    <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTargets.length === 1 ? extractTargets[0].name : `${extractTargets.length} archives`" :archive-names="extractTargets.map(entry => entry.name)" :destination="extractDestination" :busy="extractBusy" :existing-files="userPreferences.extract_existing_files" @extract="prepareExtraction" />
     <ArchivePasswordDialog v-if="isPrimary" v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="passwordBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @dismiss="extractPasswordVisible = false" @cancel="cancelPasswordPrompt" @after-hide="onArchivePasswordAfterHide" />
     <DestinationDialog
       v-model:visible="destinationVisible"

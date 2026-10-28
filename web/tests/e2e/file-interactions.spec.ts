@@ -3200,7 +3200,9 @@ test('Extract defaults to an archive-named folder and prompts when the task requ
   const destinationDialog = page.getByRole('dialog', { name: 'Extract secure.tar.gz' })
   await expect(destinationDialog.getByLabel('Password')).toHaveCount(0)
   await expect(destinationDialog.getByLabel('Destination folder')).toHaveValue('/folder')
+  await expect(destinationDialog.getByRole('region', { name: 'Extraction folders' })).toContainText('/folder/secure')
   await destinationDialog.getByLabel('Destination folder').fill('/target')
+  await expect(destinationDialog.getByRole('region', { name: 'Extraction folders' })).toContainText('/target/secure')
   await destinationDialog.getByRole('button', { name: 'Extract' }).click()
 
   const passwordDialog = page.getByRole('dialog', { name: 'Password required — secure.tar.gz' })
@@ -3363,6 +3365,7 @@ test('multiple selected archives can be queued as independent extraction tasks',
   await page.getByRole('menuitem', { name: 'Extract 2 archives…', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Extract 2 archives' })
   await expect(dialog.getByLabel('Destination folder')).toHaveValue('/folder')
+  await expect(dialog.getByRole('region', { name: 'Extraction folders' }).getByRole('listitem')).toHaveText(['/folder/first', '/folder/second'])
   await dialog.getByRole('button', { name: 'Extract', exact: true }).click()
 
   await expect.poll(() => operationRequest).not.toBeNull()

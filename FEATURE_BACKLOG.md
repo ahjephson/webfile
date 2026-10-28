@@ -35,7 +35,7 @@ WebFile primarily serves file browsing and moving. Keep additions focused on tho
 
 ## 4. Show the archive-named output path in the Extract dialog
 
-- Status: investigated; not scheduled or implemented.
+- Status: implemented locally; awaiting release.
 - Enhancement reported on 2026-10-28: the normal Extract… dialog should show the archive name in the destination path so it is clear that extraction creates an archive-named folder.
 - Expected behaviour: extracting `archive.7z` beneath `/Files` visibly shows the resulting `/Files/archive` path before extraction starts.
 - Finding: confirmed presentation gap. `ExtractDialog.vue` displays only the parent destination. `prepareExtraction` requests `separate_directories`, and the backend appends the archive basename after stripping supported extensions, including compound extensions such as `.tar.gz`.
