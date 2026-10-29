@@ -135,8 +135,8 @@ Useful aggregate commands from the repository root are:
 ```bash
 make test
 make build-dev
-make build VERSION=vX.Y.Z
-make package VERSION=vX.Y.Z
+make build VERSION="$(cat releases/RELEASE_VERSION)"
+make package VERSION="$(cat releases/RELEASE_VERSION)"
 ```
 
 Production builds and packages require Linux, CGO, `build-essential`, and `libpam0g-dev`. Keep all generated release artifacts only in the WSL workspace under `$HOME/code/webfile/dist`.

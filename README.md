@@ -340,19 +340,19 @@ WebFile keeps its own session only for CSRF state and temporary elevation. The S
 
 ### Updates
 
-Release packages ship with SHA-256 checksums. The installed helper requires both HTTPS package and checksum URLs:
+Release packages ship with SHA-256 checksums. The installed helper requires both HTTPS package and checksum URLs. Replace `<version>` with the desired release, or copy its download URLs from the [release page](https://github.com/ahjephson/webfile/releases):
 
 ```bash
 sudo webfile-update \
-  https://example/releases/webfile-1.0.0-linux-amd64.tar.gz \
-  https://example/releases/webfile-1.0.0-linux-amd64.tar.gz.sha256
+  'https://github.com/ahjephson/webfile/releases/download/<version>/webfile-<version>-linux-amd64.tar.gz' \
+  'https://github.com/ahjephson/webfile/releases/download/<version>/webfile-<version>-linux-amd64.tar.gz.sha256'
 ```
 
 It verifies the checksum, atomically replaces the binary, updates the shipped unit/PAM/tmpfiles files, restarts both services and restores the complete prior installation if the new service does not start successfully. `/etc/webfile/webfile.json` is never overwritten by an update.
 
 `.github/workflows/validate.yml` validates branch and PR candidates in separate production, Chromium and WebKit jobs. It audits dependencies, scans the Go source and compiled binary, and retains the tested package with a source/hash manifest. `.github/workflows/release.yml` publishes that package after verifying successful validation of the exact tagged `main` commit; it does not rebuild it. Frontend dependencies are reproducibly installed from the committed `web/package-lock.json` with `npm ci`.
 
-Release tags use bare semantic versions such as `1.0.0`, without a `v` prefix. Set `releases/RELEASE_VERSION` and prepare matching `releases/RELEASE_NOTES_<version>.md` before final validation. Run the shared scripts locally first (in native WSL for Windows-hosted development):
+Release tags use bare semantic versions without a `v` prefix. Set `releases/RELEASE_VERSION` and prepare matching `releases/RELEASE_NOTES_<version>.md` before final validation. Run the shared scripts locally first (in native WSL for Windows-hosted development):
 
 ```bash
 COMMIT=local-validation bash scripts/validate-production.sh
@@ -365,8 +365,9 @@ After local checks pass, commit the candidate and push it to `main` from the aut
 ```bash
 git push origin main
 # Wait for successful validation of the exact main commit before tagging.
-git tag -a 1.0.0 -m "WebFile 1.0.0"
-git push origin 1.0.0
+release_version="$(cat releases/RELEASE_VERSION)"
+git tag -a "$release_version" -m "WebFile $release_version"
+git push origin "$release_version"
 ```
 
 Pushing the tag starts the release workflow. Every future release build should have a matching version tag and a `releases/RELEASE_NOTES_<version>.md` file committed before that tag is created. The workflow uses that file as the GitHub Release description and includes all versioned release notes in the package. An validated tag can be published from the Actions page by running **Release Linux binary** manually and supplying its version. Missing or mismatched validation blocks publication, and existing published assets are not replaced. Candidate artifacts expire after 30 days; rerun validation if necessary. See [release checklist](docs/release-checklist.md) for the complete local-first process.

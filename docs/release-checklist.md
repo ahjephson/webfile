@@ -65,7 +65,7 @@ The release workflow only downloads and verifies that tested package. It checks 
 
 - Install the package on a clean supported Debian or Ubuntu AMD64 host.
 - Confirm PAM login, logout, temporary elevation and direct TLS.
-- Upgrade an existing 0.11.0 installation and confirm that configuration, sessions, preferences, task history and thumbnail cache remain usable.
+- Upgrade an existing installation from the previous supported release and confirm that configuration, sessions, preferences, task history and thumbnail cache remain usable.
 - Force an update startup failure and confirm that `webfile-update` restores the previous installation.
 - Confirm configured `7zz`/`7z`, `ffmpeg`, `ffprobe`, data and cache paths are usable by their expected service accounts.
 - Exercise browse, upload, download, copy, move, delete, edit, preview, archive, task cancellation and WebSocket refresh workflows.
