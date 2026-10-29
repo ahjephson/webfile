@@ -182,6 +182,7 @@ const listView = ref<InstanceType<typeof VirtualFileList> | null>(null)
 const gridView = ref<InstanceType<typeof VirtualFileGrid> | null>(null)
 const fileViewHost = ref<HTMLElement | null>(null)
 const breadcrumbScroll = ref<HTMLElement | null>(null)
+const breadcrumbContent = ref<HTMLElement | null>(null)
 
 const newDocumentVisible = ref(false)
 const nameDialogVisible = ref(false)
@@ -548,6 +549,8 @@ onMounted(async () => {
   if (props.paneVisible) startRealtime(currentPath.value)
   breadcrumbResizeObserver = new ResizeObserver(scrollBreadcrumbToEnd)
   if (breadcrumbScroll.value) breadcrumbResizeObserver.observe(breadcrumbScroll.value)
+  // Font and icon metrics can change the trail width without resizing its viewport.
+  if (breadcrumbContent.value) breadcrumbResizeObserver.observe(breadcrumbContent.value)
   window.addEventListener('keydown', onGlobalKeyDown)
   window.addEventListener('popstate', applyHashPath)
   window.addEventListener('hashchange', applyHashPath)
@@ -1930,7 +1933,7 @@ function operationLabel(value: string) {
 
     <div class="webfile-pane-navigation flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800 bg-zinc-950 px-3 py-2">
       <nav ref="breadcrumbScroll" class="min-w-0 flex-1 basis-full overflow-x-auto" aria-label="Breadcrumb" data-breadcrumb-scroll :data-single-root="singleRootPath ? 'true' : 'false'">
-        <div class="flex min-w-max items-center gap-1 text-sm">
+        <div ref="breadcrumbContent" class="flex min-w-max items-center gap-1 text-sm">
           <template v-for="(crumb, index) in breadcrumbs" :key="crumb.path">
             <i v-if="index" class="pi pi-angle-right text-xs text-zinc-600" />
             <button class="rounded px-2 py-1 text-zinc-300 hover:bg-zinc-800" :aria-current="index === breadcrumbs.length - 1 ? 'page' : undefined" @click="navigateBreadcrumb(crumb.path)">
