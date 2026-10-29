@@ -1,9 +1,6 @@
 # Historical development notes
 
-These notes preserve earlier investigations and measurements. They are not a
-list of outstanding bugs. Use the [feature backlog](../feature-backlog.md)
-for pending work and the [published releases](https://github.com/ahjephson/webfile/releases)
-for delivered changes.
+These notes preserve earlier investigations and measurements. They are not a list of outstanding bugs. Use the [feature backlog](../feature-backlog.md) for pending work and the [published releases](https://github.com/ahjephson/webfile/releases) for delivered changes.
 
 ## Remaining-action performance audit fixes (2026-10-16)
 
@@ -39,26 +36,11 @@ Validation: full backend race tests, vet and production/PAM tests and vet passed
 - [x] Validate cancellation/resume, symlinks, parent replacement, many-child folders and end-to-end task counts; benchmark against the original delete path and OS deletion.
 - [x] Investigate and implement cache-only directory grouping. Lazy broker-owned nodes, stable ownership, revision-checked moves and bounded background delete cleanup are documented with measurements in [Thumbnail lifecycle design](../design/thumbnail-lifecycle.md). Source filesystem scanning is not used to populate the index.
 
-Implementation and regression coverage were completed before tests ran. The
-original-code regressions failed as expected for thumbnail-cache access and
-top-level-only task counts. The final delete regressions passed 10 race-enabled
-runs; full backend race tests, vet, production/PAM tests and vet passed. Both
-browsers passed seven task checks and the mounted-path smoke check; frontend
-builds passed.
+Implementation and regression coverage were completed before tests ran. The original-code regressions failed as expected for thumbnail-cache access and top-level-only task counts. The final delete regressions passed 10 race-enabled runs; full backend race tests, vet, production/PAM tests and vet passed. Both browsers passed seven task checks and the mounted-path smoke check; frontend builds passed.
 
-Local deletion benchmark: 5,000 small text files in native WSL, fixture creation
-excluded, three runs per method. The original WebFile median was 168 ms; the new
-streaming delete median was 59 ms (about 2.9x faster). OS `rm` measured about
-59–60 ms. This compares the filesystem service paths without task persistence;
-physical/network filesystem results may differ.
+Local deletion benchmark: 5,000 small text files in native WSL, fixture creation excluded, three runs per method. The original WebFile median was 168 ms; the new streaming delete median was 59 ms (about 2.9x faster). OS `rm` measured about 59–60 ms. This compares the filesystem service paths without task persistence; physical/network filesystem results may differ.
 
-The final visual check used a generated 250,000-file folder in the Codex
-browser. The running removed-entry count was visible without a fabricated total;
-completion reported 250,001 entries including the folder, with matching task
-counters and the generated folder absent. Only the generated task's history
-entry was removed afterward. Subsequent cache directory grouping adds ownership,
-shared-blob and delete/recreate protections without restoring the source scan;
-see [Thumbnail lifecycle design](../design/thumbnail-lifecycle.md) for its separate measurements and validation.
+The final visual check used a generated 250,000-file folder in the Codex browser. The running removed-entry count was visible without a fabricated total; completion reported 250,001 entries including the folder, with matching task counters and the generated folder absent. Only the generated task's history entry was removed afterward. Subsequent cache directory grouping adds ownership, shared-blob and delete/recreate protections without restoring the source scan; see [Thumbnail lifecycle design](../design/thumbnail-lifecycle.md) for its separate measurements and validation.
 
 Delete progress-bar follow-up: the regression first failed because no progress bar was rendered for an unknown total. The fix passed 11 task checks in each browser, both mounted-path smoke checks and frontend builds, including animation, live counts, reduced motion, cancellation and completion. In the Codex browser, an active real deletion showed the animated bar with 16,307 removed items and no fabricated percentage. Generated deletions of 250,000 and 100,000 files completed with 250,001 and 100,001 items respectively, including the folders. Only those two task-history entries were removed, and the isolated test server was stopped.
 

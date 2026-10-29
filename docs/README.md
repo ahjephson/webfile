@@ -1,9 +1,6 @@
 # WebFile documentation
 
-Start with the [project README](../README.md) for features, configuration,
-installation and development. The [security policy](SECURITY.md) describes
-deployment boundaries and vulnerability reporting, and the
-[contribution guide](CONTRIBUTING.md) explains the development checks.
+Start with the [project README](../README.md) for features, configuration, installation and development. The [security policy](SECURITY.md) describes deployment boundaries and vulnerability reporting, and the [contribution guide](CONTRIBUTING.md) explains the development checks.
 
 ## Maintainer guides
 
@@ -24,6 +21,4 @@ deployment boundaries and vulnerability reporting, and the
 
 ## Historical notes
 
-[Earlier investigations and measurements](archive/development-notes.md) are
-retained for context. They do not define current support guarantees or add
-items to the active backlog.
+[Earlier investigations and measurements](archive/development-notes.md) are retained for context. They do not define current support guarantees or add items to the active backlog.
