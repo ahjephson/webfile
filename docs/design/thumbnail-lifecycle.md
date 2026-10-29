@@ -1,6 +1,6 @@
 # Thumbnail grouping for delete and move efficiency
 
-Status: implemented locally, 2026-10-16. The initial proposal and validation were pushed at `4c23259`; the implementation and measurements below are subsequent local work.
+Status: implemented. The historical design and measurements below describe the cache lifecycle introduced in the 1.2 series.
 
 ## Current cost and immediate change
 

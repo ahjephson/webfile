@@ -11,7 +11,27 @@ identity, direct filesystem IO, live current-folder updates, Monaco editing,
 resumable uploads, file operations, archive handling, durable background tasks
 and persistent application state.
 
-## Implemented
+[Releases](https://github.com/ahjephson/webfile/releases) ·
+[Installation](#install) · [Development](#development) ·
+[Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+
+## Getting started
+
+For a server installation, download the Linux AMD64 archive and its matching
+SHA-256 file from the release page. Verify the checksum with `sha256sum -c`,
+extract the archive, and follow [Install](#install). Production requires Linux,
+systemd, a permitted local user and either PAM with direct TLS or a trusted
+authenticating reverse proxy. Node.js is not required on the runtime host.
+
+For local development, follow [Development](#development). The checked-in
+development configuration binds to loopback, disables authentication and exposes
+the developer's home directory. Use it only on a trusted local machine.
+
+The [documentation index](docs/README.md) links to architecture notes, the
+release process and historical design material. Feature proposals belong in the
+[backlog](FEATURE_BACKLOG.md); published changes are recorded in release notes.
+
+## Features
 
 ### Filesystem model and realtime
 
@@ -300,13 +320,13 @@ sudo apt install build-essential libpam0g-dev
 Then:
 
 ```bash
-make build VERSION=1.0.0
+make build VERSION="$(cat RELEASE_VERSION)"
 ```
 
 or create a release archive:
 
 ```bash
-make package VERSION=1.0.0
+make package VERSION="$(cat RELEASE_VERSION)"
 ```
 
 The release binary embeds the compiled Vue frontend. Node is a build-time
@@ -327,7 +347,7 @@ configuration:
 ```bash
 webfile serve -config /etc/webfile/webfile.json \
   --host 127.0.0.1 --port 6201 \
-  --public-url https://192.168.0.254/tools/webfile
+  --public-url https://files.example.com/tools/webfile
 ```
 
 `--http 127.0.0.1:6201` is the equivalent single listener option and cannot be
@@ -338,7 +358,7 @@ path and the allowed browser origin. The explicit equivalent is:
 webfile serve -config /etc/webfile/webfile.json \
   --http 127.0.0.1:6201 \
   --base-path /tools/webfile/ \
-  --origins https://192.168.0.254
+  --origins https://files.example.com
 ```
 
 `--origins` may be repeated or contain a comma-separated list. The public URL
@@ -395,7 +415,7 @@ and its Unix socket are configurable under `thumbnails`; generated cache data
 is size-bounded and published atomically. User file access and thumbnail
 generation are performed only by UID-dropped workers.
 
-A bounded, disposable directory-reference index groups cached thumbnails for background deletion cleanup and same-filesystem folder-move reuse. It is populated only by thumbnail requests, never by scanning source roots, and does not replace filesystem authorization or listings. See [Thumbnail lifecycle design](THUMBNAIL_LIFECYCLE_DESIGN.md) for ownership, recovery and performance details.
+A bounded, disposable directory-reference index groups cached thumbnails for background deletion cleanup and same-filesystem folder-move reuse. It is populated only by thumbnail requests, never by scanning source roots, and does not replace filesystem authorization or listings. See [Thumbnail lifecycle design](docs/design/thumbnail-lifecycle.md) for ownership, recovery and performance details.
 
 `/etc/webfile/webfile.json` contains no credentials and is readable by local
 users because UID-dropped workers load it after launch. TLS private-key material
@@ -551,6 +571,7 @@ backend/
   internal/worker/
 web/
   src/
+docs/                     # design references and historical notes
 deploy/
 scripts/
 .github/workflows/
@@ -564,5 +585,6 @@ Run `go test ./...`, `go vet ./...` and `govulncheck ./...` from `backend`, then
 tests use a real `7zz` or `7z` when available and are required in release CI.
 `make test-production` also compiles and tests the production/PAM build tags.
 Complete [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) before publishing.
-The proposed stable-release summary is in
-[RELEASE_NOTES_1.0.0.md](RELEASE_NOTES_1.0.0.md).
+See the [published releases](https://github.com/ahjephson/webfile/releases) for
+stable packages and release notes. [Third-party notices](THIRD_PARTY_NOTICES.txt)
+identify the dependencies distributed with the application.

@@ -3,7 +3,7 @@
 Status: implemented.
 
 For the implemented cache-only directory grouping and the current delete/move
-lifecycle changes, see [Thumbnail lifecycle design](THUMBNAIL_LIFECYCLE_DESIGN.md).
+lifecycle changes, see [Thumbnail lifecycle design](thumbnail-lifecycle.md).
 
 ## Goals
 

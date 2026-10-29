@@ -37,7 +37,7 @@
     "poll_interval": "5s"
   },
   "roots": [
-    { "name": "WSL Root", "path": "/", "excluded_names": ["lost+found"] }
+    { "name": "Home", "path": "{home}", "excluded_names": ["lost+found"] }
   ],
   "archive": {
     "executable": "/usr/bin/7zz",

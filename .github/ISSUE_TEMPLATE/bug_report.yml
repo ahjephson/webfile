@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible WebFile problem using disposable test data.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a security vulnerability, follow SECURITY.md instead of posting details here.
+        Remove credentials, cookies, private keys and private file contents from reports.
+  - type: input
+    id: version
+    attributes:
+      label: WebFile version
+      description: Include the version and commit shown in Settings or `webfile version`.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Linux distribution, browser and authentication mode. Redact private hostnames and account names.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Use a minimal example with disposable files.
+    validations:
+      required: true
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: Expected and actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Relevant errors or screenshots. Do not upload a complete configuration or session trace containing private data.

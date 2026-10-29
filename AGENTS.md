@@ -105,8 +105,8 @@ wsl.exe -- bash -lc 'mkdir -p "$HOME/code/webfile" && test ! -e "$HOME/code/webf
 
 Do not clone into WSL or `/mnt/c`, reuse dependencies installed in Windows, or
 copy `node_modules`, build caches, and other platform-specific working state
-between the two locations. See `C:\Code\WINDOWS_EDIT_WSL_SYNC_WORKFLOW.md` for
-the shared bridge design.
+between the two locations. The workflow below is self-contained; no external
+machine-specific guide is required.
 
 ### Beginning work
 
@@ -243,6 +243,6 @@ Push commits and tags to GitHub only from `C:\Code\webfile`, and only when the
 user asks for a push.
 
 Never use `git reset --hard`, `git clean`, `--delete-excluded`, reverse broad
-mirroring, or the legacy `sync-to-windows.sh` scripts. Never run Git operations
+mirroring, or recreate the removed legacy reverse-sync scripts. Never run Git operations
 in the WSL mirror, build from `/mnt/c`, or copy `dist/` into Windows. The sync
 wrapper's dry run is mandatory before every applied sync.

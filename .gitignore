@@ -8,3 +8,24 @@ backend/internal/ui/dist/*
 /webfile.7z
 *.log
 .DS_Store
+
+# Local configuration, credentials and runtime state.
+/.env
+/.env.*
+!/.env.example
+/webfile.local.json
+/webfile.*.local.json
+*.pem
+*.key
+*.pfx
+*.p12
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.pyc
+
+# Personal reference files and ad-hoc archive fixtures.
+/WebFile functionality roadmap.docx
+/alpha.zip
+/beta.7z

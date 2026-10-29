@@ -16,7 +16,7 @@ and source deletion; this update does not relax durability to match plain `cp`.
 
 Transfers no longer walk and inspect source files to migrate thumbnail cache
 entries. Unchanged same-filesystem folder descendants reuse cached blobs, with
-lazy directory-reference updates described in `THUMBNAIL_LIFECYCLE_DESIGN.md`.
+lazy directory-reference updates described in [Thumbnail lifecycle design](thumbnail-lifecycle.md).
 Other destination thumbnails are generated on demand; obsolete keys expire
 through the bounded cache's normal eviction. The explicit Rename action keeps
 its existing cache-migration behavior. Top-level directory moves reuse the

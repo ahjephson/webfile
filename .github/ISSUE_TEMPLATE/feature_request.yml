@@ -1,0 +1,17 @@
+name: Feature request
+description: Suggest an improvement to file browsing or transfers.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What are you trying to do, and what makes it difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: Describe the improvement and any alternatives you have considered.
+    validations:
+      required: true
