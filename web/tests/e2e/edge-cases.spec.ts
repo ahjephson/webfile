@@ -41,7 +41,11 @@ test('repeated elevation changes keep the folder and exactly one realtime connec
   for (let round = 0; round < 3; round++) {
     await page.getByRole('button', { name: 'Elevate access', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: 'Elevate access' })
-    await dialog.locator('input[type="password"]').fill('test password')
+    const password = dialog.locator('input[type="password"]')
+    await password.click()
+    await expect(password).toBeFocused()
+    await password.fill('test password')
+    await expect(password).toHaveValue('test password')
     await dialog.getByRole('button', { name: 'Elevate access', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Drop elevated access', exact: true })).toBeVisible()
     await expect.poll(() => sockets).toBe(round * 2 + 2)
