@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = ROOT / 'THIRD_PARTY_NOTICES.txt'
+OUTPUT = ROOT / 'docs' / 'THIRD_PARTY_NOTICES.txt'
 
 
 def license_files(directory):

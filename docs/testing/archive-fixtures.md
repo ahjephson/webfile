@@ -1,6 +1,7 @@
 # Zero-permission 7z fixture
 
-`zero-permissions.7z.b64` is a base64-encoded, 174-byte synthetic 7z archive.
+[`zero-permissions.7z.b64`](https://github.com/ahjephson/webfile/blob/main/backend/internal/archive/testdata/zero-permissions.7z.b64)
+is a base64-encoded, 174-byte synthetic 7z archive.
 It contains `locked/zero.txt` with the text `readable`; it contains no user data.
 Decode it before passing it to 7-Zip.
 

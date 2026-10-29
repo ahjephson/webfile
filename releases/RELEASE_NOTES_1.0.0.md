@@ -38,7 +38,7 @@ service does not start.
 No intentional configuration-schema migration is required from 0.11.0. Review
 the example configuration before deployment, confirm the configured archive
 executable exists, and complete the clean-install and upgrade checks in
-`RELEASE_CHECKLIST.md` before promoting the release.
+`docs/release-checklist.md` before promoting the release.
 
 ## Security validation
 

@@ -6,4 +6,4 @@ Remove an item when it is released; do not retain it here with a completed statu
 
 WebFile primarily serves file browsing and moving. Keep additions focused on those workflows; previously discarded suggestions should not be treated as backlog items without renewed agreement.
 
-No pending items. The previously listed file-transfer, upload, extraction and thumbnail improvements are included in [WebFile 1.5.0](RELEASE_NOTES_1.5.0.md).
+No pending items. The previously listed file-transfer, upload, extraction and thumbnail improvements are included in [WebFile 1.5.0](../releases/RELEASE_NOTES_1.5.0.md).

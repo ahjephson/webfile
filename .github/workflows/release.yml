@@ -44,8 +44,8 @@ jobs:
         run: |
           set -euo pipefail
           if [[ ! "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-             [[ "$(cat RELEASE_VERSION)" != "$RELEASE_TAG" ]]; then
-            echo 'Tag must match the version validated in RELEASE_VERSION.' >&2
+             [[ "$(cat releases/RELEASE_VERSION)" != "$RELEASE_TAG" ]]; then
+            echo 'Tag must match the version validated in releases/RELEASE_VERSION.' >&2
             exit 1
           fi
           source_commit="$(git rev-parse HEAD)"
@@ -86,5 +86,5 @@ jobs:
           gh release create "$RELEASE_TAG" \
             "dist/tested-release/webfile-$RELEASE_TAG-linux-amd64.tar.gz" \
             "dist/tested-release/webfile-$RELEASE_TAG-linux-amd64.tar.gz.sha256" \
-            --verify-tag --notes-file "RELEASE_NOTES_$RELEASE_TAG.md" \
+            --verify-tag --notes-file "releases/RELEASE_NOTES_$RELEASE_TAG.md" \
             --title "WebFile $RELEASE_TAG"

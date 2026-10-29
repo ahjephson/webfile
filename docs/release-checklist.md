@@ -41,8 +41,9 @@ Run workflow lint and Bash checks as well when editing the runner/workflows.
 
 For Windows-hosted development, inspect the authoritative checkout, confirm the
 native WSL mirror has no `.git`, then preview and apply `scripts/sync-to-wsl.ps1`
-as described in `AGENTS.md`. Preserve unrelated changes. Run all Linux commands
-below from `$HOME/code/webfile` inside WSL, never `/mnt/c`.
+as described in [the development guide](development.md). Preserve unrelated
+changes. Run all Linux commands below from `$HOME/code/webfile` inside WSL,
+never `/mnt/c`.
 
 ```bash
 python3 -m unittest discover -s scripts -p 'test_*.py'
@@ -81,8 +82,8 @@ already installed by production validation or `npm --prefix web ci`.
 Local production validation includes development tests/vet, production/PAM
 tests/vet, frontend build/audit, source/binary vulnerability scans, package
 checksum and embedded version/commit checks. Install the Linux dependencies
-listed in `AGENTS.md` first. Python 3.11 or later is required by package provenance
-verification.
+listed in [the development guide](development.md) first. Python 3.11 or later
+is required by package provenance verification.
 
 ## Automated release gates
 
@@ -144,11 +145,11 @@ to retry infrastructure. Published assets are not overwritten by this workflow.
 ## Release hygiene
 
 - Confirm the working trees are clean and the release commit is on `main`.
-- Set `RELEASE_VERSION` to the intended bare version and create the matching
+- Set `releases/RELEASE_VERSION` to the intended bare version and create the matching
   release notes before final validation. Do not create a tag yet.
 - Run the complete local release checks above and inspect
   `dist/webfile-<version>-linux-amd64.tar.gz`, its checksum and binary metadata.
-- Create and review `RELEASE_NOTES_<version>.md`; commit it before tagging so
+- Create and review `releases/RELEASE_NOTES_<version>.md`; commit it before tagging so
   the workflow can use it as the GitHub Release description.
 - Push the candidate commit to `main` only when the user authorizes a push.
   Wait for production and every browser shard to succeed at that exact commit.
@@ -159,7 +160,7 @@ to retry infrastructure. Published assets are not overwritten by this workflow.
   authoritative Windows checkout. Never push the candidate and tag together.
 - For an already validated tag whose publication was interrupted, manually run
   **Release Linux binary** with that exact tag. This process applies to commits
-  containing the new validation workflow and `RELEASE_VERSION`; older releases
+  containing the new validation workflow and `releases/RELEASE_VERSION`; older releases
   do not have candidate artifacts in this format.
 - Confirm publication succeeded, both assets are present, and their hashes
   match the tested candidate manifest. The publication job must not rebuild.

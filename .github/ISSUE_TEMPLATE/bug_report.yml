@@ -4,7 +4,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        For a security vulnerability, follow SECURITY.md instead of posting details here.
+        For a security vulnerability, follow docs/SECURITY.md instead of posting details here.
         Remove credentials, cookies, private keys and private file contents from reports.
   - type: input
     id: version

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-export VERSION="${VERSION:-$(cat RELEASE_VERSION)}"
+export VERSION="${VERSION:-$(cat releases/RELEASE_VERSION)}"
 export COMMIT="${COMMIT:-$(git rev-parse HEAD)}"
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo 'VERSION must be a bare semantic version.' >&2

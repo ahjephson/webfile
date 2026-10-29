@@ -1,7 +1,7 @@
 # Historical development notes
 
 These notes preserve earlier investigations and measurements. They are not a
-list of outstanding bugs. Use the [feature backlog](../../FEATURE_BACKLOG.md)
+list of outstanding bugs. Use the [feature backlog](../feature-backlog.md)
 for pending work and the [published releases](https://github.com/ahjephson/webfile/releases)
 for delivered changes.
 

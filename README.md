@@ -13,7 +13,7 @@ and persistent application state.
 
 [Releases](https://github.com/ahjephson/webfile/releases) ·
 [Installation](#install) · [Development](#development) ·
-[Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[Security](docs/SECURITY.md) · [Contributing](docs/CONTRIBUTING.md)
 
 ## Getting started
 
@@ -29,7 +29,8 @@ the developer's home directory. Use it only on a trusted local machine.
 
 The [documentation index](docs/README.md) links to architecture notes, the
 release process and historical design material. Feature proposals belong in the
-[backlog](FEATURE_BACKLOG.md); published changes are recorded in release notes.
+[backlog](docs/feature-backlog.md); published changes are recorded in
+[release notes](releases/).
 
 ## Features
 
@@ -320,13 +321,13 @@ sudo apt install build-essential libpam0g-dev
 Then:
 
 ```bash
-make build VERSION="$(cat RELEASE_VERSION)"
+make build VERSION="$(cat releases/RELEASE_VERSION)"
 ```
 
 or create a release archive:
 
 ```bash
-make package VERSION="$(cat RELEASE_VERSION)"
+make package VERSION="$(cat releases/RELEASE_VERSION)"
 ```
 
 The release binary embeds the compiled Vue frontend. Node is a build-time
@@ -522,7 +523,8 @@ Frontend dependencies are reproducibly installed from the committed
 `web/package-lock.json` with `npm ci`.
 
 Release tags use bare semantic versions such as `1.0.0`, without a `v` prefix.
-Set `RELEASE_VERSION` and prepare matching `RELEASE_NOTES_<version>.md` before
+Set `releases/RELEASE_VERSION` and prepare matching
+`releases/RELEASE_NOTES_<version>.md` before
 final validation. Run the shared scripts locally first (in native WSL for
 Windows-hosted development):
 
@@ -544,14 +546,14 @@ git push origin 1.0.0
 ```
 
 Pushing the tag starts the release workflow. Every future release build should
-have a matching version tag and a `RELEASE_NOTES_<version>.md` file committed
+have a matching version tag and a `releases/RELEASE_NOTES_<version>.md` file committed
 before that tag is created. The workflow uses that file as the GitHub Release
 description and includes all versioned release notes in the package. An
 validated tag can be published from the Actions page by running **Release Linux
 binary** manually and supplying its version. Missing or mismatched validation
 blocks publication, and existing published assets are not replaced. Candidate
 artifacts expire after 30 days; rerun validation if necessary. See
-[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the complete local-first process.
+[release checklist](docs/release-checklist.md) for the complete local-first process.
 
 ## Repository layout
 
@@ -571,7 +573,8 @@ backend/
   internal/worker/
 web/
   src/
-docs/                     # design references and historical notes
+docs/                     # guides, policies, backlog, notices and design references
+releases/                 # release notes and the release version marker
 deploy/
 scripts/
 .github/workflows/
@@ -584,7 +587,7 @@ Run `go test ./...`, `go vet ./...` and `govulncheck ./...` from `backend`, then
 `npm run test:e2e` from `web` before packaging a release. Archive integration
 tests use a real `7zz` or `7z` when available and are required in release CI.
 `make test-production` also compiles and tests the production/PAM build tags.
-Complete [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) before publishing.
+Complete the [release checklist](docs/release-checklist.md) before publishing.
 See the [published releases](https://github.com/ahjephson/webfile/releases) for
-stable packages and release notes. [Third-party notices](THIRD_PARTY_NOTICES.txt)
+stable packages and release notes. [Third-party notices](docs/THIRD_PARTY_NOTICES.txt)
 identify the dependencies distributed with the application.
