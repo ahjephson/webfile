@@ -1262,6 +1262,21 @@ test('an overflowing breadcrumb starts at the current rightmost location', async
   await expect(current).toBeInViewport()
 })
 
+test('breadcrumb follows content width changes without resizing its viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const path = '/root/very-long-project-name/source/generated/build/output/framework/current-location'
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path, entries: [] } }))
+  await page.goto(`/#path=${encodeURIComponent(path)}`)
+  const breadcrumb = page.locator('[data-breadcrumb-scroll]')
+  await expect.poll(() => breadcrumb.evaluate(element => element.scrollWidth - element.clientWidth)).toBeGreaterThan(0)
+  const originalWidth = await breadcrumb.evaluate(element => element.scrollWidth)
+  // Reproduce late font/icon metrics changing content while the viewport stays fixed.
+  await breadcrumb.locator(':scope > div').evaluate(element => { element.style.columnGap = '32px' })
+  await expect.poll(() => breadcrumb.evaluate(element => element.scrollWidth)).toBeGreaterThan(originalWidth)
+  await expect.poll(() => breadcrumb.evaluate(element => Math.abs(element.scrollLeft - (element.scrollWidth - element.clientWidth)))).toBeLessThanOrEqual(1)
+  await expect(breadcrumb.locator('[aria-current="page"]')).toBeInViewport()
+})
+
 test('browser back closes an open preview before navigating the file tree', async ({ page }) => {
   await page.route('**/api/fs/dir**', route => route.fulfill({
     json: {

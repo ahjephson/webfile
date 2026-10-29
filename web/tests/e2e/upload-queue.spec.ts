@@ -42,7 +42,13 @@ for (const reload of [false, true]) {
       expect(await fixture.exists(`${fixture.path}/second.txt`)).toBe(false)
     } else {
       // A second batch joins the same transfer queue, retaining its destination.
-      await page.locator('input[type=file]').setInputFiles({ name: 'fourth.txt', mimeType: 'text/plain', buffer: Buffer.from('fourth') })
+      await drawer.getByRole('button', { name: 'Close', exact: true }).click()
+      await expect(drawer).not.toBeVisible()
+      const chooserPromise = page.waitForEvent('filechooser')
+      await page.getByRole('button', { name: 'Upload', exact: true }).click()
+      const chooser = await chooserPromise
+      await chooser.setFiles({ name: 'fourth.txt', mimeType: 'text/plain', buffer: Buffer.from('fourth') })
+      await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
       const fourth = drawer.getByRole('article').filter({ hasText: 'Upload fourth.txt' }).filter({ hasText: fixture.path })
       await expect(fourth).toHaveAttribute('data-task-state', 'queued')
       await drawer.getByRole('button', { name: 'Close', exact: true }).click()

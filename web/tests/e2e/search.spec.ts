@@ -1,5 +1,14 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { featureFixture } from './feature-fixture'
+
+async function enterSearchQuery(page: Page, value: string) {
+  const input = page.getByRole('textbox', { name: 'Search filenames' })
+  // A real click waits for the opening modal to receive input before filling.
+  await input.click()
+  await expect(input).toBeFocused()
+  await input.fill(value)
+  await expect(input).toHaveValue(value)
+}
 
 for (const olderResult of ['success', 'error'] as const) {
   test(`Show in folder waits for the newest listing after an older ${olderResult}`, async ({ page }) => {
@@ -28,7 +37,7 @@ for (const olderResult of ['success', 'error'] as const) {
     await expect(page).toHaveURL(/#path=%2FFiles$/)
     await page.getByRole('button', { name: 'Show selection controls', exact: true }).click()
     await page.getByRole('button', { name: 'Search beneath this folder', exact: true }).click()
-    await page.getByRole('textbox', { name: 'Search filenames' }).fill('report')
+    await enterSearchQuery(page, 'report')
     await page.getByRole('button', { name: 'Search', exact: true }).click()
     await expect(page.getByRole('status')).toContainText('Search complete')
     await page.locator('[data-file-entry]').filter({ hasText: 'report.txt' }).click({ button: 'right' })
@@ -52,7 +61,7 @@ test('recursive search finds files beneath folders and locates the selected resu
   await expect(page.getByRole('button', { name: fixture.path.split('/').pop()!, exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Show selection controls', exact: true }).click()
   await page.getByRole('button', { name: 'Search beneath this folder', exact: true }).click()
-  await page.getByRole('textbox', { name: 'Search filenames' }).fill('*.txt')
+  await enterSearchQuery(page, '*.txt')
   await page.getByLabel('Wildcards (* and ?)').check()
   await page.getByRole('button', { name: 'Search', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('Search complete')
@@ -81,7 +90,7 @@ test('search reports truncation and remains usable in a narrow viewport', async 
   await page.goto('/')
   await page.getByRole('button', { name: 'More folder actions', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Search beneath this folder', exact: true }).click()
-  await page.getByRole('textbox', { name: 'Search filenames' }).fill('report')
+  await enterSearchQuery(page, 'report')
   const box = await page.getByRole('dialog').boundingBox()
   expect(box!.width).toBeLessThanOrEqual(390)
   await page.getByRole('button', { name: 'Search', exact: true }).click()
@@ -105,7 +114,7 @@ test('renaming a nested search result preserves its folder and refreshes results
   await page.goto(`/?fixture=${encodeURIComponent(fixture.path)}#path=${encodeURIComponent(fixture.path)}`)
   await expect(page.getByRole('button', { name: fixture.path.split('/').pop()!, exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Search beneath this folder', exact: true }).click()
-  await page.getByRole('textbox', { name: 'Search filenames' }).fill('report')
+  await enterSearchQuery(page, 'report')
   await page.getByRole('button', { name: 'Search', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('Search complete')
   await page.getByRole('button', { name: 'List view', exact: true }).click()
@@ -127,7 +136,7 @@ test('search results distinguish duplicate names and retain normal sorting and s
   await page.route('**/api/fs/search', route => route.fulfill({ contentType: 'application/x-ndjson', body: [...entries.map(entry => ({ entry, scanned: 2, skipped: 0 })), { done: true, scanned: 2, skipped: 0 }].map(update => JSON.stringify(update)).join('\n') + '\n' }))
   await page.goto('/')
   await page.getByRole('button', { name: 'Search beneath this folder', exact: true }).click()
-  await page.getByRole('textbox', { name: 'Search filenames' }).fill('report')
+  await enterSearchQuery(page, 'report')
   await page.getByRole('button', { name: 'Search', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('Search complete')
   const rows = page.locator('[data-file-entry]')
@@ -155,7 +164,7 @@ test('search can be cancelled in the main view and late responses cannot restore
   })
   await page.goto('/')
   await page.getByRole('button', { name: 'Search beneath this folder', exact: true }).click()
-  await page.getByRole('textbox', { name: 'Search filenames' }).fill('pending')
+  await enterSearchQuery(page, 'pending')
   await page.getByRole('button', { name: 'Search', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.getByRole('button', { name: 'Cancel search', exact: true }).click()
