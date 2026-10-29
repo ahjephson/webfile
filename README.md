@@ -14,7 +14,7 @@ For a server installation, download the Linux AMD64 archive and its matching SHA
 
 For local development, follow [Development](#development). The checked-in development configuration binds to loopback, disables authentication and exposes the developer's home directory. Use it only on a trusted local machine.
 
-The [documentation index](docs/README.md) links to architecture notes, the release process and historical design material. Feature proposals belong in the [backlog](docs/feature-backlog.md); published changes are recorded in [release notes](releases/).
+The [documentation index](docs/README.md) links to development guidance, security policies and the release process. Feature proposals belong in the [backlog](docs/feature-backlog.md); published changes are recorded in [release notes](releases/).
 
 ## Features
 
@@ -280,7 +280,7 @@ webfile-launcher.service  User=root      worker launcher only
 
 The broker stores application state in `/var/lib/webfile` and persistent thumbnails in `/var/cache/webfile/thumbnails` by default. The cache directory and its Unix socket are configurable under `thumbnails`; generated cache data is size-bounded and published atomically. User file access and thumbnail generation are performed only by UID-dropped workers.
 
-A bounded, disposable directory-reference index groups cached thumbnails for background deletion cleanup and same-filesystem folder-move reuse. It is populated only by thumbnail requests, never by scanning source roots, and does not replace filesystem authorization or listings. See [Thumbnail lifecycle design](docs/design/thumbnail-lifecycle.md) for ownership, recovery and performance details.
+A bounded, disposable directory-reference index groups cached thumbnails for background deletion cleanup and same-filesystem folder-move reuse. It is populated only by thumbnail requests, never by scanning source roots, and does not replace filesystem authorization or listings.
 
 `/etc/webfile/webfile.json` contains no credentials and is readable by local users because UID-dropped workers load it after launch. TLS private-key material remains separately protected under `/etc/webfile/tls` for the broker only.
 
@@ -389,7 +389,7 @@ backend/
   internal/worker/
 web/
   src/
-docs/                     # guides, policies, backlog, notices and design references
+docs/                     # development and release guides, policies, backlog and notices
 releases/                 # release notes and the release version marker
 deploy/
 scripts/
