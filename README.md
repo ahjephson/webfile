@@ -84,6 +84,7 @@ and persistent application state.
   with transparent buffered fallback.
 - Drag/drop local files to upload.
 - Conflict-safe operations: existing destinations are not silently overwritten.
+- Drag files and folders onto another folder in the same pane, or transfer them between split panes. Plain drag moves, Ctrl-drag copies and Shift-drag moves. Right-click the folder background to Paste copied or cut items, including in an empty folder.
 - Copy/move conflicts offer Skip, Keep both, explicit Replace for regular files,
   or Merge folders. File/folder mismatches cannot be replaced. Decisions can be
   applied to remaining conflicts of the same type within that task. Changed
@@ -115,6 +116,8 @@ and persistent application state.
 
 Uploads use an 8 MiB chunked protocol rather than one large multipart request.
 
+- every selected file is registered in Tasks before content transfer begins; waiting files appear as queued and can be cancelled before starting;
+- batches share a serial upload queue in the current workspace and retain their destination during navigation;
 - an init request identifies the target using path, size and browser
   `lastModified` metadata;
 - partial bytes and metadata live under `~/.local/share/webfile/uploads`;
@@ -168,9 +171,8 @@ such as `7zz`; WebFile does not maintain archive-format implementations.
   partial file and expose a Download action only after the ZIP is complete;
 - folder archive preflight enforces configured exclusions and rejects included
   symlinks or special files before invoking 7-Zip;
-- encrypted archives are prepared out of the visible task list, then request a
-  password through an in-memory operation channel; incorrect passwords prompt
-  again until the user succeeds or cancels;
+- the normal Extract… dialog previews each archive-named output folder before extraction starts;
+- encrypted extraction tasks request a password through an in-memory operation channel; incorrect passwords prompt again until the user succeeds or cancels. Later leaves a task waiting, and Enter password on its task card reopens the prompt;
 - no shell invocation;
 - cancellation through the operation context;
 - passwords are sent only over standard input and are never placed in command

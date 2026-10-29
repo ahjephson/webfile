@@ -479,13 +479,17 @@ for (const view of ['list', 'grid'] as const) {
       await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
     })
 
-    test('entries do not expose browser drag and drop', async ({ page }) => {
+    test('single-pane dragging exposes only internal transfer data', async ({ page }) => {
       const checkbox = selectionButtons(page).first()
       const entry = entryFor(checkbox)
 
-      await expect(entry).not.toHaveAttribute('draggable', 'true')
-      await entry.dispatchEvent('dragstart')
-      await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
+      await expect(entry).toHaveAttribute('draggable', 'true')
+      const dataTransfer = await page.evaluateHandle(() => new DataTransfer())
+      await entry.dispatchEvent('dragstart', { dataTransfer })
+      expect(await dataTransfer.evaluate(data => [...data.types])).toEqual(['application/x-webfile-items'])
+      expect(await dataTransfer.evaluate(data => data.getData('application/x-webfile-items'))).toMatch(/^[0-9a-f-]{36}$/)
+      await expect(checkbox).toHaveAttribute('aria-pressed', 'true')
+      await entry.dispatchEvent('dragend', { dataTransfer })
     })
 
     test('PrimeVue dismisses the menu on an outside click', async ({ page }) => {
