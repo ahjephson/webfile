@@ -12,6 +12,8 @@ WebFile 1.5.0 improves file transfers, upload task visibility and archive extrac
 - Every selected upload is registered in Tasks before file contents are sent. Waiting files appear as queued and can be cancelled before starting. Batches share a serial upload queue in the current workspace, retain their destination during navigation and continue after an individual file fails.
 - Reloading or leaving the page reports abandoned upload attempts as stopped. Resumable data is retained after interruption; reselect the original files to resume. Cancelling a queued upload removes its staging data, and cancelled or superseded attempts cannot restart through a delayed chunk request.
 - Thumbnail tasks periodically reconcile with the worker and reject older updates. Cancelling a job that has already finished refreshes its state instead of reporting a misleading cancellation error.
+- The breadcrumb trail stays aligned when the available content width changes.
+- Release packages group release notes and the version marker under `releases/`, and supporting documentation under `docs/`. Packages include security and contribution guidance and third-party dependency notices.
 
 ## Validation and deployment
 
