@@ -2082,7 +2082,7 @@ function operationLabel(value: string) {
       <DetailsDialog :visible="detailsVisible && paneVisible" @update:visible="detailsVisible = $event" :path="detailsPath" @error="showError($event, 'Could not load details')" @size-ready="applyCachedFolderSize" />
     </div>
 
-    <ContextMenu ref="contextMenu" :model="contextItems" :base-z-index="1100" @hide="onContextMenuHide" />
+    <ContextMenu ref="contextMenu" :model="contextItems" :base-z-index="1100" :pt="{ transition: { css: false } }" @hide="onContextMenuHide" />
     <Menu ref="actionsMenu" popup :model="contextItems" />
 
     <NewDocumentDialog v-model:visible="newDocumentVisible" @create="createDocument" />

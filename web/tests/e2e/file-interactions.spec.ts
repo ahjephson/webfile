@@ -456,6 +456,39 @@ for (const view of ['list', 'grid'] as const) {
       await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
     })
 
+    test('long-press context menu is opaque from its first frame over an outlined item', async ({ page }) => {
+      const checkbox = selectionButtons(page).first()
+      const entry = entryFor(checkbox)
+      await showSelectionControls(page)
+      await checkbox.click()
+      await expect(entry).toHaveClass(/outline-sky-500/)
+
+      const opening = await page.evaluateHandle(() => ({
+        opacity: new Promise<number>(resolve => {
+          const observer = new MutationObserver(() => {
+            const menu = document.querySelector<HTMLElement>('.p-contextmenu')
+            if (!menu) return
+            observer.disconnect()
+            requestAnimationFrame(() => resolve(Number(getComputedStyle(menu).opacity)))
+          })
+          observer.observe(document.body, { childList: true, subtree: true })
+        }),
+      }))
+      const box = await entry.boundingBox()
+      if (!box) throw new Error('Long-press target is not visible')
+      const pointer = { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 }
+      await entry.dispatchEvent('pointerdown', pointer)
+      const opacity = await opening.evaluate(result => result.opacity)
+      await entry.dispatchEvent('pointerup', pointer)
+      await opening.dispose()
+
+      expect(opacity).toBe(1)
+      await expect(page.locator('.p-contextmenu')).toBeVisible()
+      await expect(entry).toHaveClass(/outline-sky-500/)
+      await page.getByRole('menuitem', { name: 'Details', exact: true }).click()
+      await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
+    })
+
     test('touch movement cancels long-press detection', async ({ page, browserName }) => {
       test.skip(browserName !== 'chromium', 'Playwright exposes raw touch hold injection through Chromium CDP only')
       const checkbox = selectionButtons(page).first()
