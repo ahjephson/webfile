@@ -208,15 +208,50 @@ test('transfer progress retains its main details without redundant file phase te
   const transfer = panel.getByRole('article').filter({ hasText: 'Move folder.txt' })
   await expect(transfer.getByText('Scanning', { exact: true })).toHaveCount(1)
   let updated = 2
-  for (const phase of ['copying', 'flushing', 'publishing', 'copying']) {
+  for (const phase of ['copying', 'flushing', 'publishing', 'removing_source', 'copying']) {
     realtime.send({ type: 'operation-updated', operation: { ...operation, phase, message: 'Copying folder',
-      progress_done: updated, progress_total: 10, progress_unit: 'bytes', bytes_done: updated, bytes_total: 10,
+      progress_done: updated, progress_total: 10, progress_unit: 'bytes', bytes_done: updated, bytes_total: 10, bytes_per_second: 10485760,
       updated_at: `2000-01-01T00:00:0${updated++}Z` } })
     await expect(transfer.getByRole('progressbar')).toHaveAttribute('aria-valuenow', `${(updated - 1) * 10}`)
     await expect(transfer.getByText('Copying folder', { exact: true })).toBeVisible()
+    await expect(transfer.getByText(/10\.0 MiB\/s$/)).toBeVisible()
     await expect(transfer.getByText(/^(Copying|Flushing|Publishing)$/)).toHaveCount(0)
     await expect(transfer.getByText(/B.*·.*(Copying|Flushing|Publishing)/)).toHaveCount(0)
   }
+  realtime.send({ type: 'operation-updated', operation: { ...operation, phase: 'flushing', message: 'Copying folder',
+    progress_done: 6, progress_total: 10, progress_unit: 'bytes', bytes_done: 6, bytes_total: 10, bytes_per_second: 0,
+    updated_at: '2000-01-01T00:00:09Z' } })
+  await expect(transfer.getByText('6 B / 10 B · 0 B/s', { exact: true })).toBeVisible()
+  await expect(transfer.getByText('Waiting for disk…', { exact: true })).toBeVisible()
+})
+
+test('transfer bar advances below a whole percent and keeps final disk writes active', async ({ page }) => {
+  const realtime = await taskFolder(page)
+  const operation = { ...task('music', 'running'), kind: 'move', phase: 'copying', message: 'Copying music',
+    progress_done: 100, progress_total: 100000, progress_unit: 'bytes', bytes_done: 100, bytes_total: 100000,
+    bytes_per_second: 10485760 }
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [operation] } }))
+  await page.goto('/#path=%2Fdocs')
+  await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+  const transfer = page.getByRole('complementary').getByRole('article').filter({ hasText: 'Move music.txt' })
+  const progress = transfer.getByRole('progressbar')
+  await expect(progress).toHaveAttribute('aria-valuenow', '0.1')
+  await expect(progress.locator('div')).toHaveAttribute('style', 'width: 0.1%;')
+  realtime.send({ type: 'operation-updated', operation: { ...operation, progress_done: 200, bytes_done: 200,
+    updated_at: '2000-01-01T00:00:02Z' } })
+  await expect(progress).toHaveAttribute('aria-valuenow', '0.2')
+  await expect(progress.locator('div')).toHaveAttribute('style', 'width: 0.2%;')
+  const finishing = { ...operation, phase: 'flushing', progress_done: 100000, bytes_done: 100000,
+    updated_at: '2000-01-01T00:00:03Z' }
+  realtime.send({ type: 'operation-updated', operation: finishing })
+  await expect(progress).toHaveAttribute('aria-valuenow', '100')
+  await expect(transfer.getByText('Finishing…', { exact: true })).toBeVisible()
+  await expect(transfer).toHaveAttribute('data-task-state', 'running')
+  await expect(page.getByText('Move complete', { exact: true })).toHaveCount(0)
+  realtime.send({ type: 'operation-updated', operation: { ...finishing, state: 'completed', phase: 'completed', cancellable: false,
+    finished_at: '2000-01-01T00:00:04Z', updated_at: '2000-01-01T00:00:04Z' } })
+  await expect(transfer.getByText('Finishing…', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Move complete', { exact: true })).toBeVisible()
 })
 
 async function taskFolder(page: Page) {

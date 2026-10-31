@@ -86,7 +86,8 @@ Copy, move, permanent delete, archive extraction and uploads report through a sh
 
 - queued tasks run through a bounded worker pool (two concurrent tasks by default);
 - lifecycle state includes queued, preparing, awaiting-input, running, cancelling, cleanup, terminal and interrupted states;
-- progress, explicit filesystem phases and smoothed copy/move throughput are delivered over the existing WebSocket;
+- progress, explicit filesystem phases and smoothed copy/move throughput, including disk-write waits, are delivered over the existing WebSocket; the task bar retains fractional progress and distinguishes final flushing from completion;
+- Linux file copies overlap bounded range writeback with subsequent copying and retain the final full-file flush before publication; filesystems without range-writeback support retain the ordinary copy-and-flush path;
 - task history survives worker and broker restarts;
 - work found active after an unclean restart is marked interrupted rather than incorrectly reported as still running;
 - cancellation is task-aware, and cleanup policies/errors are recorded with the task;

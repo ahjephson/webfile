@@ -332,6 +332,10 @@ func copyFileAtomic(ctx context.Context, source, destination string, mode fs.Fil
 		return err
 	}
 
+	if progress != nil {
+		// Start timing before the first read/write, which can itself block.
+		progress(transferPhaseCopying, 0)
+	}
 	if err := copyFileData(ctx, in, tmp, progress, copyFileRangePlatform); err != nil {
 		_ = tmp.Close()
 		return err
@@ -380,6 +384,12 @@ func copyFileData(ctx context.Context, source, destination *os.File, progress fu
 		return nil
 	}
 
+	// The fast path may have made partial progress before falling back. Start
+	// range scheduling at the current offset; the final Sync covers both paths.
+	writeback, err := newCopyWriteback(destination)
+	if err != nil {
+		return err
+	}
 	buf := make([]byte, 1024*1024)
 	for {
 		if err := ctx.Err(); err != nil {
@@ -396,6 +406,9 @@ func copyFileData(ctx context.Context, source, destination *os.File, progress fu
 			}
 			if written != n {
 				return io.ErrShortWrite
+			}
+			if err := writeback(ctx, int64(written)); err != nil {
+				return err
 			}
 		}
 		if errors.Is(readErr, io.EOF) {

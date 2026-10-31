@@ -6,4 +6,4 @@ Remove an item when it is released; do not retain it here with a completed statu
 
 WebFile primarily serves file browsing and moving. Keep additions focused on those workflows; previously discarded suggestions should not be treated as backlog items without renewed agreement.
 
-No pending items. See the [release notes](../releases/) for delivered changes.
+- Cross-drive copy/move progress: retain speed history through disk waits, show fractional progress and finishing states, and spread large-file writeback through the copy. Validate sustained behaviour on the affected HDDs; local virtual-disk measurements do not establish a physical-drive speedup.

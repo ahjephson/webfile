@@ -144,18 +144,17 @@ type TaskOptions struct {
 }
 
 type record struct {
-	inputHandler     func(json.RawMessage) error
-	op               Operation
-	run              RunFunc
-	cleanup          CleanupFunc
-	cancel           context.CancelFunc
-	external         bool
-	clientFailure    bool
-	lastBroadcast    time.Time
-	lastPersistence  time.Time
-	rateSamples      []transferRateSample
-	lastByteProgress time.Time
-	rateHeartbeat    bool
+	inputHandler    func(json.RawMessage) error
+	op              Operation
+	run             RunFunc
+	cleanup         CleanupFunc
+	cancel          context.CancelFunc
+	external        bool
+	clientFailure   bool
+	lastBroadcast   time.Time
+	lastPersistence time.Time
+	rateSamples     []transferRateSample
+	rateHeartbeat   bool
 }
 
 type Manager struct {
@@ -882,11 +881,15 @@ func (m *Manager) updateProgress(id string, p ProgressUpdate) {
 	if p.Phase != "" {
 		nextPhase = p.Phase
 	}
-	if phaseChanged || p.BytesDone < previousBytes || nextPhase != transferRateActivePhase || p.BytesTotal <= 0 {
+	if p.BytesDone < previousBytes || !transferIOPhase(nextPhase) || p.BytesTotal <= 0 {
 		resetTransferRate(rec)
 	}
-	if nextPhase == transferRateActivePhase && p.BytesTotal > 0 && p.BytesDone > previousBytes {
-		rec.lastByteProgress = now
+	if transferIOPhase(nextPhase) && p.BytesTotal > 0 {
+		if len(rec.rateSamples) == 0 {
+			// Copying reports its starting counter before IO. A resumed task
+			// may already have copied bytes; never count those as a new burst.
+			rec.rateSamples = []transferRateSample{{at: now, bytes: p.BytesDone}}
+		}
 		rec.rateSamples, rec.op.BytesPerSecond = appendTransferRateSample(rec.rateSamples, now, p.BytesDone)
 	}
 	rec.op.State = StateRunning
@@ -902,9 +905,9 @@ func (m *Manager) updateProgress(id string, p ProgressUpdate) {
 	}
 	rec.op.Message = p.Message
 	rec.op.UpdatedAt = now.UTC()
-	if rec.op.BytesPerSecond != nil && !rec.rateHeartbeat {
+	if len(rec.rateSamples) > 0 && !rec.rateHeartbeat {
 		rec.rateHeartbeat = true
-		go m.expireTransferRate(id)
+		go m.updateTransferRate(id)
 	}
 
 	// Per-file copy/flush/publish transitions are telemetry, not durable task
@@ -1003,37 +1006,32 @@ func (m *Manager) broadcastLocked(op Operation) {
 	}
 }
 
-func (m *Manager) expireTransferRate(id string) {
+func (m *Manager) updateTransferRate(id string) {
 	ticker := time.NewTicker(transferRateHeartbeat)
 	defer ticker.Stop()
-	for now := range ticker.C {
+	for range ticker.C {
 		m.mu.Lock()
+		now := time.Now()
 		rec := m.records[id]
-		if rec == nil || terminalState(rec.op.State) || rec.op.BytesPerSecond == nil {
+		if rec == nil || terminalState(rec.op.State) || len(rec.rateSamples) == 0 {
 			if rec != nil {
 				rec.rateHeartbeat = false
 			}
 			m.mu.Unlock()
 			return
 		}
-		if !transferRateExpired(rec.lastByteProgress, now) {
-			m.mu.Unlock()
-			continue
-		}
-		rec.op.BytesPerSecond = nil
-		rec.rateSamples = nil
-		rec.rateHeartbeat = false
+		// Sample unchanged bytes too: a blocked write or fsync is elapsed
+		// transfer time, not a reason to forget the history before the pause.
+		rec.rateSamples, rec.op.BytesPerSecond = appendTransferRateSample(rec.rateSamples, now, rec.op.BytesDone)
 		rec.op.UpdatedAt = now.UTC()
 		m.broadcastLocked(rec.op)
 		m.mu.Unlock()
-		return
 	}
 }
 
 func resetTransferRate(rec *record) {
 	rec.op.BytesPerSecond = nil
 	rec.rateSamples = nil
-	rec.lastByteProgress = time.Time{}
 }
 
 func (m *Manager) trimLocked() {

@@ -94,7 +94,15 @@ function updateIndeterminateProgress(timestamp: number) {
 
 function percent(operation: FileOperation): number | null {
   if (operation.progress_total <= 0) return null
-  return Math.max(0, Math.min(100, Math.round(operation.progress_done / operation.progress_total * 100)))
+  return Math.max(0, Math.min(100, operation.progress_done / operation.progress_total * 100))
+}
+
+function transferNotice(operation: FileOperation): string {
+  if (operation.state !== 'running' || !['copy', 'move'].includes(operation.kind)) return ''
+  if (!['copying', 'flushing', 'publishing', 'removing_source'].includes(operation.phase ?? '')) return ''
+  if (operation.bytes_total > 0 && operation.bytes_done >= operation.bytes_total) return 'Finishing…'
+  if (operation.bytes_per_second === 0) return 'Waiting for disk…'
+  return ''
 }
 
 function active(operation: FileOperation) {
@@ -133,7 +141,7 @@ function formatProgress(operation: FileOperation): string {
   if (operation.progress_unit === 'percent') return `${Math.round(operation.progress_done)}%`
   if (operation.progress_unit === 'bytes') {
     const progress = `${formatBytes(operation.progress_done)} / ${formatBytes(operation.progress_total)}`
-    if (operation.phase === 'copying' && operation.bytes_per_second && operation.bytes_per_second > 0) {
+    if (operation.state === 'running' && ['copying', 'flushing', 'publishing', 'removing_source'].includes(operation.phase ?? '') && operation.bytes_per_second != null) {
       return `${progress} · ${formatBytes(operation.bytes_per_second)}/s`
     }
     return progress
@@ -254,6 +262,7 @@ function formatDate(value?: string) {
                 <span v-else />
                 <Button v-if="operation.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel', operation)" />
               </div>
+              <p v-if="transferNotice(operation)" class="mt-1 text-xs text-zinc-400" role="status">{{ transferNotice(operation) }}</p>
             </div>
             <details v-if="operation.destination" class="mt-2 text-xs text-zinc-500">
               <summary class="cursor-pointer select-none">Details</summary>

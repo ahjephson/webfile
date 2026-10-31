@@ -159,13 +159,16 @@ func TestOperationCompletesAndReportsProgress(t *testing.T) {
 	}
 }
 
-func TestCopyingOperationReportsAndClearsTransferRate(t *testing.T) {
+func TestCopyingOperationRetainsTransferRateThroughFlush(t *testing.T) {
 	manager := New(10)
 	updates, cancel := manager.Subscribe()
 	defer cancel()
 
 	op := manager.Start("copy", []string{"/a"}, "/b", func(_ context.Context, reporter Reporter) error {
 		reporter.UpdatePhase("copying", 0, 100, 0, 1, "Copying a")
+		manager.mu.Lock()
+		manager.records[reporter.ID()].rateSamples[0].at = time.Now().Add(-time.Second)
+		manager.mu.Unlock()
 		reporter.UpdatePhase("copying", 50, 100, 0, 1, "Copying a")
 		// Simulate the next broadcast interval without a wall-clock sleep.
 		manager.mu.Lock()
@@ -180,7 +183,7 @@ func TestCopyingOperationReportsAndClearsTransferRate(t *testing.T) {
 	})
 
 	foundRate := false
-	foundClearedRate := false
+	foundFlushRate := false
 	deadline := time.After(2 * time.Second)
 	for {
 		select {
@@ -191,12 +194,12 @@ func TestCopyingOperationReportsAndClearsTransferRate(t *testing.T) {
 			if update.Phase == "copying" && update.BytesPerSecond != nil {
 				foundRate = *update.BytesPerSecond > 0
 			}
-			if update.Phase == "flushing" && update.BytesPerSecond == nil {
-				foundClearedRate = true
+			if update.Phase == "flushing" && update.BytesPerSecond != nil {
+				foundFlushRate = true
 			}
 			if update.State == StateCompleted {
-				if !foundRate || !foundClearedRate {
-					t.Fatalf("rate lifecycle missing: rate=%v cleared=%v", foundRate, foundClearedRate)
+				if !foundRate || !foundFlushRate || update.BytesPerSecond != nil {
+					t.Fatalf("rate lifecycle missing: copying=%v flushing=%v completed=%v", foundRate, foundFlushRate, update.BytesPerSecond)
 				}
 				return
 			}

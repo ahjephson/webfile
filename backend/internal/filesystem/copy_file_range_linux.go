@@ -15,6 +15,10 @@ import (
 // both offsets. A false complete result asks the caller to resume with its
 // portable buffered copy path from those same offsets.
 func copyFileRangePlatform(ctx context.Context, source, destination *os.File, progress func(int64)) (complete bool, err error) {
+	writeback, err := newCopyWriteback(destination)
+	if err != nil {
+		return false, err
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return false, err
@@ -22,6 +26,11 @@ func copyFileRangePlatform(ctx context.Context, source, destination *os.File, pr
 		n, copyErr := unix.CopyFileRange(int(source.Fd()), nil, int(destination.Fd()), nil, copyChunkSize(ctx), 0)
 		if n > 0 && progress != nil {
 			progress(int64(n))
+		}
+		if n > 0 {
+			if err := writeback(ctx, int64(n)); err != nil {
+				return false, err
+			}
 		}
 		if copyErr != nil {
 			if errors.Is(copyErr, unix.EINTR) {
