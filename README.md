@@ -42,15 +42,19 @@ The [documentation index](docs/README.md) links to development guidance, securit
 ### File manager
 
 - Browse, filter and navigate directories.
+- Folder scroll positions are remembered separately per pane for the current tab. Back and Forward restore the exact offset when the layout is unchanged, or keep the previous visible item in view after changes in window size, split view, grid size or the details pane.
 - Optional split-pane browsing provides independent navigation, selection, filtering and view controls, a resizable divider, and a shared toolbar and task list. Copy/move actions and a shared clipboard transfer items between panes. Dragging moves by default; Ctrl-drag copies and Shift-drag moves, with the operation determined at drop time. Narrow screens stack the panes vertically. Pane locations, selection, layout and divider position are retained for the browser tab; closing split view keeps the active pane.
 - Preview audio using the browser's native player, with playback, seeking and volume controls and no autoplay. Common audio formats include MP3, WAV, FLAC, AAC, M4A, Ogg and Opus; decoding support depends on the browser. Audio streams through the existing inline download endpoint with byte-range support.
 - Sort by name, modified time, size or type in either direction, with folders first and the choice saved per user. Sorting uses the loaded listing; it does not trigger recursive folder-size calculations.
 - Search filenames beneath the current folder, with optional `*`/`?` wildcards, case sensitivity and file/folder filtering. Results stream from a live scan into the normal list/grid view, with location information and a search banner. The search dialog configures the scan; results use the usual selection, sorting, previews and file actions. “Show in folder” in a result's context menu opens its containing folder and selects the item. Cancel stops the scan. Each worker allows one search, bounded to 1,000 matches, 100,000 entries, 64 levels and 30 seconds; hitting a limit clearly reports partial results. Hidden/excluded paths and symlink traversal are omitted by default, and no search catalogue is created.
 - Create folders and text/code files.
+- Rename opens with the complete name selected, so typing replaces it immediately.
 - Multi-select: Ctrl/Cmd, Shift ranges, Ctrl/Cmd+A and explicit touch selection mode.
 - Shared right-click / touch press-and-hold context menu.
 - Keyboard navigation and F2/Delete/Enter/Space/Escape shortcuts.
+- Ctrl/Cmd+F filters the current folder; Ctrl/Cmd+Shift+F opens the search dialog for the active pane.
 - Multi-item copy/move, including cross-root transfers.
+- Completed copy and move operations show a success notification, including transfers started with Cut/Copy and Paste.
 - Linux copies use chunked in-kernel `copy_file_range` transfers when supported, with transparent buffered fallback.
 - Drag/drop local files to upload.
 - Conflict-safe operations: existing destinations are not silently overwritten.

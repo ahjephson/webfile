@@ -17,6 +17,7 @@ import { isEntryVisible } from '@/utils/entryVisibility'
 import { fileVisualForPath } from '@/utils/fileVisual'
 import { sortEntries, type SortField, type SortDirection } from '@/utils/sorting'
 import { archiveExtensions } from '@/utils/archives'
+import type { ListingScrollPosition } from '@/utils/listingScroll'
 import SettingsDialog from '@/components/SettingsDialog.vue'
 import SearchDialog from '@/components/SearchDialog.vue'
 import ConflictDialog from '@/components/ConflictDialog.vue'
@@ -180,6 +181,8 @@ const contextEntry = ref<FileEntry | null>(null)
 const themeMenu = ref<any>(null)
 const listView = ref<InstanceType<typeof VirtualFileList> | null>(null)
 const gridView = ref<InstanceType<typeof VirtualFileGrid> | null>(null)
+const directoryScrollPositions = new Map<string, ListingScrollPosition>()
+let pendingScrollRestorePath = ''
 const fileViewHost = ref<HTMLElement | null>(null)
 const breadcrumbScroll = ref<HTMLElement | null>(null)
 const breadcrumbContent = ref<HTMLElement | null>(null)
@@ -568,6 +571,8 @@ onMounted(async () => {
   }
 })
 
+watch(currentPath, (_path, previousPath) => rememberDirectoryScroll(previousPath), { flush: 'sync' })
+
 watch(currentPath, path => {
   currentFolderSelected.value = false
   if (!navigationReady) return
@@ -847,6 +852,8 @@ function directorySnapshot() {
 function refresh(showSpinner: boolean, reuseListing = false): Promise<boolean> {
   if (viewingSearch.value) return Promise.resolve(true)
   if (showSpinner) {
+    rememberDirectoryScroll(currentPath.value)
+    pendingScrollRestorePath = currentPath.value
     invalidationRefreshPending = false
     if (largeDirectoryRefreshTimer !== null) window.clearTimeout(largeDirectoryRefreshTimer)
     largeDirectoryRefreshTimer = null
@@ -902,7 +909,16 @@ async function loadDirectory(request: number, requestedPath: string, showSpinner
     if (!explorerDisposed && requestedPath === currentPath.value) error.value = messageOf(err)
     return false
   } finally {
-    if (request === refreshRequest) loading.value = false
+    if (request === refreshRequest) {
+      loading.value = false
+      await nextTick()
+      if (request === refreshRequest && requestedPath === currentPath.value && pendingScrollRestorePath === requestedPath && !viewingSearch.value && !error.value) {
+        pendingScrollRestorePath = ''
+        const position = directoryScrollPositions.get(requestedPath) ?? null
+        const view = viewMode.value === 'list' ? listView.value : gridView.value
+        await view?.restoreScrollPosition(position)
+      }
+    }
   }
 }
 
@@ -938,7 +954,6 @@ function navigateBreadcrumb(path: string) {
 function showOperationTerminalToast(operation: FileOperation) {
   if (!isPrimary) return
   if (operation.state === 'completed') {
-    if (operation.kind === 'copy' || operation.kind === 'move') return
     toast.add({ severity: 'success', summary: `${operationLabel(operation.kind)} complete`, detail: operation.message || undefined, life: 2500 })
   } else if (operation.state === 'failed') {
     toast.add({ severity: 'error', summary: `${operationLabel(operation.kind)} failed`, detail: operation.error, life: 6000 })
@@ -1715,7 +1730,13 @@ function handleDetailsShortcut(event: KeyboardEvent): boolean {
 function onGlobalKeyDown(event: KeyboardEvent) {
   if (!isActive.value || !props.paneVisible) return
   if (handleDetailsShortcut(event)) return
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f') {
+    if (event.shiftKey) {
+      if (currentPath.value === '/' || document.querySelector('[role="dialog"], [role="alertdialog"]')) return
+      event.preventDefault()
+      recursiveSearchVisible.value = true
+      return
+    }
     event.preventDefault()
     openFilter()
   }
@@ -1799,6 +1820,16 @@ function onKeyDown(event: KeyboardEvent) {
   if (detailsVisible.value) detailsPath.value = entry.path
 
   void nextTick(() => scrollIndexIntoView(next))
+}
+
+function rememberDirectoryScroll(path: string) {
+  if (!navigationReady || loading.value || viewingSearch.value || loadedDirectoryPath !== path || !props.paneVisible) return
+  const view = viewMode.value === 'list' ? listView.value : gridView.value
+  const position = view?.captureScrollPosition()
+  if (!position) return
+  directoryScrollPositions.delete(path)
+  directoryScrollPositions.set(path, position)
+  if (directoryScrollPositions.size > 128) directoryScrollPositions.delete(directoryScrollPositions.keys().next().value!)
 }
 
 function scrollFocusedIntoView() {
@@ -2090,7 +2121,7 @@ function operationLabel(value: string) {
       v-model:visible="nameDialogVisible"
       :title="nameDialogMode === 'folder' ? 'New folder' : 'Rename'"
       :label="nameDialogMode === 'folder' ? 'Folder name' : 'New name'"
-      :initial-value="nameDialogMode === 'rename' ? selectedOne?.name : ''"
+      :initial-value="nameDialogMode === 'rename' ? renameTarget?.name : ''"
       :submit-label="nameDialogMode === 'folder' ? 'Create' : 'Rename'"
       @submit="onNameDialogSubmit"
     />

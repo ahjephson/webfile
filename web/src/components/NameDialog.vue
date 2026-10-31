@@ -18,6 +18,13 @@ const emit = defineEmits<{
 }>()
 
 const value = ref('')
+const nameForm = ref<HTMLFormElement | null>(null)
+
+function focusName() {
+  const input = nameForm.value?.querySelector('input')
+  input?.focus()
+  input?.select()
+}
 
 watch(() => props.visible, visible => {
   if (visible) value.value = props.initialValue ?? ''
@@ -37,9 +44,10 @@ function submit() {
     modal
     :header="title"
     :style="{ width: 'min(30rem, 92vw)' }"
+    @show="focusName"
     @update:visible="emit('update:visible', $event)"
   >
-    <form class="space-y-4" @submit.prevent="submit">
+    <form ref="nameForm" class="space-y-4" @submit.prevent="submit">
       <div class="space-y-2">
         <label class="block text-sm font-medium">{{ label }}</label>
         <InputText v-model="value" autofocus fluid autocomplete="off" />

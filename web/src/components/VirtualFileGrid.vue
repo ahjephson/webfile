@@ -4,6 +4,7 @@ import type { FileEntry } from '@/types/files'
 import FileVisual from '@/components/FileVisual.vue'
 import LevelUpIcon from '@/components/LevelUpIcon.vue'
 import { acceptsFileDrop } from '@/composables/useExplorerWorkspace'
+import { captureListingScroll, restoreListingScroll, type ListingScrollPosition } from '@/utils/listingScroll'
 
 const props = defineProps<{
   entries: FileEntry[]
@@ -103,6 +104,23 @@ function scrollToIndexAtTop(index: number) {
   scrollTop.value = element.scrollTop
 }
 
+function captureScrollPosition() {
+  return props.showLocation ? null : captureListingScroll(viewport.value, props.entries, columns.value, rowHeight.value)
+}
+
+async function restoreScrollPosition(position: ListingScrollPosition | null) {
+  const element = viewport.value
+  if (!element) return
+  // A remounted grid has not necessarily received its first ResizeObserver
+  // callback. Measure before calculating the anchor's row in the new layout.
+  const style = getComputedStyle(element)
+  width.value = element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+  viewportHeight.value = element.clientHeight
+  await nextTick()
+  restoreListingScroll(viewport.value, props.entries, columns.value, rowHeight.value, position)
+  onScroll()
+}
+
 function onDropFolder(entry: FileEntry, event: DragEvent) {
   if (!entry.is_dir || !acceptsFileDrop(event)) return
   event.preventDefault()
@@ -183,7 +201,7 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[index]}`
 }
 
-defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: columns })
+defineExpose({ scrollToIndex, scrollToIndexAtTop, captureScrollPosition, restoreScrollPosition, columnCount: columns })
 </script>
 
 <template>

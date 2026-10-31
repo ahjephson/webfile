@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { FileEntry } from '@/types/files'
 import FileVisual from '@/components/FileVisual.vue'
 import LevelUpIcon from '@/components/LevelUpIcon.vue'
 import type { SortField, SortDirection } from '@/utils/sorting'
 import { acceptsFileDrop } from '@/composables/useExplorerWorkspace'
+import { captureListingScroll, restoreListingScroll, type ListingScrollPosition } from '@/utils/listingScroll'
 
 const props = defineProps<{
   entries: FileEntry[]
@@ -85,6 +86,16 @@ function scrollToIndexAtTop(index: number) {
   if (!element || index < 0 || element.scrollTop <= 1) return
   element.scrollTop = index * rowHeight
   scrollTop.value = element.scrollTop
+}
+
+function captureScrollPosition() {
+  return props.showLocation ? null : captureListingScroll(viewport.value, props.entries, 1, rowHeight)
+}
+
+async function restoreScrollPosition(position: ListingScrollPosition | null) {
+  await nextTick()
+  restoreListingScroll(viewport.value, props.entries, 1, rowHeight, position)
+  onScroll()
 }
 
 function onDropFolder(entry: FileEntry, event: DragEvent) {
@@ -171,7 +182,7 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 }
 
-defineExpose({ scrollToIndex, scrollToIndexAtTop, columnCount: 1 })
+defineExpose({ scrollToIndex, scrollToIndexAtTop, captureScrollPosition, restoreScrollPosition, columnCount: 1 })
 </script>
 
 <template>
