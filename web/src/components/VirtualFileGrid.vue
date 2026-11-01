@@ -231,7 +231,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, captureScrollPosition, restore
           :style="{ height: `${metrics.cellHeight + locationHeight}px` }"
           :class="[
             focusedPath === cell.entry.path && selected.has(cell.entry.path) ? 'webfile-focus-tint' : selected.has(cell.entry.path) ? 'webfile-selection-tint' : '',
-            selected.has(cell.entry.path) || focusedPath === cell.entry.path ? 'outline outline-1 outline-sky-500/70' : '',
+            selected.has(cell.entry.path) || focusedPath === cell.entry.path ? 'ring-1 ring-inset ring-sky-500/70' : '',
             cut.has(cell.entry.path) ? 'opacity-50' : '',
             dropTargetPath === cell.entry.path ? 'webfile-drop-target' : '',
           ]"

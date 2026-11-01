@@ -183,7 +183,7 @@ for (const view of ['list', 'grid'] as const) {
       await touchPoint(page, checkbox)
 
       await expect(checkbox).toHaveAttribute('aria-pressed', 'true')
-      await expect(entryFor(checkbox)).toHaveClass(/outline-sky-500/)
+      await expect(entryFor(checkbox)).toHaveClass(/ring-sky-500/)
       await expect(entryFor(checkbox)).toHaveClass(/webfile-selection-tint/)
       await expect(entryFor(checkbox)).not.toHaveClass(/webfile-focus-tint/)
       await expect(page.locator('nav[aria-label="Breadcrumb"] button')).toHaveCount(breadcrumbBefore)
@@ -216,7 +216,7 @@ for (const view of ['list', 'grid'] as const) {
       await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
       await expect(page.getByText('0 selected', { exact: true })).toBeVisible()
       await expect(entry).not.toHaveClass(/webfile-selection-tint/)
-      await expect(entry).not.toHaveClass(/outline-sky-500/)
+      await expect(entry).not.toHaveClass(/ring-sky-500/)
     })
 
     test('selection controls are opt-in with a touch-sized target', async ({ page }) => {
@@ -276,7 +276,7 @@ for (const view of ['list', 'grid'] as const) {
       await expect(page.locator('[data-selection-control][aria-pressed="true"]')).toHaveCount(0)
       await expect(page.getByText('0 selected', { exact: true })).toBeVisible()
       await expect(entry).not.toHaveClass(/webfile-selection-tint|webfile-focus-tint/)
-      await expect(entry).toHaveClass(/outline-sky-500/)
+      await expect(entry).toHaveClass(/ring-sky-500/)
     })
 
     test('mouse click modifiers follow desktop multi-selection rules', async ({ page }) => {
@@ -291,7 +291,7 @@ for (const view of ['list', 'grid'] as const) {
       await expect(first).toHaveAttribute('aria-pressed', 'true')
       await expect(first).toBeHidden()
       await expect(page.locator('[data-selection-control][aria-pressed="true"]')).toHaveCount(1)
-      await expect(entryFor(first)).toHaveClass(/outline-sky-500/)
+      await expect(entryFor(first)).toHaveClass(/ring-sky-500/)
       await expect(entryFor(first)).toHaveClass(/webfile-focus-tint/)
       await expect(entryFor(first)).not.toHaveClass(/ring-sky-600|border-sky-600/)
 
@@ -302,7 +302,7 @@ for (const view of ['list', 'grid'] as const) {
       await expect(page.locator('[data-selection-control][aria-pressed="true"]')).toHaveCount(2)
       await expect(entryFor(first)).toHaveClass(/webfile-selection-tint/)
       await expect(entryFor(third)).toHaveClass(/webfile-focus-tint/)
-      await expect(entryFor(third)).toHaveClass(/outline-sky-500/)
+      await expect(entryFor(third)).toHaveClass(/ring-sky-500/)
 
       await entryFor(first).click({ modifiers: ['Control'] })
 
@@ -322,7 +322,7 @@ for (const view of ['list', 'grid'] as const) {
 
       await expect(first).toHaveAttribute('aria-pressed', 'true')
       await expect(page.locator('[data-selection-control][aria-pressed="true"]')).toHaveCount(4)
-      await expect(entryFor(first)).toHaveClass(/outline-sky-500/)
+      await expect(entryFor(first)).toHaveClass(/ring-sky-500/)
     })
 
     test('touch tap on a folder opens it without selecting it', async ({ page }) => {
@@ -393,7 +393,7 @@ for (const view of ['list', 'grid'] as const) {
 
       await expect(page.locator('.p-contextmenu')).toBeVisible()
       await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
-      await expect(entryFor(checkbox)).toHaveClass(/outline-sky-500/)
+      await expect(entryFor(checkbox)).toHaveClass(/ring-sky-500/)
       await page.getByRole('menuitem', { name: 'Details' }).click()
       await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
     })
@@ -456,20 +456,38 @@ for (const view of ['list', 'grid'] as const) {
       await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
     })
 
-    test('long-press context menu is opaque from its first frame over an outlined item', async ({ page }) => {
+    test('long-press context menu opens above an inset selection border from its first frame', async ({ page }) => {
       const checkbox = selectionButtons(page).first()
       const entry = entryFor(checkbox)
       await showSelectionControls(page)
       await checkbox.click()
-      await expect(entry).toHaveClass(/outline-sky-500/)
+      await expect(entry).toHaveClass(/ring-sky-500/)
+      // Avoid the separate outline-painting path on composited rows. Keep the
+      // visible selection border inside the item's normal paint box.
+      await expect(entry).toHaveCSS('outline-style', 'none')
+      await expect(entry).toHaveCSS('box-shadow', /inset/)
 
       const opening = await page.evaluateHandle(() => ({
-        opacity: new Promise<number>(resolve => {
+        frames: new Promise<Array<{ opacity: number; aboveItem: boolean }>>(resolve => {
           const observer = new MutationObserver(() => {
             const menu = document.querySelector<HTMLElement>('.p-contextmenu')
             if (!menu) return
             observer.disconnect()
-            requestAnimationFrame(() => resolve(Number(getComputedStyle(menu).opacity)))
+            const frames: Array<{ opacity: number; aboveItem: boolean }> = []
+            const sample = () => {
+              const item = document.querySelector<HTMLElement>('[data-file-entry]')!
+              const itemBox = item.getBoundingClientRect()
+              const menuBox = menu.getBoundingClientRect()
+              const left = Math.max(itemBox.left, menuBox.left), right = Math.min(itemBox.right, menuBox.right)
+              const top = Math.max(itemBox.top, menuBox.top), bottom = Math.min(itemBox.bottom, menuBox.bottom)
+              const hit = right > left && bottom > top
+                ? document.elementFromPoint((left + right) / 2, bottom - Math.min(1, (bottom - top) / 2))
+                : null
+              frames.push({ opacity: Number(getComputedStyle(menu).opacity), aboveItem: hit?.closest('.p-contextmenu') === menu })
+              if (frames.length === 6) resolve(frames)
+              else requestAnimationFrame(sample)
+            }
+            requestAnimationFrame(sample)
           })
           observer.observe(document.body, { childList: true, subtree: true })
         }),
@@ -478,13 +496,14 @@ for (const view of ['list', 'grid'] as const) {
       if (!box) throw new Error('Long-press target is not visible')
       const pointer = { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 }
       await entry.dispatchEvent('pointerdown', pointer)
-      const opacity = await opening.evaluate(result => result.opacity)
+      const frames = await opening.evaluate(result => result.frames)
       await entry.dispatchEvent('pointerup', pointer)
       await opening.dispose()
 
-      expect(opacity).toBe(1)
+      expect(frames).toHaveLength(6)
+      for (const frame of frames) expect(frame).toEqual({ opacity: 1, aboveItem: true })
       await expect(page.locator('.p-contextmenu')).toBeVisible()
-      await expect(entry).toHaveClass(/outline-sky-500/)
+      await expect(entry).toHaveClass(/ring-sky-500/)
       await page.getByRole('menuitem', { name: 'Details', exact: true }).click()
       await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
     })
@@ -548,7 +567,7 @@ for (const view of ['list', 'grid'] as const) {
 
       await expect(page.locator('.p-contextmenu')).toBeVisible()
       await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
-      await expect(entryFor(checkbox)).toHaveClass(/outline-sky-500/)
+      await expect(entryFor(checkbox)).toHaveClass(/ring-sky-500/)
       await page.getByRole('menuitem', { name: 'Details' }).click()
       await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
     })
@@ -1271,7 +1290,7 @@ test('Alt+Enter toggles details for the focused item', async ({ page }) => {
 
   await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
   await expect(page.locator('button[aria-label="Close details"][aria-pressed="true"]')).toBeVisible()
-  await expect(entry).toHaveClass(/outline-sky-500/)
+  await expect(entry).toHaveClass(/ring-sky-500/)
 
   await page.keyboard.press('Alt+Enter')
 
@@ -1544,7 +1563,7 @@ for (const view of ['list', 'grid'] as const) {
     await page.getByRole('button', { name: 'Create', exact: true }).click()
 
     const createdEntry = page.locator('[data-file-entry]').filter({ hasText: 'folder-30-created' })
-    await expect(createdEntry).toHaveClass(/outline-sky-500/)
+    await expect(createdEntry).toHaveClass(/ring-sky-500/)
     const alignment = await createdEntry.evaluate(element => {
       const viewportElement = document.querySelector('[data-file-viewport]')!
       return element.getBoundingClientRect().top - viewportElement.getBoundingClientRect().top
@@ -1878,15 +1897,15 @@ test('bulk checkbox selection does not replace row focus', async ({ page }) => {
   await showSelectionControls(page)
   await rows.nth(1).locator('[data-selection-control]').click()
 
-  await expect(rows.nth(0)).toHaveClass(/outline-sky-500/)
+  await expect(rows.nth(0)).toHaveClass(/ring-sky-500/)
   await expect(rows.nth(0)).toHaveClass(/webfile-focus-tint/)
-  await expect(rows.nth(1)).toHaveClass(/outline-sky-500/)
+  await expect(rows.nth(1)).toHaveClass(/ring-sky-500/)
   await expect(rows.nth(1)).toHaveClass(/webfile-selection-tint/)
   await expect(rows.nth(1)).not.toHaveClass(/webfile-focus-tint/)
   await expect(rows.nth(1).locator('[data-selection-control]')).toHaveAttribute('aria-pressed', 'true')
 
   await page.getByRole('button', { name: 'Clear selection' }).click()
-  await expect(rows.nth(0)).toHaveClass(/outline-sky-500/)
+  await expect(rows.nth(0)).toHaveClass(/ring-sky-500/)
   await expect(rows.nth(1).locator('[data-selection-control]')).toHaveAttribute('aria-pressed', 'false')
 })
 
@@ -1917,7 +1936,7 @@ test('selection, row focus, and details state survive a browser refresh in the s
 
   rows = page.locator('[data-file-entry]')
   await expect(rows).toHaveCount(2)
-  await expect(rows.nth(0)).toHaveClass(/outline-sky-500/)
+  await expect(rows.nth(0)).toHaveClass(/ring-sky-500/)
   await expect(rows.nth(1).locator('[data-selection-control]')).toHaveAttribute('aria-pressed', 'true')
   const detailsPane = page.locator('aside').filter({ has: page.getByRole('heading', { name: 'Details' }) })
   await expect(detailsPane).toBeVisible()
