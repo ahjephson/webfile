@@ -44,6 +44,12 @@ function keydown(event: KeyboardEvent) {
     if (!target.closest('textarea, [contenteditable="true"]')) event.preventDefault()
     return
   }
+  // Some browsers implicitly submit a form on checkbox/radio Enter.
+  // These controls use Space; Enter must not activate the dialog's action.
+  if (target instanceof HTMLInputElement && ['checkbox', 'radio'].includes(target.type)) {
+    event.preventDefault()
+    return
+  }
   if (event.defaultPrevented || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey ||
       !(target instanceof HTMLInputElement) || target.readOnly || target.closest('[role="combobox"], [role="listbox"], [role="checkbox"], [role="switch"]') ||
       ['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color'].includes(target.type)) return
