@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { archiveFolderName } from '@/utils/archives'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
+import Dialog from '@/components/AppDialog.vue'
 import InputText from 'primevue/inputtext'
 
 const props = defineProps<{
@@ -39,12 +39,13 @@ watch(() => props.visible, visible => {
 })
 
 function submit() {
-  emit('extract', destination.value.trim())
+  if (!props.busy && destination.value.trim()) emit('extract', destination.value.trim())
 }
 </script>
 
 <template>
   <Dialog
+    :busy="busy"
     :visible="visible"
     modal
     :header="`Extract ${archiveName}`"
@@ -67,8 +68,8 @@ function submit() {
         {{ existingFiles === 'overwrite' ? 'overwritten' : 'skipped' }}. Encrypted archives request a password when they reach the front of the queue.
       </p>
       <div class="flex justify-end gap-2">
-        <Button label="Cancel" severity="secondary" text :disabled="busy" @click="emit('update:visible', false)" />
-        <Button label="Extract" type="submit" :loading="busy" :disabled="!destination.trim()" />
+        <Button data-dialog-cancel label="Cancel" severity="secondary" text :disabled="busy" @click="emit('update:visible', false)" />
+        <Button data-dialog-primary label="Extract" type="submit" :loading="busy" :disabled="busy || !destination.trim()" />
       </div>
     </form>
   </Dialog>

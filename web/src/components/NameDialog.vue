@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
+import Dialog from '@/components/AppDialog.vue'
 import InputText from 'primevue/inputtext'
 
 const props = defineProps<{
@@ -10,6 +10,7 @@ const props = defineProps<{
   label: string
   initialValue?: string
   submitLabel?: string
+  busy?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -18,13 +19,6 @@ const emit = defineEmits<{
 }>()
 
 const value = ref('')
-const nameForm = ref<HTMLFormElement | null>(null)
-
-function focusName() {
-  const input = nameForm.value?.querySelector('input')
-  input?.focus()
-  input?.select()
-}
 
 watch(() => props.visible, visible => {
   if (visible) value.value = props.initialValue ?? ''
@@ -32,29 +26,28 @@ watch(() => props.visible, visible => {
 
 function submit() {
   const next = value.value
-  if (!next) return
+  if (!next || props.busy) return
   emit('submit', next)
-  emit('update:visible', false)
 }
 </script>
 
 <template>
   <Dialog
     :visible="visible"
+    :busy="busy"
     modal
     :header="title"
     :style="{ width: 'min(30rem, 92vw)' }"
-    @show="focusName"
     @update:visible="emit('update:visible', $event)"
   >
-    <form ref="nameForm" class="space-y-4" @submit.prevent="submit">
+    <form class="space-y-4" @submit.prevent="submit">
       <div class="space-y-2">
         <label class="block text-sm font-medium">{{ label }}</label>
-        <InputText v-model="value" autofocus fluid autocomplete="off" />
+        <InputText v-model="value" data-select-on-open fluid autocomplete="off" :disabled="busy" />
       </div>
       <div class="flex justify-end gap-2">
-        <Button label="Cancel" severity="secondary" text @click="emit('update:visible', false)" />
-        <Button :label="submitLabel ?? 'Save'" type="submit" :disabled="!value" />
+        <Button data-dialog-cancel label="Cancel" severity="secondary" text :disabled="busy" @click="emit('update:visible', false)" />
+        <Button data-dialog-primary :label="submitLabel ?? 'Save'" type="submit" :loading="busy" :disabled="busy || !value" />
       </div>
     </form>
   </Dialog>

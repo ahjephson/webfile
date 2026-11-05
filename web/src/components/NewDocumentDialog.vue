@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
+import Dialog from '@/components/AppDialog.vue'
 import InputText from 'primevue/inputtext'
 
 const props = defineProps<{
@@ -51,8 +51,8 @@ function submit() {
         </p>
       </div>
       <div class="flex justify-end gap-2">
-        <Button label="Cancel" severity="secondary" text @click="emit('update:visible', false)" />
-        <Button label="Open editor" type="submit" :disabled="!name" />
+        <Button data-dialog-cancel label="Cancel" severity="secondary" text @click="emit('update:visible', false)" />
+        <Button data-dialog-primary label="Open editor" type="submit" :disabled="!name" />
       </div>
     </form>
   </Dialog>

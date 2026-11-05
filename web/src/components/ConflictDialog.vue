@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
+import Dialog from '@/components/AppDialog.vue'
 import Checkbox from 'primevue/checkbox'
 import type { ConflictChoice, ConflictDecision, FileOperation } from '@/types/files'
 const props = defineProps<{ visible: boolean; operation: FileOperation | null; busy: boolean; error: string }>()
@@ -11,12 +11,12 @@ watch(() => props.operation?.input?.revision, () => { applyRemaining.value = fal
 const labels: Record<ConflictChoice, string> = { skip: 'Skip', keep_both: 'Keep both', replace: 'Replace', merge: 'Merge folders' }
 const input = computed(() => props.operation?.input)
 function choose(choice: ConflictChoice) {
-  if (input.value) emit('submit', { revision: input.value.revision, choice, apply_remaining: applyRemaining.value })
+  if (input.value && !props.busy) emit('submit', { revision: input.value.revision, choice, apply_remaining: applyRemaining.value })
 }
 </script>
 
 <template>
-  <Dialog :visible="visible && !!input" modal header="Resolve transfer conflict" :style="{ width: 'min(52rem, 96vw)' }" :content-style="{ maxHeight: '70vh', overflow: 'auto' }" @update:visible="emit('update:visible', $event)">
+  <Dialog :visible="visible && !!input" :busy="busy" confirmation modal header="Resolve transfer conflict" :style="{ width: 'min(52rem, 96vw)' }" :content-style="{ maxHeight: '70vh', overflow: 'auto' }" @update:visible="emit('update:visible', $event)">
     <template v-if="input">
       <p class="mb-4 text-sm text-zinc-400">An item already exists at the destination. Completed items are retained while this task waits for your decision.</p>
       <p v-if="input.changed" class="webfile-alert-error mb-3 rounded p-3">The source or destination changed. Review the updated details before continuing.</p>
@@ -40,7 +40,7 @@ function choose(choice: ConflictChoice) {
     </template>
     <template #footer>
       <div class="flex w-full flex-wrap justify-between gap-2">
-        <Button label="Cancel task" severity="secondary" :disabled="busy" @click="emit('cancel')" />
+        <Button data-dialog-cancel label="Cancel task" severity="secondary" :disabled="busy" @click="emit('cancel')" />
         <div class="flex flex-wrap gap-2"><Button v-for="choice in input?.choices ?? []" :key="choice" :label="labels[choice]" :severity="choice === 'replace' ? 'danger' : choice === 'skip' ? 'secondary' : undefined" :disabled="busy" @click="choose(choice)" /></div>
       </div>
     </template>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
+import Dialog from '@/components/AppDialog.vue'
 import Password from 'primevue/password'
 
 const props = defineProps<{
@@ -18,12 +18,10 @@ const emit = defineEmits<{
   'after-hide': []
 }>()
 const password = ref('')
-const passwordInput = ref<any>(null)
 
 watch(() => props.visible, visible => {
   if (!visible) return
   password.value = ''
-  void nextTick(() => passwordInput.value?.$el?.querySelector('input')?.focus())
 })
 
 function submit() {
@@ -41,6 +39,7 @@ function updateVisible(value: boolean) {
 
 <template>
   <Dialog
+    :busy="busy"
     :visible="visible"
     modal
     :header="`Password required — ${archiveName}`"
@@ -55,7 +54,6 @@ function updateVisible(value: boolean) {
         <label for="archive-password" class="block text-sm font-medium">Password</label>
         <Password
           input-id="archive-password"
-          ref="passwordInput"
           v-model="password"
           fluid
           :feedback="false"
@@ -65,8 +63,8 @@ function updateVisible(value: boolean) {
       </div>
       <div class="flex justify-end gap-2">
         <Button label="Later" severity="secondary" text :disabled="busy" @click="emit('dismiss')" />
-        <Button label="Cancel" severity="secondary" text :disabled="busy" @click="emit('cancel')" />
-        <Button label="Continue" type="submit" :loading="busy" :disabled="busy || !password" />
+        <Button data-dialog-cancel label="Cancel" severity="secondary" text :disabled="busy" @click="emit('cancel')" />
+        <Button data-dialog-primary label="Continue" type="submit" :loading="busy" :disabled="busy || !password" />
       </div>
     </form>
   </Dialog>

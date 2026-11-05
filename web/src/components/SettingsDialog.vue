@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
+import Dialog from '@/components/AppDialog.vue'
 import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
 import ToggleSwitch from 'primevue/toggleswitch'
@@ -57,16 +57,19 @@ watch(() => props.visible, visible => {
 })
 
 function close() {
+  if (props.saving) return
   emit('update:visible', false)
 }
 
 function save() {
+  if (props.saving) return
   emit('save', { ...draft.value })
 }
 </script>
 
 <template>
   <Dialog
+    :busy="saving"
     :visible="visible"
     modal
     header="Settings"
@@ -169,8 +172,8 @@ function save() {
 
     <template #footer>
       <div class="flex justify-end gap-2">
-        <Button label="Cancel" severity="secondary" text :disabled="saving" @click="close" />
-        <Button label="Save settings" icon="pi pi-check" :loading="saving" @click="save" />
+        <Button data-dialog-cancel label="Cancel" severity="secondary" text :disabled="saving" @click="close" />
+        <Button data-dialog-primary :disabled="saving" label="Save settings" icon="pi pi-check" :loading="saving" @click="save" />
       </div>
     </template>
   </Dialog>

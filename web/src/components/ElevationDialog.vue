@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
+import Dialog from '@/components/AppDialog.vue'
 import Message from 'primevue/message'
 import Password from 'primevue/password'
 
@@ -18,14 +18,12 @@ const emit = defineEmits<{
 }>()
 
 const password = ref('')
-const passwordInput = ref<any>(null)
 
 watch(() => props.visible, visible => {
   if (!visible) {
     password.value = ''
     return
   }
-  void nextTick(() => passwordInput.value?.$el?.querySelector('input')?.focus())
 })
 
 function submit() {
@@ -36,6 +34,7 @@ function submit() {
 
 <template>
   <Dialog
+    :busy="props.busy"
     :visible="props.visible"
     modal
     header="Elevate access"
@@ -54,7 +53,6 @@ function submit() {
         <label for="elevation-password" class="block text-sm font-medium">Password for {{ props.username }}</label>
         <Password
           id="elevation-password"
-          ref="passwordInput"
           v-model="password"
           fluid
           :feedback="false"
@@ -63,8 +61,8 @@ function submit() {
         />
       </div>
       <div class="flex justify-end gap-2">
-        <Button type="button" label="Cancel" severity="secondary" text :disabled="props.busy" @click="emit('update:visible', false)" />
-        <Button type="submit" label="Elevate access" icon="pi pi-shield" :loading="props.busy" :disabled="!password" />
+        <Button data-dialog-cancel type="button" label="Cancel" severity="secondary" text :disabled="props.busy" @click="emit('update:visible', false)" />
+        <Button data-dialog-primary type="submit" label="Elevate access" icon="pi pi-shield" :loading="props.busy" :disabled="props.busy || !password" />
       </div>
     </form>
   </Dialog>

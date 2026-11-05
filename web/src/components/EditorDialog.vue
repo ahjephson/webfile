@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as monaco from 'monaco-editor'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
+import Dialog from '@/components/AppDialog.vue'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import { api, ApiError } from '@/api/client'
@@ -85,7 +85,7 @@ function handleKeydown(event: KeyboardEvent) {
     return
   }
 
-  if (event.key !== 'Escape') return
+  if (event.key !== 'Escape' || conflict.value || saving.value || event.repeat || event.isComposing) return
   if (languagePicker.value) {
     languagePicker.value = false
     return
@@ -324,7 +324,7 @@ function messageOf(err: unknown): string {
     </footer>
   </section>
 
-  <Dialog v-model:visible="conflict" modal header="The target changed" :style="{ width: 'min(34rem, 92vw)' }">
+  <Dialog v-model:visible="conflict" :busy="saving" confirmation modal header="The target changed" :style="{ width: 'min(34rem, 92vw)' }">
     <div class="space-y-4">
       <p class="text-sm text-zinc-300">
         The target now exists or changed since it was opened. Nothing has been overwritten.
@@ -334,9 +334,9 @@ function messageOf(err: unknown): string {
         <InputText v-model="saveAsPath" fluid autocomplete="off" />
       </div>
       <div class="flex flex-wrap justify-end gap-2">
-        <Button label="Cancel" severity="secondary" text @click="conflict = false" />
-        <Button label="Overwrite" severity="danger" outlined :loading="saving" @click="overwrite" />
-        <Button label="Save as" :loading="saving" @click="saveAs" />
+        <Button data-dialog-cancel label="Cancel" severity="secondary" text :disabled="saving" @click="conflict = false" />
+        <Button :disabled="saving" label="Overwrite" severity="danger" outlined :loading="saving" @click="overwrite" />
+        <Button data-dialog-primary :disabled="saving || !saveAsPath" label="Save as" :loading="saving" @click="saveAs" />
       </div>
     </div>
   </Dialog>

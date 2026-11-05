@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
+import Dialog from '@/components/AppDialog.vue'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Checkbox from 'primevue/checkbox'
@@ -40,8 +40,8 @@ function submit() {
         <label class="flex items-center gap-2"><Checkbox v-model="caseSensitive" binary input-id="search-case" /> Match case</label>
         <label class="flex items-center gap-2"><Checkbox v-model="hidden" binary input-id="search-hidden" /> Include dotfiles</label>
       </div>
-      <Button type="submit" label="Search" icon="pi pi-search" :disabled="!query.trim()" />
+      <Button data-dialog-primary type="submit" label="Search" icon="pi pi-search" :disabled="!query.trim()" />
     </form>
-    <template #footer><Button label="Close" severity="secondary" @click="emit('update:visible', false)" /></template>
+    <template #footer><Button data-dialog-cancel label="Close" severity="secondary" @click="emit('update:visible', false)" /></template>
   </Dialog>
 </template>

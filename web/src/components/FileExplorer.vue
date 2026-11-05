@@ -6,7 +6,7 @@ import InputText from 'primevue/inputtext'
 import Menu from 'primevue/menu'
 import ProgressSpinner from 'primevue/progressspinner'
 import SplitButton from 'primevue/splitbutton'
-import { useConfirm } from 'primevue/useconfirm'
+import { useAppConfirm } from '@/composables/useAppConfirm'
 import { useToast } from 'primevue/usetoast'
 import { api, type PreparedUpload } from '@/api/client'
 import { appPath } from '@/base'
@@ -70,7 +70,7 @@ const emit = defineEmits<{
   dropElevation: []
 }>()
 const toast = useToast()
-const confirm = useConfirm()
+const confirm = useAppConfirm()
 
 const {
   readSessionPath,
@@ -189,6 +189,8 @@ const breadcrumbContent = ref<HTMLElement | null>(null)
 
 const newDocumentVisible = ref(false)
 const nameDialogVisible = ref(false)
+const nameBusy = ref(false)
+const transferBusy = ref(false)
 const nameDialogMode = ref<'folder' | 'rename'>('folder')
 const editorVisible = ref(false)
 const editorPath = ref('')
@@ -748,6 +750,7 @@ function applyPreferences(preferences: UserPreferences) {
 }
 
 async function saveSettings(preferences: UserPreferences) {
+  if (settingsSaving.value) return
   settingsSaving.value = true
   try {
     const saved = normalizePreferences(await persistPreferences(preferences))
@@ -1185,6 +1188,8 @@ function openNewFolder() {
 }
 
 async function onNameDialogSubmit(value: string) {
+  if (nameBusy.value) return
+  nameBusy.value = true
   try {
     let createdPath = ''
     if (nameDialogMode.value === 'folder') {
@@ -1194,12 +1199,14 @@ async function onNameDialogSubmit(value: string) {
       const source = renameTarget.value.path
       const containingFolder = source.slice(0, source.lastIndexOf('/')) || '/'
       await api.rename(source, joinPath(containingFolder, value))
+      nameDialogVisible.value = false
       if (searchRequest.value) {
         clearSelection(); clearFocus()
         await runSearch({ ...searchRequest.value })
         return
       }
     }
+    nameDialogVisible.value = false
     await refresh(false)
     if (createdPath) {
       focusedPath.value = createdPath
@@ -1210,6 +1217,8 @@ async function onNameDialogSubmit(value: string) {
     }
   } catch (err) {
     showError(err)
+  } finally {
+    nameBusy.value = false
   }
 }
 
@@ -1269,7 +1278,13 @@ function openTransfer(mode: TransferMode, items: FileEntry[] = selectedEntries.v
 }
 
 async function submitTransfer(destination: string) {
-  await beginOperation(transferMode.value, transferEntries.value.map(entry => entry.path), destination)
+  if (transferBusy.value) return
+  transferBusy.value = true
+  try {
+    if (await beginOperation(transferMode.value, transferEntries.value.map(entry => entry.path), destination)) destinationVisible.value = false
+  } finally {
+    transferBusy.value = false
+  }
 }
 
 async function transferToOtherPane(mode: TransferMode, items: FileEntry[] = selectedEntries.value) {
@@ -1301,7 +1316,7 @@ function deleteEntries(items: FileEntry[] = selectedEntries.value) {
     acceptLabel: 'Delete permanently',
     acceptProps: { severity: 'danger' },
     accept: async () => {
-      await beginOperation('delete', items.map(item => item.path))
+      if (!await beginOperation('delete', items.map(item => item.path))) return false
       clearSelection()
     },
   })
@@ -1338,7 +1353,7 @@ function requestOperationCancellation(operation: FileOperation) {
     rejectLabel: 'Continue running',
     acceptLabel: 'Cancel task',
     acceptProps: { severity: 'danger' },
-    accept: () => cancelOperation(operation.id),
+    accept: () => api.cancelOperation(operation.id),
   })
 }
 
@@ -1356,6 +1371,7 @@ function clearOperationHistory() {
         toast.add({ severity: 'success', summary: removed === 1 ? '1 task removed' : `${removed} tasks removed`, life: 2500 })
       } catch (err) {
         showError(err, 'Could not clear task history')
+        return false
       }
     },
   })
@@ -1374,6 +1390,7 @@ function removeOperationHistory(operation: FileOperation) {
         await removeFinishedOperation(operation.id)
       } catch (err) {
         showError(err, 'Could not remove task from history')
+        return false
       }
     },
   })
@@ -1402,8 +1419,7 @@ function downloadURL(url: string, name: string) {
 }
 
 async function prepareExtraction(destination: string) {
-  if (extractTargets.value.length === 0) return
-  extractVisible.value = false
+  if (extractBusy.value || extractTargets.value.length === 0) return
   extractDestination.value = destination
   extractBusy.value = true
   try {
@@ -1426,12 +1442,12 @@ async function prepareExtraction(destination: string) {
 
 async function submitExtractionPassword(password: string) {
   const operationId = extractPasswordOperationId.value
-  if (!operationId) return
-  extractPasswordVisible.value = false
+  if (!operationId || passwordBusy.value) return
   extractPasswordError.value = ''
   passwordBusy.value = true
   try {
     await api.submitOperationPassword(operationId, password)
+    extractPasswordVisible.value = false
     await loadOperations()
   } catch (err) {
     if (extractPasswordOperationId.value === operationId) {
@@ -2119,6 +2135,7 @@ function operationLabel(value: string) {
     <NewDocumentDialog v-model:visible="newDocumentVisible" @create="createDocument" />
     <NameDialog
       v-model:visible="nameDialogVisible"
+      :busy="nameBusy"
       :title="nameDialogMode === 'folder' ? 'New folder' : 'Rename'"
       :label="nameDialogMode === 'folder' ? 'Folder name' : 'New name'"
       :initial-value="nameDialogMode === 'rename' ? renameTarget?.name : ''"
@@ -2133,6 +2150,7 @@ function operationLabel(value: string) {
     <ArchivePasswordDialog v-if="isPrimary" v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="passwordBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @dismiss="extractPasswordVisible = false" @cancel="cancelPasswordPrompt" @after-hide="onArchivePasswordAfterHide" />
     <DestinationDialog
       v-model:visible="destinationVisible"
+      :busy="transferBusy"
       :mode="transferMode"
       :count="transferEntries.length"
       :initial-path="currentPath"

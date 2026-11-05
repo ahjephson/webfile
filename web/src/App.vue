@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import Button from 'primevue/button'
-import ConfirmDialog from 'primevue/confirmdialog'
+import ConfirmDialog from '@/components/AppConfirmDialog.vue'
 import ProgressSpinner from 'primevue/progressspinner'
 import Toast from 'primevue/toast'
 import { useToast } from 'primevue/usetoast'

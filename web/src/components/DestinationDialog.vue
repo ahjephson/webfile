@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
+import Dialog from '@/components/AppDialog.vue'
 import ProgressSpinner from 'primevue/progressspinner'
 import { api } from '@/api/client'
 import type { FileEntry } from '@/types/files'
@@ -11,6 +11,7 @@ import { isEntryVisible } from '@/utils/entryVisibility'
 
 const props = defineProps<{
   visible: boolean
+  busy?: boolean
   mode: 'copy' | 'move'
   count: number
   initialPath: string
@@ -30,6 +31,7 @@ const error = ref('')
 const focusedPath = ref('')
 const singleRootPath = ref('')
 const newFolderVisible = ref(false)
+const createBusy = ref(false)
 const createError = ref('')
 let loadRequest = 0
 const viewport = ref<HTMLElement | null>(null)
@@ -133,11 +135,14 @@ function joinPath(base: string, name: string) {
 }
 
 async function createFolder(name: string) {
+  if (createBusy.value) return
+  createBusy.value = true
   const request = loadRequest
   const path = joinPath(current.value, name)
   createError.value = ''
   try {
     await api.mkdir(path)
+    newFolderVisible.value = false
     if (!props.visible || request !== loadRequest) return
     if (await load()) {
       focusedPath.value = path
@@ -147,17 +152,20 @@ async function createFolder(name: string) {
     }
   } catch (err) {
     if (props.visible && request === loadRequest) createError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    createBusy.value = false
   }
 }
 
 function submit() {
+  if (props.busy || loading.value || error.value || createBusy.value) return
   emit('submit', destinationPath.value)
-  emit('update:visible', false)
 }
 </script>
 
 <template>
   <Dialog
+    :busy="busy || createBusy"
     :visible="visible"
     modal
     :header="mode === 'copy' ? 'Copy to…' : 'Move to…'"
@@ -223,14 +231,15 @@ function submit() {
           Destination: <span class="font-mono text-zinc-200">{{ destinationPath }}</span>
         </div>
         <div class="flex shrink-0 gap-2">
-          <Button label="Cancel" severity="secondary" text @click="emit('update:visible', false)" />
-          <Button :label="mode === 'copy' ? 'Copy here' : 'Move here'" @click="submit" />
+          <Button data-dialog-cancel label="Cancel" severity="secondary" text :disabled="busy || createBusy" @click="emit('update:visible', false)" />
+          <Button data-dialog-primary :label="mode === 'copy' ? 'Copy here' : 'Move here'" :loading="busy" :disabled="busy || loading || !!error || createBusy" @click="submit" />
         </div>
       </div>
     </div>
   </Dialog>
   <NameDialog
     v-model:visible="newFolderVisible"
+    :busy="createBusy"
     title="New folder"
     label="Folder name"
     submit-label="Create"

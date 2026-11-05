@@ -3285,13 +3285,16 @@ test('Extract defaults to an archive-named folder and prompts when the task requ
   await expect(passwordInput).toHaveValue('')
   await passwordInput.fill('secret')
   await passwordDialog.getByRole('button', { name: 'Continue' }).click()
-  await expect(passwordDialog).toBeHidden()
+  await expect(passwordDialog).toBeVisible()
+  await expect(passwordDialog).toHaveAttribute('aria-busy', 'true')
+  await expect(passwordDialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled()
 
   await expect.poll(() => operationRequest).not.toBeNull()
   expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/secure.tar.gz'], destination: '/target', extract_layout: 'separate_directories', existing_files: 'skip' })
   await expect.poll(() => submittedPassword).not.toBeNull()
   expect(submittedPassword).toEqual({ password: 'secret' })
   releasePasswordRequest()
+  await expect(passwordDialog).toBeHidden()
 })
 
 for (const action of ['Extract…', 'Extract here']) {
