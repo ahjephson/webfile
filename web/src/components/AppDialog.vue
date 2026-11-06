@@ -17,7 +17,7 @@ function focusContent() {
   const cancel = available('[data-dialog-cancel]')
   const field = available('.p-dialog-content [aria-invalid="true"], .p-dialog-content :invalid') ??
     available('.p-dialog-content input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]), .p-dialog-content textarea, .p-dialog-content [role="combobox"], .p-dialog-content [contenteditable="true"]')
-  const target = (props.confirmation ? cancel : field) ?? cancel ?? available('.p-dialog-footer button')
+  const target = (props.confirmation ? available('[data-dialog-primary]') : field) ?? field ?? cancel ?? available('.p-dialog-footer button')
   target?.focus()
   if (target instanceof HTMLInputElement && target.dataset.selectOnOpen !== undefined) target.select()
 }

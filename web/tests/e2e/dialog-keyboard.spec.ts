@@ -120,7 +120,7 @@ test('checkboxes, buttons, and multiline fields keep their own keyboard behaviou
   await expect(dialog).toBeHidden()
 })
 
-test('confirmation defaults to Cancel and waits for a failed action before allowing retry', async ({ page }) => {
+test('confirmation defaults to its action, Escape cancels, and failed actions allow retry', async ({ page }) => {
   const fixture = await featureFixture(page, 'dialog-confirm')
   await fixture.write(`${fixture.path}/delete.txt`, 'confirmation fixture')
   await page.goto(`/#path=${encodeURIComponent(fixture.path)}`)
@@ -128,20 +128,27 @@ test('confirmation defaults to Cancel and waits for a failed action before allow
   await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
   const dialog = page.getByRole('alertdialog', { name: 'Delete', exact: true })
   const cancel = dialog.getByRole('button', { name: 'Cancel', exact: true })
-  await expect(cancel).toBeFocused()
+  const accept = dialog.getByRole('button', { name: 'Delete permanently' })
+  await expect(accept).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  expect(await fixture.exists(`${fixture.path}/delete.txt`)).toBe(true)
+  await page.locator('[data-file-entry]').filter({ hasText: 'delete.txt' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  await expect(accept).toBeFocused()
   let release!: () => void
   const pending = new Promise<void>(resolve => { release = resolve })
   await page.route('**/api/fs/operations', async route => {
     await pending
     await route.fulfill({ status: 500, json: { error: 'Try again' } })
   })
-  await dialog.getByRole('button', { name: 'Delete permanently' }).click()
+  await page.keyboard.press('Enter')
   await expect(cancel).toBeDisabled()
   await page.keyboard.press('Escape')
   await expect(dialog).toBeVisible()
   release()
   await expect(cancel).toBeEnabled()
-  await cancel.click()
+  await cancel.press('Enter')
   await expect(dialog).toBeHidden()
   expect(await fixture.exists(`${fixture.path}/delete.txt`)).toBe(true)
 })

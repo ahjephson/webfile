@@ -30,7 +30,7 @@ async function accept() {
     <p v-if="error" role="alert" class="webfile-text-error mt-3">{{ error }}</p>
     <template #footer>
       <Button data-dialog-cancel :label="confirmation?.rejectLabel" severity="secondary" :disabled="busy" @click="cancel" />
-      <Button :label="confirmation?.acceptLabel" :severity="confirmation?.acceptProps?.severity" :loading="busy" :disabled="busy" @click="accept" />
+      <Button data-dialog-primary :label="confirmation?.acceptLabel" :severity="confirmation?.acceptProps?.severity" :loading="busy" :disabled="busy" @click="accept" />
     </template>
   </AppDialog>
 </template>
