@@ -1334,9 +1334,14 @@ async function beginOperation(kind: 'copy' | 'move' | 'delete' | 'extract' | 'ar
   }
 }
 
-function cancelOperation(id: string) {
-  if (!cancelRealtimeOperation(id)) {
-    void api.cancelOperation(id).catch(err => showError(err, 'Could not cancel operation'))
+async function cancelOperation(id: string) {
+  try {
+    // Keep cancellation off the HTTP upload connection when realtime is available.
+    if (!cancelRealtimeOperation(id)) await api.cancelOperation(id)
+    return true
+  } catch (err) {
+    showError(err, 'Could not cancel operation')
+    return false
   }
 }
 
@@ -1353,7 +1358,7 @@ function requestOperationCancellation(operation: FileOperation) {
     rejectLabel: 'Continue running',
     acceptLabel: 'Cancel task',
     acceptProps: { severity: 'danger' },
-    accept: () => api.cancelOperation(operation.id),
+    accept: () => cancelOperation(operation.id),
   })
 }
 

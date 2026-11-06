@@ -7,6 +7,7 @@ WebFile 1.6.3 corrects the default keyboard action in confirmation dialogs.
 - Confirmation dialogs focus their enabled primary action when they open. In the Delete dialog, Enter accepts deletion and Escape cancels, instead of Enter activating Cancel by default.
 - Moving focus to another button still makes Enter activate that button. Form validation, dropdown and multiline keyboard behaviour, and protection against duplicate submissions remain in place.
 - Confirmation actions continue to show progress while submitting, block dismissal during the request, and allow retry or cancellation after a failure.
+- Task cancellation uses the existing realtime connection when available, retaining the HTTP fallback. An upload cannot hold up its cancellation confirmation by occupying an HTTP connection.
 
 ## Validation and deployment
 

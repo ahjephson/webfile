@@ -54,13 +54,17 @@ for (const reload of [false, true]) {
       await drawer.getByRole('button', { name: 'Close', exact: true }).click()
       await page.getByRole('button', { name: 'Files', exact: true }).click()
       await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+      let cancellationHTTPRequests = 0
+      await page.route('**/api/fs/operations/cancel', route => {
+        cancellationHTTPRequests++
+        return route.fulfill({ status: 503, json: { error: 'HTTP control unavailable during upload' } })
+      })
       await third.getByRole('button', { name: 'Cancel', exact: true }).click()
       const confirmation = page.getByRole('alertdialog')
       await confirmation.getByRole('button', { name: 'Cancel task', exact: true }).click()
-      // The task update may arrive before the cancellation request completes.
-      // Finish that request before releasing another intercepted upload response.
       await expect(confirmation).toBeHidden()
       await expect(third.locator('[data-task-status]')).toHaveText('cancelled')
+      expect(cancellationHTTPRequests).toBe(0)
       release()
       await expect(second.locator('[data-task-status]')).toHaveText('completed', { timeout: 15000 })
       await expect(fourth.locator('[data-task-status]')).toHaveText('completed')
