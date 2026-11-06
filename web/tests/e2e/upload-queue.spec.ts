@@ -55,7 +55,11 @@ for (const reload of [false, true]) {
       await page.getByRole('button', { name: 'Files', exact: true }).click()
       await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
       await third.getByRole('button', { name: 'Cancel', exact: true }).click()
-      await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel task', exact: true }).click()
+      const confirmation = page.getByRole('alertdialog')
+      await confirmation.getByRole('button', { name: 'Cancel task', exact: true }).click()
+      // The task update may arrive before the cancellation request completes.
+      // Finish that request before releasing another intercepted upload response.
+      await expect(confirmation).toBeHidden()
       await expect(third.locator('[data-task-status]')).toHaveText('cancelled')
       release()
       await expect(second.locator('[data-task-status]')).toHaveText('completed', { timeout: 15000 })
