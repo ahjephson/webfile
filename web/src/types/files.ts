@@ -115,6 +115,8 @@ export interface FileOperation {
   bytes_done: number
   bytes_total: number
   bytes_per_second?: number | null
+  items_per_second?: number | null
+  eta_seconds?: number | null
   items_done: number
   items_total: number
   queue_position?: number

@@ -145,16 +145,34 @@ function formatProgress(operation: FileOperation): string {
   if (operation.progress_unit === 'percent') return `${Math.round(operation.progress_done)}%`
   if (operation.progress_unit === 'bytes') {
     const progress = `${formatBytes(operation.progress_done)} / ${formatBytes(operation.progress_total)}`
-    if (operation.state === 'running' && ['copying', 'flushing', 'publishing', 'removing_source'].includes(operation.phase ?? '') && operation.bytes_per_second != null) {
+    if (operation.state === 'running' && !operation.paused && (operation.kind === 'upload' || ['copying', 'flushing', 'publishing', 'removing_source'].includes(operation.phase ?? '')) && operation.bytes_per_second != null && Number.isFinite(operation.bytes_per_second) && operation.bytes_per_second >= 0) {
       return `${progress} · ${formatBytes(operation.bytes_per_second)}/s`
     }
     return progress
   }
-  if (operation.progress_unit === 'items') return operation.progress_total > 0
-    ? `${operation.progress_done} / ${operation.progress_total} items`
-    : `${operation.progress_done} items`
+  if (operation.progress_unit === 'items') {
+    const progress = operation.progress_total > 0 ? `${operation.progress_done} / ${operation.progress_total} items` : `${operation.progress_done} items`
+    const rate = operation.items_per_second
+    if (operation.state === 'running' && !operation.paused && rate != null && Number.isFinite(rate) && rate >= 0) {
+      const speed = rate > 0 && rate < 0.01 ? '<0.01' : rate.toLocaleString(undefined, { maximumFractionDigits: rate < 1 ? 2 : 1 })
+      return `${progress} · ${speed} items/s`
+    }
+    return progress
+  }
   if (operation.kind === 'copy' || operation.kind === 'move') return ''
   return phaseLabel(operation)
+}
+
+function etaLabel(operation: FileOperation): string {
+  const value = operation.eta_seconds
+  if (operation.state !== 'running' || operation.paused || operation.progress_total <= 0 || operation.progress_done >= operation.progress_total || value == null || !Number.isFinite(value) || value <= 0) return ''
+  const seconds = Math.ceil(value)
+  if (seconds < 60) return `About ${seconds}s remaining`
+  const minutes = Math.ceil(seconds / 60)
+  if (minutes < 60) return `About ${minutes}m remaining`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `About ${hours}h ${minutes % 60}m remaining`
+  return `About ${Math.floor(hours / 24)}d ${hours % 24}h remaining`
 }
 
 function formatDate(value?: string) {
@@ -269,6 +287,7 @@ function formatDate(value?: string) {
                 <Button v-if="operation.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel', operation)" />
               </div>
               <p v-if="transferNotice(operation)" class="mt-1 text-xs text-zinc-400" role="status">{{ transferNotice(operation) }}</p>
+              <p v-if="etaLabel(operation)" class="mt-1 text-xs text-zinc-400" role="status" data-task-eta>{{ etaLabel(operation) }}</p>
             </div>
             <details v-if="operation.destination" class="mt-2 text-xs text-zinc-500">
               <summary class="cursor-pointer select-none">Details</summary>

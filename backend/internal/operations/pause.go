@@ -32,6 +32,9 @@ func (m *Manager) SetPaused(id string, paused bool) (Operation, error) {
 	rec.op.Paused = paused
 	rec.op.UpdatedAt = time.Now().UTC()
 	resetTransferRate(rec)
+	if !paused {
+		m.updateTaskMetricsLocked(rec, rec.op.UpdatedAt)
+	}
 	m.persistLocked(rec, true)
 	m.broadcastLocked(rec.op)
 	if !paused {

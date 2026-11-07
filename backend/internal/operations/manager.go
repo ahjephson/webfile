@@ -56,6 +56,8 @@ type Operation struct {
 	BytesDone      int64           `json:"bytes_done"`
 	BytesTotal     int64           `json:"bytes_total"`
 	BytesPerSecond *int64          `json:"bytes_per_second,omitempty"`
+	ItemsPerSecond *float64        `json:"items_per_second,omitempty"`
+	ETASeconds     *int64          `json:"eta_seconds,omitempty"`
 	ItemsDone      int64           `json:"items_done"`
 	ItemsTotal     int64           `json:"items_total"`
 	QueuePosition  int             `json:"queue_position,omitempty"`
@@ -153,18 +155,20 @@ type TaskOptions struct {
 }
 
 type record struct {
-	control         *taskcontrol.Control
-	inputHandler    func(json.RawMessage) error
-	op              Operation
-	run             RunFunc
-	cleanup         CleanupFunc
-	cancel          context.CancelFunc
-	external        bool
-	clientFailure   bool
-	lastBroadcast   time.Time
-	lastPersistence time.Time
-	rateSamples     []transferRateSample
-	rateHeartbeat   bool
+	externalProgressAt time.Time
+	control            *taskcontrol.Control
+	inputHandler       func(json.RawMessage) error
+	op                 Operation
+	run                RunFunc
+	cleanup            CleanupFunc
+	cancel             context.CancelFunc
+	external           bool
+	clientFailure      bool
+	lastBroadcast      time.Time
+	lastPersistence    time.Time
+	rateSamples        []transferRateSample
+	rateUnit           ProgressUnit
+	rateHeartbeat      bool
 }
 
 type Manager struct {
@@ -483,6 +487,9 @@ func (m *Manager) upsertExternalLocked(id, kind string, sources []string, destin
 	}
 	rec.external = true
 	rec.clientFailure = false
+	if rec.op.AttemptID != attempt || previousState != state {
+		resetTransferRate(rec)
+	}
 	rec.op.AttemptID = attempt
 	rec.op.Kind = kind
 	rec.op.Sources = append([]string(nil), sources...)
@@ -491,7 +498,6 @@ func (m *Manager) upsertExternalLocked(id, kind string, sources []string, destin
 	rec.op.Phase = string(state)
 	rec.op.BytesDone = bytesDone
 	rec.op.BytesTotal = bytesTotal
-	resetTransferRate(rec)
 	rec.op.ProgressDone, rec.op.ProgressTotal, rec.op.ProgressUnit = primaryProgress(bytesDone, bytesTotal, itemsDone, itemsTotal)
 	rec.op.ItemsDone = itemsDone
 	rec.op.ItemsTotal = itemsTotal
@@ -501,6 +507,7 @@ func (m *Manager) upsertExternalLocked(id, kind string, sources []string, destin
 	}
 	rec.op.Error = clienterror.Stored(errText)
 	rec.op.UpdatedAt = now
+	rec.externalProgressAt = now
 	rec.op.Cancellable = rec.cancel != nil && activeState(state)
 	if terminalState(state) {
 		rec.op.Paused = false
@@ -509,6 +516,7 @@ func (m *Manager) upsertExternalLocked(id, kind string, sources []string, destin
 	} else {
 		rec.op.FinishedAt = nil
 	}
+	m.updateTaskMetricsLocked(rec, now)
 	m.persistLocked(rec, previousState != state)
 	m.trimLocked()
 	m.broadcastLocked(rec.op)
@@ -563,7 +571,9 @@ func (m *Manager) FailExternal(id string, observed time.Time, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec := m.records[id]
-	if rec == nil || !rec.external || rec.op.State != StateRunning || !rec.op.UpdatedAt.Equal(observed) {
+	// Status heartbeats and Pause/Resume may advance UpdatedAt without any new
+	// upload data. Only a newer upload result/attempt invalidates this error.
+	if rec == nil || !rec.external || rec.op.State != StateRunning || rec.externalProgressAt.After(observed) {
 		return
 	}
 	m.failExternalLocked(rec, err)
@@ -901,22 +911,6 @@ func (m *Manager) updateProgress(id string, p ProgressUpdate) {
 	stateChanged := rec.op.State != StateRunning
 	phaseChanged := p.Phase != "" && rec.op.Phase != p.Phase
 	unitChanged := rec.op.ProgressUnit != p.ProgressUnit
-	previousBytes := rec.op.BytesDone
-	nextPhase := rec.op.Phase
-	if p.Phase != "" {
-		nextPhase = p.Phase
-	}
-	if p.BytesDone < previousBytes || !transferIOPhase(nextPhase) || p.BytesTotal <= 0 {
-		resetTransferRate(rec)
-	}
-	if transferIOPhase(nextPhase) && p.BytesTotal > 0 {
-		if len(rec.rateSamples) == 0 {
-			// Copying reports its starting counter before IO. A resumed task
-			// may already have copied bytes; never count those as a new burst.
-			rec.rateSamples = []transferRateSample{{at: now, bytes: p.BytesDone}}
-		}
-		rec.rateSamples, rec.op.BytesPerSecond = appendTransferRateSample(rec.rateSamples, now, p.BytesDone)
-	}
 	rec.op.State = StateRunning
 	rec.op.ProgressDone = maxInt64(0, p.ProgressDone)
 	rec.op.ProgressTotal = maxInt64(0, p.ProgressTotal)
@@ -930,10 +924,7 @@ func (m *Manager) updateProgress(id string, p ProgressUpdate) {
 	}
 	rec.op.Message = p.Message
 	rec.op.UpdatedAt = now.UTC()
-	if len(rec.rateSamples) > 0 && !rec.rateHeartbeat {
-		rec.rateHeartbeat = true
-		go m.updateTransferRate(id)
-	}
+	m.updateTaskMetricsLocked(rec, now)
 
 	// Per-file copy/flush/publish transitions are telemetry, not durable task
 	// state changes. Persist and broadcast them at the normal progress cadence.
@@ -1045,9 +1036,8 @@ func (m *Manager) updateTransferRate(id string) {
 			m.mu.Unlock()
 			return
 		}
-		// Sample unchanged bytes too: a blocked write or fsync is elapsed
-		// transfer time, not a reason to forget the history before the pause.
-		rec.rateSamples, rec.op.BytesPerSecond = appendTransferRateSample(rec.rateSamples, now, rec.op.BytesDone)
+		// Include time spent waiting for disk or the next upload chunk.
+		m.updateTaskMetricsLocked(rec, now)
 		rec.op.UpdatedAt = now.UTC()
 		m.broadcastLocked(rec.op)
 		m.mu.Unlock()
@@ -1056,7 +1046,10 @@ func (m *Manager) updateTransferRate(id string) {
 
 func resetTransferRate(rec *record) {
 	rec.op.BytesPerSecond = nil
+	rec.op.ItemsPerSecond = nil
+	rec.op.ETASeconds = nil
 	rec.rateSamples = nil
+	rec.rateUnit = ""
 }
 
 func (m *Manager) trimLocked() {
@@ -1124,6 +1117,14 @@ func cloneOperation(op Operation) Operation {
 	if op.BytesPerSecond != nil {
 		rate := *op.BytesPerSecond
 		out.BytesPerSecond = &rate
+	}
+	if op.ItemsPerSecond != nil {
+		rate := *op.ItemsPerSecond
+		out.ItemsPerSecond = &rate
+	}
+	if op.ETASeconds != nil {
+		seconds := *op.ETASeconds
+		out.ETASeconds = &seconds
 	}
 	if op.FinishedAt != nil {
 		finished := *op.FinishedAt

@@ -55,6 +55,7 @@ The [documentation index](docs/README.md) links to development guidance, securit
 - Ctrl/Cmd+F filters the current folder; Ctrl/Cmd+Shift+F opens the search dialog for the active pane.
 - Multi-item copy/move, including cross-root transfers.
 - Completed copy and move operations show a success notification, including transfers started with Cut/Copy and Paste.
+- Copy/move and upload tasks show bytes/s and estimated time remaining after a short rate warmup. Deletion tasks show items/s (files and folders), with an ETA only while the total count is known. Rates use a recent rolling window, include disk/network stalls and reset on pause/resume. Estimates are hidden during scanning, input waits, pauses and final flushing once all counted work is done. 7-Zip's command-line output does not provide live speed or ETA, so archive tasks show its native progress without inferring either value.
 - Linux copies use chunked in-kernel `copy_file_range` transfers when supported, with transparent buffered fallback.
 - Drag/drop local files to upload.
 - Conflict-safe operations: existing destinations are not silently overwritten.
