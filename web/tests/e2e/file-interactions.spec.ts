@@ -531,6 +531,37 @@ for (const view of ['list', 'grid'] as const) {
       await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
     })
 
+    for (const pointerType of ['touch', 'pen']) {
+      test(`${pointerType} holds keep selection stable and reserve dragging for mouse input`, async ({ page }) => {
+        const checkbox = selectionButtons(page).first()
+        const entry = entryFor(checkbox)
+        const box = await entry.boundingBox()
+        if (!box) throw new Error('Long-press target is not visible')
+        const pointer = { pointerId: 1, pointerType, isPrimary: true, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 }
+        await entry.dispatchEvent('pointerdown', pointer)
+        const tryDrag = () => entry.evaluate(element => {
+          const event = new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() })
+          return { allowed: element.dispatchEvent(event), types: [...event.dataTransfer!.types] }
+        })
+        expect(await tryDrag()).toEqual({ allowed: false, types: [] })
+        await expect(page.locator('.p-contextmenu')).toBeVisible()
+        expect(await tryDrag()).toEqual({ allowed: false, types: [] })
+        await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
+        await expect(entry).not.toHaveClass(/ring-sky-500/)
+        await entry.dispatchEvent('pointercancel', pointer)
+        expect(await tryDrag()).toEqual({ allowed: false, types: [] })
+        await entry.dispatchEvent('pointerup', pointer)
+        await expect(page.locator('.p-contextmenu')).toBeVisible()
+
+        await page.keyboard.press('Escape')
+        await expect(page.locator('.p-contextmenu')).toBeHidden()
+        await entry.dispatchEvent('pointerdown', { ...pointer, pointerType: 'mouse' })
+        expect((await tryDrag()).allowed).toBe(true)
+        await expect(checkbox).toHaveAttribute('aria-pressed', 'true')
+        await entry.dispatchEvent('dragend')
+      })
+    }
+
     test('single-pane dragging exposes only internal transfer data', async ({ page }) => {
       const checkbox = selectionButtons(page).first()
       const entry = entryFor(checkbox)

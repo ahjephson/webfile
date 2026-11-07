@@ -17,6 +17,7 @@ type LongPressBinding = {
   suppressNativeUntil: number
   clickCleanupTimer: number | null
   suppressClick: ((event: MouseEvent) => void) | null
+  allowDrag: boolean
 }
 
 const bindings = new WeakMap<HTMLElement, LongPressBinding>()
@@ -67,11 +68,14 @@ function mounted(element: HTMLElement, directive: DirectiveBinding<LongPressHand
     suppressNativeUntil: 0,
     clickCleanupTimer: null,
     suppressClick: null,
+    allowDrag: true,
   }
   bindings.set(element, binding)
 
   element.addEventListener('pointerdown', event => {
-    if (!event.isPrimary || (event.pointerType !== 'touch' && event.pointerType !== 'pen')) return
+    if (!event.isPrimary) return
+    binding.allowDrag = event.pointerType !== 'touch' && event.pointerType !== 'pen'
+    if (binding.allowDrag) return
     clearTimer(binding)
     const state: LongPressState = {
       pointerId: event.pointerId,
@@ -102,6 +106,14 @@ function mounted(element: HTMLElement, directive: DirectiveBinding<LongPressHand
 
   element.addEventListener('pointerup', event => finishPointer(binding, event))
   element.addEventListener('pointercancel', event => finishPointer(binding, event))
+  element.addEventListener('dragstart', event => {
+    // Touch and pen holds open the item menu; only mouse input starts a drag.
+    // Keep this decision through pointercancel and release because native drag
+    // events may arrive after the long-press state has already been cleared.
+    if (binding.allowDrag) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }, true)
   element.addEventListener('contextmenu', event => {
     if (binding.suppressNativeUntil === Number.POSITIVE_INFINITY || performance.now() < binding.suppressNativeUntil) {
       event.preventDefault()
