@@ -531,6 +531,33 @@ for (const view of ['list', 'grid'] as const) {
       await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
     })
 
+    for (const pointerType of ['touch', 'pen']) {
+      test(`${pointerType} holds cannot lift a native drag preview over the context menu`, async ({ page }) => {
+        const checkbox = selectionButtons(page).first()
+        const entry = entryFor(checkbox)
+        await showSelectionControls(page)
+        await checkbox.click()
+        const pointer = { pointerId: 1, pointerType, isPrimary: true, clientX: 200, clientY: 200 }
+        await entry.dispatchEvent('pointerdown', pointer)
+        const tryDrag = () => entry.evaluate(element => {
+          const event = new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() })
+          return { allowed: element.dispatchEvent(event), types: [...event.dataTransfer!.types] }
+        })
+        expect(await tryDrag()).toEqual({ allowed: false, types: [] })
+        await expect(page.locator('.p-contextmenu')).toBeVisible()
+        expect(await tryDrag()).toEqual({ allowed: false, types: [] })
+        await entry.dispatchEvent('pointerup', pointer)
+        await expect(page.locator('.p-contextmenu')).toBeVisible()
+        await expect(checkbox).toHaveAttribute('aria-pressed', 'true')
+        await page.getByRole('menuitem', { name: 'Details', exact: true }).click()
+        await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
+        // Ending the touch gesture must leave ordinary mouse dragging available.
+        await entry.dispatchEvent('pointerdown', { ...pointer, pointerType: 'mouse' })
+        expect((await tryDrag()).allowed).toBe(true)
+        await entry.dispatchEvent('dragend')
+      })
+    }
+
     test('single-pane dragging exposes only internal transfer data', async ({ page }) => {
       const checkbox = selectionButtons(page).first()
       const entry = entryFor(checkbox)
@@ -3241,6 +3268,47 @@ test('Extract here starts a single-pass task in the archive directory', async ({
   expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/archive.zip'], destination: '/folder', extract_layout: 'here', existing_files: 'skip' })
   await expect(page.getByRole('button', { name: 'Open tasks' })).toHaveClass(/webfile-task-attention/)
   await expect(page.getByRole('complementary')).toHaveCount(0)
+})
+
+test('Extract can browse for a destination, cancel browsing, and still edit the path', async ({ page }) => {
+  let operationRequest: Record<string, unknown> | null = null
+  await page.route('**/api/preferences', route => route.fulfill({ json: { show_hidden: false, hide_inaccessible: true } }))
+  await page.route('**/api/fs/dir**', route => {
+    const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
+    const folder = (name: string, can_navigate = true) => ({ name, path: `${path}/${name}`, is_dir: true, can_navigate, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' })
+    return route.fulfill({ json: { path, entries: path === '/folder'
+      ? [{ name: 'archive.zip', path: '/folder/archive.zip', is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }, folder('target'), folder('.hidden'), folder('restricted', false)]
+      : [folder('nested')] } })
+  })
+  await page.route('**/api/fs/operations', route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: { operations: [] } })
+    operationRequest = route.request().postDataJSON() as Record<string, unknown>
+    return route.fulfill({ json: { operations: [] } })
+  })
+  await page.goto('/#path=%2Ffolder')
+  await page.locator('[data-file-entry]').filter({ hasText: 'archive.zip' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Extract…', exact: true }).click()
+  const extract = page.getByRole('dialog', { name: 'Extract archive.zip', exact: true })
+  const picker = page.getByRole('dialog', { name: 'Choose destination folder', exact: true })
+  await extract.getByRole('button', { name: 'Browse…' }).click()
+  await expect(picker).toBeVisible()
+  await expect(picker.getByRole('button', { name: '.hidden', exact: true })).toHaveCount(0)
+  await expect(picker.getByRole('button', { name: 'restricted', exact: true })).toHaveCount(0)
+  await picker.getByRole('button', { name: 'target', exact: true }).dblclick()
+  await picker.locator('[data-destination-viewport]').getByRole('button', { name: 'nested', exact: true }).click()
+  await picker.getByRole('button', { name: 'Select folder', exact: true }).click()
+  await expect(picker).toBeHidden()
+  await expect(extract.getByLabel('Destination folder')).toHaveValue('/folder/target/nested')
+  await expect(extract.getByRole('region', { name: 'Extraction folders' })).toContainText('/folder/target/nested/archive')
+  expect(operationRequest).toBeNull()
+
+  await extract.getByRole('button', { name: 'Browse…' }).click()
+  await picker.locator('[data-destination-viewport]').getByRole('button', { name: 'nested', exact: true }).click()
+  await picker.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(extract.getByLabel('Destination folder')).toHaveValue('/folder/target/nested')
+  await extract.getByLabel('Destination folder').fill('/typed')
+  await extract.getByRole('button', { name: 'Extract', exact: true }).click()
+  await expect.poll(() => operationRequest).toEqual({ kind: 'extract', sources: ['/folder/archive.zip'], destination: '/typed', extract_layout: 'separate_directories', existing_files: 'skip' })
 })
 
 test('Extract defaults to an archive-named folder and prompts when the task requests a password', async ({ page }) => {

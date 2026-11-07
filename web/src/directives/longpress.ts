@@ -17,6 +17,7 @@ type LongPressBinding = {
   suppressNativeUntil: number
   clickCleanupTimer: number | null
   suppressClick: ((event: MouseEvent) => void) | null
+  touchPointerId: number | null
 }
 
 const bindings = new WeakMap<HTMLElement, LongPressBinding>()
@@ -50,6 +51,7 @@ function installClickSuppression(binding: LongPressBinding, startX: number, star
 }
 
 function finishPointer(binding: LongPressBinding, event: PointerEvent) {
+  if (binding.touchPointerId === event.pointerId) binding.touchPointerId = null
   const state = binding.state
   if (!state || state.pointerId !== event.pointerId) return
   clearTimer(binding)
@@ -67,11 +69,17 @@ function mounted(element: HTMLElement, directive: DirectiveBinding<LongPressHand
     suppressNativeUntil: 0,
     clickCleanupTimer: null,
     suppressClick: null,
+    touchPointerId: null,
   }
   bindings.set(element, binding)
 
   element.addEventListener('pointerdown', event => {
-    if (!event.isPrimary || (event.pointerType !== 'touch' && event.pointerType !== 'pen')) return
+    if (!event.isPrimary) return
+    if (event.pointerType !== 'touch' && event.pointerType !== 'pen') {
+      binding.touchPointerId = null
+      return
+    }
+    binding.touchPointerId = event.pointerId
     clearTimer(binding)
     const state: LongPressState = {
       pointerId: event.pointerId,
@@ -102,6 +110,13 @@ function mounted(element: HTMLElement, directive: DirectiveBinding<LongPressHand
 
   element.addEventListener('pointerup', event => finishPointer(binding, event))
   element.addEventListener('pointercancel', event => finishPointer(binding, event))
+  element.addEventListener('dragstart', event => {
+    // Native touch dragging lifts a preview above page overlays and cancels
+    // pointer events. Reserve this gesture for the press-and-hold menu.
+    if (binding.touchPointerId === null) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }, true)
   element.addEventListener('contextmenu', event => {
     if (binding.suppressNativeUntil === Number.POSITIVE_INFINITY || performance.now() < binding.suppressNativeUntil) {
       event.preventDefault()

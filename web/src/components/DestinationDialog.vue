@@ -12,7 +12,7 @@ import { isEntryVisible } from '@/utils/entryVisibility'
 const props = defineProps<{
   visible: boolean
   busy?: boolean
-  mode: 'copy' | 'move'
+  mode: 'copy' | 'move' | 'select'
   count: number
   initialPath: string
   showHidden: boolean
@@ -168,13 +168,13 @@ function submit() {
     :busy="busy || createBusy"
     :visible="visible"
     modal
-    :header="mode === 'copy' ? 'Copy to…' : 'Move to…'"
+    :header="mode === 'select' ? 'Choose destination folder' : mode === 'copy' ? 'Copy to…' : 'Move to…'"
     :style="{ width: 'min(46rem, 94vw)' }"
     @update:visible="emit('update:visible', $event)"
   >
     <div class="space-y-4">
       <div class="flex items-center justify-between gap-3">
-        <p class="text-sm text-zinc-300">{{ count }} item{{ count === 1 ? '' : 's' }}</p>
+        <p class="text-sm text-zinc-300">{{ mode === 'select' ? 'Choose a folder for extraction' : `${count} item${count === 1 ? '' : 's'}` }}</p>
         <Button label="New folder" icon="pi pi-folder-plus" severity="secondary" text :disabled="loading" @click="newFolderVisible = true" />
       </div>
       <p v-if="createError" class="webfile-text-error text-sm">{{ createError }}</p>
@@ -232,7 +232,7 @@ function submit() {
         </div>
         <div class="flex shrink-0 gap-2">
           <Button data-dialog-cancel label="Cancel" severity="secondary" text :disabled="busy || createBusy" @click="emit('update:visible', false)" />
-          <Button data-dialog-primary :label="mode === 'copy' ? 'Copy here' : 'Move here'" :loading="busy" :disabled="busy || loading || !!error || createBusy" @click="submit" />
+          <Button data-dialog-primary :label="mode === 'select' ? 'Select folder' : mode === 'copy' ? 'Copy here' : 'Move here'" :loading="busy" :disabled="busy || loading || !!error || createBusy" @click="submit" />
         </div>
       </div>
     </div>

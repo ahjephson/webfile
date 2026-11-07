@@ -4,6 +4,7 @@ import { archiveFolderName } from '@/utils/archives'
 import Button from 'primevue/button'
 import Dialog from '@/components/AppDialog.vue'
 import InputText from 'primevue/inputtext'
+import DestinationDialog from '@/components/DestinationDialog.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -12,6 +13,8 @@ const props = defineProps<{
   destination: string
   busy?: boolean
   existingFiles: 'skip' | 'overwrite'
+  showHidden: boolean
+  hideInaccessible: boolean
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +23,7 @@ const emit = defineEmits<{
 }>()
 
 const destination = ref('')
+const browseVisible = ref(false)
 const outputPaths = computed(() => {
   if (!destination.value.trim()) return []
   return props.archiveNames.map(name => {
@@ -33,6 +37,7 @@ const outputPaths = computed(() => {
 })
 
 watch(() => props.visible, visible => {
+  browseVisible.value = false
   if (visible) {
     destination.value = props.destination
   }
@@ -40,6 +45,11 @@ watch(() => props.visible, visible => {
 
 function submit() {
   if (!props.busy && destination.value.trim()) emit('extract', destination.value.trim())
+}
+
+function selectDestination(path: string) {
+  destination.value = path
+  browseVisible.value = false
 }
 </script>
 
@@ -55,7 +65,10 @@ function submit() {
     <form class="space-y-4" @submit.prevent="submit">
       <div class="space-y-2">
         <label for="extract-destination" class="block text-sm font-medium">Destination folder</label>
-        <InputText id="extract-destination" v-model="destination" fluid autocomplete="off" />
+        <div class="flex gap-2">
+          <InputText id="extract-destination" v-model="destination" class="min-w-0 flex-1" autocomplete="off" :disabled="busy" />
+          <Button label="Browse…" icon="pi pi-folder-open" severity="secondary" :disabled="busy" @click="browseVisible = true" />
+        </div>
       </div>
       <section v-if="outputPaths.length" aria-label="Extraction folders" class="space-y-2 rounded-lg border border-zinc-700 bg-zinc-900/50 p-3">
         <p class="text-sm font-medium">{{ outputPaths.length === 1 ? 'Extract into folder' : 'Extract into folders' }}</p>
@@ -73,4 +86,13 @@ function submit() {
       </div>
     </form>
   </Dialog>
+  <DestinationDialog
+    v-model:visible="browseVisible"
+    mode="select"
+    :count="archiveNames.length"
+    :initial-path="destination.trim() || props.destination"
+    :show-hidden="showHidden"
+    :hide-inaccessible="hideInaccessible"
+    @submit="selectDestination"
+  />
 </template>
