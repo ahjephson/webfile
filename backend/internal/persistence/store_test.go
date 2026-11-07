@@ -20,7 +20,7 @@ func TestStatePersistsPreferencesAndSessions(t *testing.T) {
 		ViewMode: "grid", GridSize: "large", ShowHidden: true, HideInaccessible: true, Theme: "dark",
 		EditorWordWrap: true, EditorFontSize: 18, EditorLineNumbers: &lineNumbers,
 		EditorShowWhitespace: true, EditorMinimap: true, EditorToolbar: "rich",
-		EditorMarkdownPreview: true, CopyChunkMiB: 16,
+		EditorMarkdownPreview: true, CopyChunkMiB: 16, ExtractDeleteArchive: &lineNumbers,
 	}
 	if err := store.SetPreferences("alex", wantPreferences); err != nil {
 		t.Fatal(err)

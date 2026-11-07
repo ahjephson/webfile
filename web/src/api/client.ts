@@ -393,7 +393,7 @@ export const api = {
     })
   },
 
-  startExtractions(sources: string[], destination: string, layout: 'separate_directories' | 'here', existingFiles: 'skip' | 'overwrite') {
+  startExtractions(sources: string[], destination: string, layout: 'separate_directories' | 'here', existingFiles: 'skip' | 'overwrite', deleteArchive: boolean) {
     return request<{ operations: FileOperation[] }>('/api/fs/operations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -403,6 +403,7 @@ export const api = {
         destination,
         extract_layout: layout,
         existing_files: existingFiles,
+        delete_archive: deleteArchive,
       }),
     })
   },

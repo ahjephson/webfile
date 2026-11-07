@@ -19,6 +19,7 @@ export const defaultPreferences: UserPreferences = {
   editor_markdown_preview: false,
   copy_chunk_mib: 4,
   extract_existing_files: 'skip',
+  extract_delete_archive: true,
 }
 
 export function normalizePreferences(value: Preferences = {}): UserPreferences {
@@ -42,5 +43,6 @@ export function normalizePreferences(value: Preferences = {}): UserPreferences {
     editor_markdown_preview: value.editor_markdown_preview === true,
     copy_chunk_mib: value.copy_chunk_mib === 1 || value.copy_chunk_mib === 16 || value.copy_chunk_mib === 64 ? value.copy_chunk_mib : 4,
     extract_existing_files: value.extract_existing_files === 'overwrite' ? 'overwrite' : 'skip',
+    extract_delete_archive: value.extract_delete_archive !== false,
   }
 }

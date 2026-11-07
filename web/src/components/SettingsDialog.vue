@@ -159,6 +159,10 @@ function save() {
             <span><strong>Existing files when extracting</strong><small>Skip existing files by default, or replace regular files with extracted versions.</small></span>
             <Select v-model="draft.extract_existing_files" :options="extractExistingOptions" option-label="label" option-value="value" aria-label="Existing files when extracting" />
           </label>
+          <label class="settings-row">
+            <span><strong>Delete archive after extraction</strong><small>Delete the source archive after successful extraction. Keep it if extraction fails, is cancelled, or skips existing files.</small></span>
+            <ToggleSwitch v-model="draft.extract_delete_archive" aria-label="Delete archive after extraction" />
+          </label>
         </div>
       </section>
 

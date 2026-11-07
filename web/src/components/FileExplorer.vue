@@ -1433,6 +1433,7 @@ async function prepareExtraction(destination: string) {
       extractDestination.value,
       'separate_directories',
       userPreferences.value.extract_existing_files,
+      userPreferences.value.extract_delete_archive,
     )
     for (const operation of started) handleOperationUpdate(operation)
     signalTaskAdded()
@@ -1533,7 +1534,7 @@ function openExtract(entries: FileEntry[]) {
 
 async function extractHere(entries: FileEntry[]) {
   try {
-    const started = await startExtractions(entries.map(entry => entry.path), currentPath.value, 'here', userPreferences.value.extract_existing_files)
+    const started = await startExtractions(entries.map(entry => entry.path), currentPath.value, 'here', userPreferences.value.extract_existing_files, userPreferences.value.extract_delete_archive)
     for (const operation of started) handleOperationUpdate(operation)
     signalTaskAdded()
     clearSelection()
@@ -2151,7 +2152,7 @@ function operationLabel(value: string) {
     <SettingsDialog v-if="isPrimary" v-model:visible="settingsVisible" :preferences="currentPreferences()" :saving="settingsSaving" @save="saveSettings" />
     <EditorDialog v-if="editorVisible && paneVisible" ref="editorDialog" :visible="editorVisible" :active="isActive && paneVisible" :path="editorPath" :is-new="editorIsNew" :theme="resolvedTheme" :preferences="userPreferences" @update:visible="setEditorVisible" @saved="onEditorSaved" />
     <FilePreview :visible="previewVisible && paneVisible" :active="isActive" :path="previewPath" :kind="previewKind" :content-type="previewContentType" :folder-path="currentPath" :entries="filteredEntries" @update:visible="setPreviewVisible" @return-to-folder="returnPreviewToFolder" @navigate="navigatePreview" />
-    <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTargets.length === 1 ? extractTargets[0].name : `${extractTargets.length} archives`" :archive-names="extractTargets.map(entry => entry.name)" :destination="extractDestination" :busy="extractBusy" :existing-files="userPreferences.extract_existing_files" :show-hidden="showHidden" :hide-inaccessible="userPreferences.hide_inaccessible" @extract="prepareExtraction" />
+    <ExtractDialog v-model:visible="extractVisible" :archive-name="extractTargets.length === 1 ? extractTargets[0].name : `${extractTargets.length} archives`" :archive-names="extractTargets.map(entry => entry.name)" :destination="extractDestination" :busy="extractBusy" :existing-files="userPreferences.extract_existing_files" :show-hidden="showHidden" :hide-inaccessible="userPreferences.hide_inaccessible" :delete-archive="userPreferences.extract_delete_archive" @extract="prepareExtraction" />
     <ArchivePasswordDialog v-if="isPrimary" v-model:visible="extractPasswordVisible" :archive-name="extractTarget?.name ?? ''" :busy="passwordBusy" :error="extractPasswordError" @submit="submitExtractionPassword" @dismiss="extractPasswordVisible = false" @cancel="cancelPasswordPrompt" @after-hide="onArchivePasswordAfterHide" />
     <DestinationDialog
       v-model:visible="destinationVisible"

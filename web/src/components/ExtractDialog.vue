@@ -15,6 +15,7 @@ const props = defineProps<{
   existingFiles: 'skip' | 'overwrite'
   showHidden: boolean
   hideInaccessible: boolean
+  deleteArchive: boolean
 }>()
 
 const emit = defineEmits<{
@@ -80,6 +81,7 @@ function selectDestination(path: string) {
         Each archive will be extracted into its own named folder. Existing regular files will be
         {{ existingFiles === 'overwrite' ? 'overwritten' : 'skipped' }}. Encrypted archives request a password when they reach the front of the queue.
       </p>
+      <p v-if="deleteArchive" class="text-xs text-zinc-400">Source archives will be deleted after successful extraction. Archives are kept if any files are skipped.</p>
       <div class="flex justify-end gap-2">
         <Button data-dialog-cancel label="Cancel" severity="secondary" text :disabled="busy" @click="emit('update:visible', false)" />
         <Button data-dialog-primary label="Extract" type="submit" :loading="busy" :disabled="busy || !destination.trim()" />

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -482,7 +483,7 @@ printf extracted > "$destination/$(basename "$archive").txt"
 
 	updates, stopUpdates := target.ops.Subscribe()
 	defer stopUpdates()
-	request := httptest.NewRequest(http.MethodPost, "/api/fs/operations", bytes.NewBufferString(`{"kind":"extract","sources":["/Files/first.7z","/Files/second.7z"],"destination":"/Files","extract_layout":"separate_directories","existing_files":"skip"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/fs/operations", bytes.NewBufferString(`{"kind":"extract","sources":["/Files/first.7z","/Files/second.7z"],"destination":"/Files","extract_layout":"separate_directories","existing_files":"skip","delete_archive":true}`))
 	response := httptest.NewRecorder()
 	target.startOperation(response, request)
 	if response.Code != http.StatusAccepted {
@@ -526,6 +527,11 @@ printf extracted > "$destination/$(basename "$archive").txt"
 	}
 	if awaitingPrompts != 1 {
 		t.Fatalf("got %d password prompts, want 1", awaitingPrompts)
+	}
+	for _, name := range []string{"first.7z", "second.7z"} {
+		if _, err := os.Stat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("successfully extracted archive still exists: %s: %v", name, err)
+		}
 	}
 	if _, ok := target.archivePassword.Get(); ok {
 		t.Fatal("password remained cached after extraction queue drained")

@@ -56,11 +56,14 @@ const (
 
 type ExtractOptions struct {
 	ExistingFiles ExistingFilePolicy
+	DeleteArchive bool
 }
 
 type ExtractResult struct {
-	Extracted int
-	Skipped   int
+	Extracted       int
+	Skipped         int
+	ArchiveDeleted  bool
+	ArchiveRetained string
 }
 
 type PasswordProvider func(context.Context, bool) (string, error)
@@ -112,6 +115,28 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 	_, archiveAbs, err := e.resolver.ResolveExisting(archivePath)
 	if err != nil {
 		return ExtractResult{}, err
+	}
+	var sourceFS *os.Root
+	var sourceInfo os.FileInfo
+	var sourceRelative string
+	if options.DeleteArchive {
+		archiveRoot, sourceAbs, resolveErr := e.resolver.ResolveEntry(archivePath)
+		if resolveErr != nil {
+			return ExtractResult{}, resolveErr
+		}
+		sourceFS, err = os.OpenRoot(archiveRoot.Path)
+		if err != nil {
+			return ExtractResult{}, err
+		}
+		defer sourceFS.Close()
+		sourceRelative, err = filepath.Rel(archiveRoot.Path, sourceAbs)
+		if err != nil {
+			return ExtractResult{}, err
+		}
+		sourceInfo, err = sourceFS.Lstat(sourceRelative)
+		if err != nil {
+			return ExtractResult{}, err
+		}
 	}
 	destinationRoot, destinationAbs, err := e.resolver.ResolveExisting(destinationPath)
 	destinationExists := err == nil
@@ -190,9 +215,33 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 			_ = removeStage(stage)
 			return ExtractResult{}, runErr
 		}
-		return publishStage(ctx, stage, destinationAbs, destinationExists, options.ExistingFiles, report, func() error {
+		result, err := publishStage(ctx, stage, destinationAbs, destinationExists, options.ExistingFiles, report, func() error {
 			return validateExtractionPathsContext(ctx, stage, destinationRoot, destinationAbs)
 		})
+		if err != nil || !options.DeleteArchive {
+			return result, err
+		}
+		if result.Skipped > 0 {
+			result.ArchiveRetained = "archive kept because files were skipped"
+			return result, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		// Delete only the unchanged source, through its configured root. Never
+		// recursively remove a replacement directory or follow a replacement link.
+		current, err := sourceFS.Lstat(sourceRelative)
+		if err != nil || !current.Mode().IsRegular() || !os.SameFile(sourceInfo, current) ||
+			current.Size() != sourceInfo.Size() || !current.ModTime().Equal(sourceInfo.ModTime()) {
+			result.ArchiveRetained = "archive kept because the source changed, is unavailable, or is not a regular file"
+			return result, nil
+		}
+		if err := sourceFS.Remove(sourceRelative); err != nil {
+			result.ArchiveRetained = "archive kept because it could not be deleted"
+			return result, nil
+		}
+		result.ArchiveDeleted = true
+		return result, nil
 	}
 }
 

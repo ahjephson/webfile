@@ -81,6 +81,7 @@ export interface Preferences {
   editor_markdown_preview?: boolean
   copy_chunk_mib?: 1 | 4 | 16 | 64
   extract_existing_files?: 'skip' | 'overwrite'
+  extract_delete_archive?: boolean
 }
 
 export interface UploadSession {

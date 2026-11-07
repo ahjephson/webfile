@@ -141,6 +141,8 @@ Example:
 
 ### Persistent application state
 
+Settings → Archives includes **Delete archive after extraction**, enabled by default. The source archive is deleted only after its extracted files are published successfully. Failed or cancelled extractions, skipped existing files, changed sources and source symlinks keep the archive. If deletion is not possible, the task reports that the archive was kept. Turn the setting off to retain archives after extraction.
+
 WebFile deliberately does **not** persist the filesystem tree. An atomic JSON state file under `runtime.data_dir` stores shared application state:
 
 - hashed sessions + CSRF state;

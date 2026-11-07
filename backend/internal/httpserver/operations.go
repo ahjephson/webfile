@@ -28,6 +28,7 @@ type operationRequest struct {
 	CopyChunkMiB  int      `json:"copy_chunk_mib,omitempty"`
 	ExtractLayout string   `json:"extract_layout,omitempty"`
 	ExistingFiles string   `json:"existing_files,omitempty"`
+	DeleteArchive bool     `json:"delete_archive,omitempty"`
 }
 
 func (s *Server) listOperations(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +169,7 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 		}
 		started := make([]operations.Operation, 0, len(req.Sources))
 		for index, source := range req.Sources {
-			started = append(started, s.startExtractOperation(source, destinations[index], policy))
+			started = append(started, s.startExtractOperation(source, destinations[index], policy, req.DeleteArchive))
 		}
 		if layout == "" {
 			writeJSON(w, http.StatusAccepted, started[0])
@@ -227,7 +228,7 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) startExtractOperation(source, destination string, policy archive.ExistingFilePolicy) operations.Operation {
+func (s *Server) startExtractOperation(source, destination string, policy archive.ExistingFilePolicy, deleteArchive bool) operations.Operation {
 	var recoveryError error
 	return s.ops.StartTask("extract", []string{source}, destination, operations.TaskOptions{
 		Cancellable:   true,
@@ -283,7 +284,7 @@ func (s *Server) startExtractOperation(source, destination string, policy archiv
 					ItemsDone:    progress.ItemsDone, ItemsTotal: progress.ItemsTotal,
 				})
 			}
-		}, archive.ExtractOptions{ExistingFiles: policy})
+		}, archive.ExtractOptions{ExistingFiles: policy, DeleteArchive: deleteArchive})
 		var recovery *archive.PublicationRecoveryError
 		if errors.As(err, &recovery) {
 			recoveryError = err
@@ -295,6 +296,13 @@ func (s *Server) startExtractOperation(source, destination string, policy archiv
 			message := fmt.Sprintf("Extracted %d files", result.Extracted)
 			if result.Skipped > 0 {
 				message += fmt.Sprintf(" · skipped %d existing files", result.Skipped)
+			}
+			if result.ArchiveDeleted {
+				message += " · archive deleted"
+				s.files.InvalidateFolderSizes(source)
+				s.invalidateDestination(path.Dir(filesystem.CleanVirtual(source)))
+			} else if result.ArchiveRetained != "" {
+				message += " · " + result.ArchiveRetained
 			}
 			total := result.Extracted + result.Skipped
 			reporter.Report(operations.ProgressUpdate{

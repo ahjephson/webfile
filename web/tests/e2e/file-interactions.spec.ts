@@ -781,6 +781,8 @@ test('settings persist appearance, editor defaults, and copy chunk size', async 
   await expect(dialog.getByRole('heading', { name: 'Transfers' })).toBeVisible()
   await expect(dialog.getByRole('heading', { name: 'About' })).toBeVisible()
   await expect(dialog).toContainText('WebFile 1.0.0 · commit abc123 · built 2026-10-12T10:00:00Z')
+  await expect(dialog.getByRole('switch', { name: 'Delete archive after extraction' })).toBeChecked()
+  await dialog.getByRole('switch', { name: 'Delete archive after extraction' }).click()
 
   await dialog.getByRole('combobox', { name: 'Default view' }).click()
   await page.getByRole('option', { name: 'Grid', exact: true }).click()
@@ -809,6 +811,7 @@ test('settings persist appearance, editor defaults, and copy chunk size', async 
     show_hidden: true,
     hide_inaccessible: true,
     extract_existing_files: 'overwrite',
+    extract_delete_archive: false,
     editor_word_wrap: true,
     editor_font_size: 18,
     editor_minimap: true,
@@ -823,6 +826,9 @@ test('settings persist appearance, editor defaults, and copy chunk size', async 
   await expect(editor).toHaveAttribute('data-markdown-preview', 'true')
   await expect(page.getByRole('navigation', { name: 'Rich editor toolbar' })).toBeVisible()
   await expect(editor.getByText('18px · Wrap · Minimap', { exact: false })).toBeVisible()
+  await page.reload()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Settings' }).getByRole('switch', { name: 'Delete archive after extraction' })).not.toBeChecked()
 })
 
 test('delete is permanent and no recycle bin is exposed', async ({ page }) => {
@@ -3269,14 +3275,14 @@ test('Extract here starts a single-pass task in the archive directory', async ({
   await page.getByRole('menuitem', { name: 'Extract here', exact: true }).click()
 
   await expect.poll(() => operationRequest).not.toBeNull()
-  expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/archive.zip'], destination: '/folder', extract_layout: 'here', existing_files: 'skip' })
+  expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/archive.zip'], destination: '/folder', extract_layout: 'here', existing_files: 'skip', delete_archive: true })
   await expect(page.getByRole('button', { name: 'Open tasks' })).toHaveClass(/webfile-task-attention/)
   await expect(page.getByRole('complementary')).toHaveCount(0)
 })
 
 test('Extract can browse for a destination, cancel browsing, and still edit the path', async ({ page }) => {
   let operationRequest: Record<string, unknown> | null = null
-  await page.route('**/api/preferences', route => route.fulfill({ json: { show_hidden: false, hide_inaccessible: true } }))
+  await page.route('**/api/preferences', route => route.fulfill({ json: { show_hidden: false, hide_inaccessible: true, extract_delete_archive: false } }))
   await page.route('**/api/fs/dir**', route => {
     const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
     const folder = (name: string, can_navigate = true) => ({ name, path: `${path}/${name}`, is_dir: true, can_navigate, size: 0, modified: '2000-01-01T00:00:00Z', mode: 'drwxr-xr-x' })
@@ -3312,7 +3318,7 @@ test('Extract can browse for a destination, cancel browsing, and still edit the 
   await expect(extract.getByLabel('Destination folder')).toHaveValue('/folder/target/nested')
   await extract.getByLabel('Destination folder').fill('/typed')
   await extract.getByRole('button', { name: 'Extract', exact: true }).click()
-  await expect.poll(() => operationRequest).toEqual({ kind: 'extract', sources: ['/folder/archive.zip'], destination: '/typed', extract_layout: 'separate_directories', existing_files: 'skip' })
+  await expect.poll(() => operationRequest).toEqual({ kind: 'extract', sources: ['/folder/archive.zip'], destination: '/typed', extract_layout: 'separate_directories', existing_files: 'skip', delete_archive: false })
 })
 
 test('Extract defaults to an archive-named folder and prompts when the task requests a password', async ({ page }) => {
@@ -3362,7 +3368,7 @@ test('Extract defaults to an archive-named folder and prompts when the task requ
   await expect(passwordDialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled()
 
   await expect.poll(() => operationRequest).not.toBeNull()
-  expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/secure.tar.gz'], destination: '/target', extract_layout: 'separate_directories', existing_files: 'skip' })
+  expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/secure.tar.gz'], destination: '/target', extract_layout: 'separate_directories', existing_files: 'skip', delete_archive: true })
   await expect.poll(() => submittedPassword).not.toBeNull()
   expect(submittedPassword).toEqual({ password: 'secret' })
   releasePasswordRequest()
@@ -3521,6 +3527,7 @@ test('multiple selected archives can be queued as independent extraction tasks',
     destination: '/folder',
     extract_layout: 'separate_directories',
     existing_files: 'skip',
+    delete_archive: true,
   })
 })
 

@@ -130,8 +130,8 @@ function createFileOperations(onTerminal: TerminalHandler) {
     return operation
   }
 
-  async function startExtractions(sources: string[], destination: string, layout: 'separate_directories' | 'here', existingFiles: 'skip' | 'overwrite') {
-    const result = await api.startExtractions(sources, destination, layout, existingFiles)
+  async function startExtractions(sources: string[], destination: string, layout: 'separate_directories' | 'here', existingFiles: 'skip' | 'overwrite', deleteArchive: boolean) {
+    const result = await api.startExtractions(sources, destination, layout, existingFiles, deleteArchive)
     for (const operation of result.operations) update(operation)
     return result.operations
   }

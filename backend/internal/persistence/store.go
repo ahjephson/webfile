@@ -34,6 +34,7 @@ type Preferences struct {
 	EditorMarkdownPreview bool   `json:"editor_markdown_preview,omitempty"`
 	CopyChunkMiB          int    `json:"copy_chunk_mib,omitempty"`
 	ExtractExistingFiles  string `json:"extract_existing_files,omitempty"`
+	ExtractDeleteArchive  *bool  `json:"extract_delete_archive,omitempty"`
 }
 
 type userState struct {
