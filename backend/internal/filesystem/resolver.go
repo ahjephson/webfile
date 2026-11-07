@@ -226,6 +226,50 @@ func (r *Resolver) ResolveForCreate(v string) (Root, string, error) {
 	return root, entry, nil
 }
 
+// ResolveForCreateWithParents creates missing parent directories inside the
+// configured root, then resolves the final entry using the usual checks.
+func (r *Resolver) ResolveForCreateWithParents(v string) (Root, string, error) {
+	root, candidate, err := r.resolveLexical(v)
+	if err != nil {
+		return Root{}, "", err
+	}
+	ancestor := filepath.Dir(candidate)
+	for {
+		if err := ensureWithin(root.Path, ancestor); err != nil {
+			return Root{}, "", err
+		}
+		resolved, resolveErr := filepath.EvalSymlinks(ancestor)
+		if resolveErr == nil {
+			relative, err := filepath.Rel(ancestor, candidate)
+			if err != nil {
+				return Root{}, "", err
+			}
+			candidate = filepath.Join(resolved, relative)
+			if err := root.ValidatePath(candidate); err != nil {
+				return Root{}, "", err
+			}
+			break
+		}
+		if !errors.Is(resolveErr, fs.ErrNotExist) || ancestor == root.Path {
+			return Root{}, "", resolveErr
+		}
+		ancestor = filepath.Dir(ancestor)
+	}
+	anchored, err := os.OpenRoot(root.Path)
+	if err != nil {
+		return Root{}, "", err
+	}
+	defer anchored.Close()
+	parent, err := filepath.Rel(root.Path, filepath.Dir(candidate))
+	if err != nil {
+		return Root{}, "", err
+	}
+	if err := anchored.MkdirAll(parent, 0o755); err != nil {
+		return Root{}, "", err
+	}
+	return r.ResolveForCreate(v)
+}
+
 func (r *Resolver) resolveLexical(v string) (Root, string, error) {
 	name, rel, err := SplitVirtual(v)
 	if err != nil {

@@ -142,7 +142,7 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 	destinationRoot, destinationAbs, err := e.resolver.ResolveExisting(destinationPath)
 	destinationExists := err == nil
 	if errors.Is(err, fs.ErrNotExist) {
-		destinationRoot, destinationAbs, err = e.resolver.ResolveForCreate(destinationPath)
+		destinationRoot, destinationAbs, err = e.resolver.ResolveForCreateWithParents(destinationPath)
 	}
 	if err != nil {
 		return ExtractResult{}, err
