@@ -222,7 +222,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, captureScrollPosition, restore
           cut.has(row.entry.path) ? 'opacity-50' : '',
           dropTargetPath === row.entry.path ? 'webfile-drop-target' : '',
         ]"
-        :style="{ ...columnsStyle, height: `${rowHeight}px`, transform: `translateY(${row.index * rowHeight}px)` }"
+        :style="{ ...columnsStyle, height: `${rowHeight}px`, top: `${row.index * rowHeight}px` }"
         :data-cut="cut.has(row.entry.path) ? 'true' : undefined"
         data-file-entry
         :draggable="canDrag"

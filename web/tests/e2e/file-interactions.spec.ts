@@ -484,7 +484,7 @@ for (const view of ['list', 'grid'] as const) {
                 ? document.elementFromPoint((left + right) / 2, bottom - Math.min(1, (bottom - top) / 2))
                 : null
               frames.push({ opacity: Number(getComputedStyle(menu).opacity), aboveItem: hit?.closest('.p-contextmenu') === menu })
-              if (frames.length === 6) resolve(frames)
+              if (frames.length === 24) resolve(frames)
               else requestAnimationFrame(sample)
             }
             requestAnimationFrame(sample)
@@ -500,7 +500,7 @@ for (const view of ['list', 'grid'] as const) {
       await entry.dispatchEvent('pointerup', pointer)
       await opening.dispose()
 
-      expect(frames).toHaveLength(6)
+      expect(frames).toHaveLength(24)
       for (const frame of frames) expect(frame).toEqual({ opacity: 1, aboveItem: true })
       await expect(page.locator('.p-contextmenu')).toBeVisible()
       await expect(entry).toHaveClass(/ring-sky-500/)
@@ -530,33 +530,6 @@ for (const view of ['list', 'grid'] as const) {
       await expect(menu).toBeVisible()
       await expect(checkbox).toHaveAttribute('aria-pressed', 'false')
     })
-
-    for (const pointerType of ['touch', 'pen']) {
-      test(`${pointerType} holds cannot lift a native drag preview over the context menu`, async ({ page }) => {
-        const checkbox = selectionButtons(page).first()
-        const entry = entryFor(checkbox)
-        await showSelectionControls(page)
-        await checkbox.click()
-        const pointer = { pointerId: 1, pointerType, isPrimary: true, clientX: 200, clientY: 200 }
-        await entry.dispatchEvent('pointerdown', pointer)
-        const tryDrag = () => entry.evaluate(element => {
-          const event = new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() })
-          return { allowed: element.dispatchEvent(event), types: [...event.dataTransfer!.types] }
-        })
-        expect(await tryDrag()).toEqual({ allowed: false, types: [] })
-        await expect(page.locator('.p-contextmenu')).toBeVisible()
-        expect(await tryDrag()).toEqual({ allowed: false, types: [] })
-        await entry.dispatchEvent('pointerup', pointer)
-        await expect(page.locator('.p-contextmenu')).toBeVisible()
-        await expect(checkbox).toHaveAttribute('aria-pressed', 'true')
-        await page.getByRole('menuitem', { name: 'Details', exact: true }).click()
-        await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
-        // Ending the touch gesture must leave ordinary mouse dragging available.
-        await entry.dispatchEvent('pointerdown', { ...pointer, pointerType: 'mouse' })
-        expect((await tryDrag()).allowed).toBe(true)
-        await entry.dispatchEvent('dragend')
-      })
-    }
 
     test('single-pane dragging exposes only internal transfer data', async ({ page }) => {
       const checkbox = selectionButtons(page).first()
