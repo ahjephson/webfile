@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"webfile/internal/taskcontrol"
 
 	"golang.org/x/sys/unix"
 )
@@ -37,7 +38,7 @@ func newCopyWriteback(file *os.File) (func(context.Context, int64) error, error)
 			flags = unix.SYNC_FILE_RANGE_WAIT_BEFORE | unix.SYNC_FILE_RANGE_WAIT_AFTER
 		}
 		for {
-			if err := ctx.Err(); err != nil {
+			if err := taskcontrol.Wait(ctx); err != nil {
 				return err
 			}
 			err := unix.SyncFileRange(int(file.Fd()), offset, length, flags)
@@ -54,7 +55,7 @@ func newCopyWriteback(file *os.File) (func(context.Context, int64) error, error)
 }
 
 func (writer *copyWriteback) advance(ctx context.Context, bytes int64) error {
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
 	writer.copied += bytes

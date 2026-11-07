@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"webfile/internal/clienterror"
+	"webfile/internal/taskcontrol"
 )
 
 type State string
@@ -38,6 +39,7 @@ const (
 )
 
 type Operation struct {
+	Paused         bool            `json:"paused"`
 	Input          json.RawMessage `json:"input,omitempty"`
 	ID             string          `json:"id"`
 	AttemptID      string          `json:"attempt_id,omitempty"`
@@ -80,6 +82,7 @@ type ProgressUpdate struct {
 type Reporter struct {
 	manager *Manager
 	id      string
+	ctx     context.Context
 }
 
 var ErrAwaitingInput = errors.New("task awaiting input")
@@ -102,6 +105,9 @@ func (r Reporter) ID() string {
 }
 
 func (r Reporter) SetState(state State, phase, message string) {
+	if r.ctx != nil && taskcontrol.Wait(r.ctx) != nil {
+		return
+	}
 	r.manager.setStatus(r.id, state, phase, message)
 }
 
@@ -120,6 +126,9 @@ func (r Reporter) UpdatePhase(phase string, bytesDone, bytesTotal, itemsDone, it
 }
 
 func (r Reporter) Report(update ProgressUpdate) {
+	if r.ctx != nil && taskcontrol.Wait(r.ctx) != nil {
+		return
+	}
 	r.manager.updateProgress(r.id, update)
 }
 
@@ -144,6 +153,7 @@ type TaskOptions struct {
 }
 
 type record struct {
+	control         *taskcontrol.Control
 	inputHandler    func(json.RawMessage) error
 	op              Operation
 	run             RunFunc
@@ -197,6 +207,7 @@ func Open(databasePath string, maxKeep, maxConcurrent int) (*Manager, error) {
 			}
 		}
 		if activeState(operation.State) {
+			operation.Paused = false
 			operation.Input = nil
 			operation.State = StateInterrupted
 			operation.Phase = "interrupted"
@@ -265,7 +276,7 @@ func (m *Manager) StartTask(kind string, sources []string, destination string, o
 		m.mu.Unlock()
 		return op
 	}
-	rec := &record{op: op, run: run, cleanup: options.Cleanup, inputHandler: options.InputHandler}
+	rec := &record{op: op, run: run, cleanup: options.Cleanup, inputHandler: options.InputHandler, control: taskcontrol.New()}
 	m.records[id] = rec
 	m.queue = append(m.queue, id)
 	m.refreshQueuePositionsLocked()
@@ -283,7 +294,7 @@ func (m *Manager) scheduleLocked() {
 		queueIndex := -1
 		for index, id := range m.queue {
 			rec := m.records[id]
-			if rec != nil && rec.op.State == StateQueued && rec.run != nil && m.runningKinds[rec.op.Kind] == 0 {
+			if rec != nil && rec.op.State == StateQueued && !rec.op.Paused && rec.run != nil && m.runningKinds[rec.op.Kind] == 0 {
 				queueIndex = index
 				break
 			}
@@ -296,6 +307,7 @@ func (m *Manager) scheduleLocked() {
 		rec := m.records[id]
 		rec.op.QueuePosition = 0
 		ctx, cancel := context.WithCancel(context.Background())
+		ctx = taskcontrol.With(ctx, rec.control)
 		rec.cancel = cancel
 		rec.op.State = StateRunning
 		rec.op.Phase = "running"
@@ -313,7 +325,15 @@ func (m *Manager) scheduleLocked() {
 
 func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 	defer m.wg.Done()
-	err := taskError(func() error { return run(ctx, Reporter{manager: m, id: id}) })
+	err := taskError(func() error {
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return err
+		}
+		if err := run(ctx, Reporter{manager: m, id: id, ctx: ctx}); err != nil {
+			return err
+		}
+		return taskcontrol.Wait(ctx)
+	})
 
 	m.mu.Lock()
 	rec := m.records[id]
@@ -371,6 +391,7 @@ func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 		}
 	}
 	if rec != nil {
+		rec.op.Paused = false
 		rec.op.Input = nil
 		now := time.Now().UTC()
 		rec.op.UpdatedAt = now
@@ -482,6 +503,7 @@ func (m *Manager) upsertExternalLocked(id, kind string, sources []string, destin
 	rec.op.UpdatedAt = now
 	rec.op.Cancellable = rec.cancel != nil && activeState(state)
 	if terminalState(state) {
+		rec.op.Paused = false
 		rec.op.FinishedAt = timePointer(now)
 		rec.op.Cancellable = false
 	} else {
@@ -548,6 +570,7 @@ func (m *Manager) FailExternal(id string, observed time.Time, err error) {
 }
 
 func (m *Manager) failExternalLocked(rec *record, err error) {
+	rec.op.Paused = false
 	now := time.Now().UTC()
 	rec.op.State, rec.op.Phase = StateFailed, "failed"
 	slog.Error("external task failed", "id", rec.op.ID, "kind", rec.op.Kind, "err", err)
@@ -567,6 +590,7 @@ func (m *Manager) Cancel(id string) bool {
 		m.mu.Unlock()
 		return false
 	}
+	rec.op.Paused = false
 	if !rec.external && (rec.op.State == StateQueued || rec.op.State == StateAwaitingInput && rec.cancel == nil) {
 		rec.op.Input = nil
 		now := time.Now().UTC()
@@ -833,6 +857,7 @@ func (m *Manager) Close(ctx context.Context) error {
 	now := time.Now().UTC()
 	for _, rec := range m.records {
 		if rec.op.State == StateQueued || rec.op.State == StateAwaitingInput && rec.cancel == nil {
+			rec.op.Paused = false
 			rec.op.Input = nil
 			rec.op.State = StateInterrupted
 

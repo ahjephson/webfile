@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"webfile/internal/taskcontrol"
 )
 
 type TransferProgress struct {
@@ -130,7 +131,7 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 	emit(transferPhaseScanning, "Scan complete")
 
 	for _, source := range measured {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		target := filepath.Join(destAbs, filepath.Base(source.Absolute))
@@ -138,7 +139,7 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 
 		if kind == "move" {
 			s.videoQueue.cancelPath(ctx, source.VirtualPath)
-			if err := ctx.Err(); err != nil {
+			if err := taskcontrol.Wait(ctx); err != nil {
 				return err
 			}
 		}
@@ -187,7 +188,7 @@ func measureTree(ctx context.Context, source string) (int64, int64, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		info, err := entry.Info()
@@ -354,7 +355,7 @@ func copyFileAtomic(ctx context.Context, source, destination string, mode fs.Fil
 	if progress != nil {
 		progress(transferPhasePublishing, 0)
 	}
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
 	// The temporary file already lives in the destination directory. An atomic
@@ -392,7 +393,7 @@ func copyFileData(ctx context.Context, source, destination *os.File, progress fu
 	}
 	buf := make([]byte, 1024*1024)
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		n, readErr := source.Read(buf)

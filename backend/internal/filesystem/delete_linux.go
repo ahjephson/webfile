@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"webfile/internal/taskcontrol"
 	"webfile/internal/thumbnailcache"
 
 	"golang.org/x/sys/unix"
@@ -20,7 +21,7 @@ func (s *Service) CountDeleteEntries(ctx context.Context, virtualPath string) (i
 	if IsConfiguredRootPath(virtualPath) {
 		return 0, errors.New("configured roots cannot be deleted")
 	}
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return 0, err
 	}
 	configured, absolute, err := s.resolver.ResolveEntry(virtualPath)
@@ -48,7 +49,7 @@ func (s *Service) CountDeleteEntries(ctx context.Context, virtualPath string) (i
 }
 
 func countDeleteEntryAt(ctx context.Context, parent *os.File, name string) (int64, error) {
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return 0, err
 	}
 	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
@@ -65,12 +66,12 @@ func countDeleteEntryAt(ctx context.Context, parent *os.File, name string) (int6
 	defer directory.Close()
 	total := int64(1)
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return 0, err
 		}
 		entries, readErr := directory.ReadDir(128)
 		for _, entry := range entries {
-			if err := ctx.Err(); err != nil {
+			if err := taskcontrol.Wait(ctx); err != nil {
 				return 0, err
 			}
 			if entry.IsDir() {
@@ -100,7 +101,7 @@ func (s *Service) DeleteWithProgress(ctx context.Context, virtualPath string, re
 	if IsConfiguredRootPath(virtualPath) {
 		return errors.New("configured roots cannot be deleted")
 	}
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
 	configured, absolute, err := s.resolver.ResolveEntry(virtualPath)
@@ -123,7 +124,7 @@ func (s *Service) DeleteWithProgress(ctx context.Context, virtualPath string, re
 	if report != nil {
 		report(0)
 	}
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
 	// Resolve the parent beneath the open root after cancellation/progress work,
@@ -151,7 +152,7 @@ func (s *Service) DeleteWithProgress(ctx context.Context, virtualPath string, re
 }
 
 func deleteEntryAt(ctx context.Context, parent *os.File, name string, removed func()) error {
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
 	// Unlink regular files and symlinks directly; no file-content or stat read
@@ -173,7 +174,7 @@ func deleteEntryAt(ctx context.Context, parent *os.File, name string, removed fu
 	}
 	if errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
 		// A directory may have become a file or symlink since unlinkat.
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		err = unix.Unlinkat(int(parent.Fd()), name, 0)
@@ -191,7 +192,7 @@ func deleteEntryAt(ctx context.Context, parent *os.File, name string, removed fu
 	directory := os.NewFile(uintptr(fd), name)
 	defer directory.Close()
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		names, readErr := directory.Readdirnames(128)
@@ -207,7 +208,7 @@ func deleteEntryAt(ctx context.Context, parent *os.File, name string, removed fu
 			return readErr
 		}
 	}
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
 	if err := unix.Unlinkat(int(parent.Fd()), name, unix.AT_REMOVEDIR); err != nil {

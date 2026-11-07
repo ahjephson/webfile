@@ -76,6 +76,10 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	var observed operations.Operation
 	if s.ops != nil {
 		observed, _ = s.ops.Get("upload-" + id)
+		if observed.Paused {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "Upload is paused", "code": "operation_paused"})
+			return
+		}
 		if observed.State == operations.StateQueued {
 			var ok bool
 			observed, ok = s.ops.StartExternal(observed.ID, r.URL.Query().Get("attempt_id"), "Uploading "+path.Base(observed.Destination))

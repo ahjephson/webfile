@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"webfile/internal/taskcontrol"
 
 	"golang.org/x/sys/unix"
 )
@@ -99,8 +100,8 @@ func (t *Transfer) initialize(ctx context.Context) error {
 	}
 	seen := map[string]bool{}
 	for _, source := range t.sources {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return err
 		}
 		if IsConfiguredRootPath(source) {
 			return fmt.Errorf("configured roots cannot be copied or moved")
@@ -157,7 +158,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 		}
 	}
 	for len(t.queue) > 0 {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		if copied, err := t.copySmallBatch(ctx, emit); copied || err != nil {
@@ -315,7 +316,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 					}
 				}
 				t.service.videoQueue.cancelPath(ctx, item.source)
-				if err := ctx.Err(); err != nil {
+				if err := taskcontrol.Wait(ctx); err != nil {
 					return err
 				}
 				err = moveReviewedItem(sourceRoot, targetRoot, source, target, sourceInfo)
@@ -372,7 +373,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 		if t.kind == "move" {
 			t.service.videoQueue.cancelPath(ctx, item.source)
 		}
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		if t.kind == "move" && choice != "replace" {
@@ -476,7 +477,7 @@ func (t *Transfer) copyItem(ctx context.Context, sourceRoot, targetRoot Root, so
 	if fingerprint(current) != fingerprint(sourceInfo) {
 		return fmt.Errorf("source changed during transfer; review it again")
 	}
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
 	target = filepath.Join(anchored, filepath.Base(target))

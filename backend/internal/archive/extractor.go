@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"webfile/internal/taskcontrol"
 
 	"webfile/internal/clienterror"
 	"webfile/internal/filesystem"
@@ -172,7 +173,7 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 	}
 	incorrect := false
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return ExtractResult{}, err
 		}
 		stageParent := filepath.Dir(destinationAbs)
@@ -225,7 +226,7 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 			result.ArchiveRetained = "archive kept because files were skipped"
 			return result, nil
 		}
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return result, err
 		}
 		// Delete only the unchanged source, through its configured root. Never
@@ -251,7 +252,7 @@ func validateExtractionPaths(stage string, root filesystem.Root, destination str
 
 func validateExtractionPathsContext(ctx context.Context, stage string, root filesystem.Root, destination string) error {
 	return filepath.WalkDir(stage, func(current string, entry fs.DirEntry, walkErr error) error {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		if walkErr != nil {
@@ -283,7 +284,7 @@ func (e *Extractor) PasswordRequired(ctx context.Context, archivePath string) (b
 	cmd.Stdin = strings.NewReader("")
 	output := &inspectionOutput{}
 	cmd.Stdout, cmd.Stderr = output, output
-	err := cmd.Run()
+	err := taskcontrol.Run(ctx, cmd)
 	output.flush()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return false, ctxErr
@@ -325,7 +326,7 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 	if err != nil {
 		return err
 	}
-	if err := cmd.Start(); err != nil {
+	if err := taskcontrol.Start(ctx, cmd); err != nil {
 		return err
 	}
 	if report != nil {
@@ -335,7 +336,7 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 		if _, err := io.WriteString(stdin, password+"\n"); err != nil {
 			cancel()
 			_ = stdin.Close()
-			_ = cmd.Wait()
+			_ = taskcontrol.WaitCommand(ctx, cmd)
 			return err
 		}
 	}
@@ -354,7 +355,7 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 	go func() {
 		// Wait closes the output pipes, so finish reading them first.
 		readers.Wait()
-		wait <- cmd.Wait()
+		wait <- taskcontrol.WaitCommand(ctx, cmd)
 	}()
 
 	var output strings.Builder
@@ -539,7 +540,7 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 			_ = removeStage(stage)
 		}
 	}()
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return ExtractResult{}, err
 	}
 	if report != nil {
@@ -550,7 +551,7 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 		return ExtractResult{}, err
 	}
 	for _, check := range checks {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return ExtractResult{}, err
 		}
 		if err := check(); err != nil {
@@ -598,7 +599,7 @@ func validateStage(stage string) (int, error) {
 func validateStageContext(ctx context.Context, stage string) (int, error) {
 	files := 0
 	err := filepath.WalkDir(stage, func(path string, entry fs.DirEntry, walkErr error) error {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		if walkErr != nil {
@@ -679,7 +680,7 @@ func preflightContext(ctx context.Context, source, destination string, policy Ex
 }
 
 func preflightNode(ctx context.Context, source, destination, root string, policy ExistingFilePolicy, conflicts *[]string) error {
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
 	destinationInfo, err := os.Lstat(destination)
@@ -726,7 +727,7 @@ type publishedMove struct {
 }
 
 func publishNode(ctx context.Context, source, destination string, policy ExistingFilePolicy, skipped *int, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
 	destinationInfo, err := os.Lstat(destination)
@@ -807,7 +808,7 @@ func publishNode(ctx context.Context, source, destination string, policy Existin
 }
 
 func publishAbsent(ctx context.Context, source, destination string, files int, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
 	err := filesystem.RenameNoReplace(source, destination)
@@ -848,7 +849,7 @@ func publishDirectoryAbsent(ctx context.Context, source, destination string, inf
 		return err
 	}
 	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		childSource := filepath.Join(source, entry.Name())
@@ -875,7 +876,7 @@ func countRegularFiles(root string) (int, error) {
 }
 
 func countRegularFilesContext(ctx context.Context, root string) (int, error) {
-	if err := ctx.Err(); err != nil {
+	if err := taskcontrol.Wait(ctx); err != nil {
 		return 0, err
 	}
 	info, err := os.Lstat(root)
@@ -890,7 +891,7 @@ func countRegularFilesContext(ctx context.Context, root string) (int, error) {
 	}
 	count := 0
 	err = filepath.WalkDir(root, func(_ string, entry fs.DirEntry, walkErr error) error {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		if walkErr != nil {

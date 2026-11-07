@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"webfile/internal/taskcontrol"
 
 	"webfile/internal/filesystem"
 )
@@ -76,7 +77,7 @@ func (e *Extractor) CreateFolderArchive(ctx context.Context, virtualPath, output
 	if err != nil {
 		return CreateResult{}, err
 	}
-	if err := cmd.Start(); err != nil {
+	if err := taskcontrol.Start(ctx, cmd); err != nil {
 		return CreateResult{}, err
 	}
 	if report != nil {
@@ -102,7 +103,7 @@ func (e *Extractor) CreateFolderArchive(ctx context.Context, virtualPath, output
 		}
 	}
 	lastPercent = reportArchiveProgress(records.Flush(), lastPercent, result, report)
-	if err := cmd.Wait(); err != nil {
+	if err := taskcontrol.WaitCommand(ctx, cmd); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return CreateResult{}, ctxErr
 		}
@@ -156,7 +157,7 @@ func preflightArchiveSource(ctx context.Context, root filesystem.Root, source st
 		if walkErr != nil {
 			return walkErr
 		}
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		if current != source && archiveEntryExcluded(root, current, entry.Name(), excludedNames) {

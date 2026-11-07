@@ -394,6 +394,21 @@ func (s *Server) cancelOperation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 }
 
+func (s *Server) pauseOperation(w http.ResponseWriter, r *http.Request) {
+	s.setOperationPaused(w, r, true)
+}
+func (s *Server) resumeOperation(w http.ResponseWriter, r *http.Request) {
+	s.setOperationPaused(w, r, false)
+}
+func (s *Server) setOperationPaused(w http.ResponseWriter, r *http.Request, paused bool) {
+	op, err := s.ops.SetPaused(r.PathValue("id"), paused)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, op)
+}
+
 func (s *Server) reorderOperation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Direction string `json:"direction"`

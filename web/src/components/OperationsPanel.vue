@@ -11,6 +11,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  pause: [operation: FileOperation]
   'update:visible': [value: boolean]
   cancel: [operation: FileOperation]
   reorder: [id: string, direction: 'up' | 'down']
@@ -98,6 +99,7 @@ function percent(operation: FileOperation): number | null {
 }
 
 function transferNotice(operation: FileOperation): string {
+  if (operation.paused) return ''
   if (operation.state !== 'running' || !['copy', 'move'].includes(operation.kind)) return ''
   if (!['copying', 'flushing', 'publishing', 'removing_source'].includes(operation.phase ?? '')) return ''
   if (operation.bytes_total > 0 && operation.bytes_done >= operation.bytes_total) return 'Finishing…'
@@ -116,11 +118,13 @@ function label(operation: FileOperation) {
 }
 
 function stateLabel(operation: FileOperation) {
+  if (operation.paused) return 'paused'
   if (operation.kind === 'archive' && (operation.phase === 'downloaded' || operation.phase === 'unavailable')) return operation.phase
   return operation.state.replaceAll('_', ' ')
 }
 
 function phaseLabel(operation: FileOperation) {
+  if (operation.paused) return 'Paused'
   const value = operation.phase?.replaceAll('_', ' ') ?? stateLabel(operation)
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`
 }
@@ -228,7 +232,7 @@ function formatDate(value?: string) {
           </button>
         </h3>
         <div v-if="activeExpanded" id="active-tasks-content" class="space-y-3">
-          <article v-for="operation in activeTasks" :key="operation.id" class="rounded-lg border p-3" :class="operation.state === 'running' ? 'webfile-task-processing' : 'border-zinc-800 bg-zinc-900/60'" :data-task-state="operation.state">
+          <article v-for="operation in activeTasks" :key="operation.id" class="rounded-lg border p-3" :class="operation.state === 'running' && !operation.paused ? 'webfile-task-processing' : 'border-zinc-800 bg-zinc-900/60'" :data-task-state="operation.paused ? 'paused' : operation.state">
             <div class="flex items-start gap-3">
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-medium">{{ label(operation) }}</div>
@@ -241,6 +245,7 @@ function formatDate(value?: string) {
               <div v-if="operation.state === 'queued'" class="flex items-center justify-between gap-3 text-xs text-zinc-500">
                 <span>{{ operation.kind === 'upload' ? 'Waiting to upload' : `Queue position ${operation.queue_position}` }}</span>
                 <div class="flex items-center gap-1">
+                  <Button v-if="operation.cancellable" :label="operation.paused ? 'Resume' : 'Pause'" :icon="operation.paused ? 'pi pi-play' : 'pi pi-pause'" :aria-label="`${operation.paused ? 'Resume' : 'Pause'} ${label(operation)}`" size="small" severity="secondary" text @click="emit('pause', operation)" />
                   <Button v-if="operation.kind !== 'upload'" v-tooltip.top="'Move up'" icon="pi pi-arrow-up" size="small" severity="secondary" text :disabled="(operation.queue_position ?? 0) <= 1" :aria-label="`Move ${label(operation)} up`" @click="emit('reorder', operation.id, 'up')" />
                   <Button v-if="operation.kind !== 'upload'" v-tooltip.top="'Move down'" icon="pi pi-arrow-down" size="small" severity="secondary" text :disabled="(operation.queue_position ?? 0) >= maxQueuePosition" :aria-label="`Move ${label(operation)} down`" @click="emit('reorder', operation.id, 'down')" />
                   <Button label="Cancel" size="small" severity="secondary" text @click="emit('cancel', operation)" />
@@ -249,17 +254,18 @@ function formatDate(value?: string) {
               <div v-else-if="percent(operation) !== null && (operation.state === 'running' || operation.kind === 'delete')" class="h-2 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${label(operation)} progress`" :aria-valuenow="percent(operation) ?? undefined" :aria-valuetext="formatProgress(operation)" aria-valuemin="0" aria-valuemax="100">
                 <div class="h-full bg-sky-600 transition-[width]" :style="{ width: `${percent(operation)}%` }" />
               </div>
-              <div v-else-if="operation.kind === 'delete' && percent(operation) === null" class="h-2 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${label(operation)} progress`" :aria-valuetext="formatProgress(operation)">
+              <div v-else-if="!operation.paused && operation.kind === 'delete' && percent(operation) === null" class="h-2 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-label="`${label(operation)} progress`" :aria-valuetext="formatProgress(operation)">
                 <div class="webfile-indeterminate h-full w-1/3 rounded bg-sky-600" />
               </div>
               <div v-else class="flex items-center gap-2 text-xs text-zinc-500" role="status" :aria-label="`${label(operation)} ${phaseLabel(operation)}`">
-                <i class="pi pi-spinner text-xs motion-safe:animate-spin" aria-hidden="true" />
+                <i class="pi text-xs" :class="operation.paused ? 'pi-pause' : 'pi-spinner motion-safe:animate-spin'" aria-hidden="true" />
                 <span>{{ formatProgress(operation) }}</span>
               </div>
               <div v-if="operation.state !== 'queued'" class="mt-2 flex items-center justify-between gap-3 text-xs text-zinc-500">
                 <Button v-if="operation.kind === 'extract' && operation.state === 'awaiting_input' && operation.phase === 'awaiting_password'" label="Enter password" icon="pi pi-key" size="small" severity="secondary" outlined @click="emit('password', operation)" />
                 <span v-else-if="operation.progress_total > 0 || (operation.kind === 'delete' && operation.progress_unit === 'items')">{{ formatProgress(operation) }}</span>
                 <span v-else />
+                <Button v-if="operation.cancellable && ['preparing', 'running', 'awaiting_input'].includes(operation.state)" :label="operation.paused ? 'Resume' : 'Pause'" :icon="operation.paused ? 'pi pi-play' : 'pi pi-pause'" :aria-label="`${operation.paused ? 'Resume' : 'Pause'} ${label(operation)}`" size="small" severity="secondary" text @click="emit('pause', operation)" />
                 <Button v-if="operation.cancellable" label="Cancel" size="small" severity="secondary" text @click="emit('cancel', operation)" />
               </div>
               <p v-if="transferNotice(operation)" class="mt-1 text-xs text-zinc-400" role="status">{{ transferNotice(operation) }}</p>

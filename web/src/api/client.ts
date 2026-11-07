@@ -360,17 +360,37 @@ export const api = {
       onProgress?.(operation)
       const chunkSize = 8 * 1024 * 1024
       // Even empty files and fully staged resumes need one publication request.
-      do {
+      for (;;) {
+        if (currentOperation.paused) {
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          const status = await request<{ operations: FileOperation[] }>('/api/fs/operations')
+          const latest = status.operations.find(item => item.id === currentOperation.id)
+          if (!latest || !['queued', 'running'].includes(latest.state) || latest.attempt_id !== currentOperation.attempt_id) throw new Error('Upload is no longer active')
+          currentOperation = latest
+          onProgress?.(latest)
+          continue
+        }
         const end = Math.min(upload.offset + chunkSize, upload.size)
         const query = new URLSearchParams({ id: upload.id, offset: String(upload.offset), attempt_id: currentOperation.attempt_id ?? attempt })
-        const result: UploadChunkResponse = await request<UploadChunkResponse>(`/api/fs/uploads/chunk?${query}`, {
-          method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: file.slice(upload.offset, end),
-        })
+        let result: UploadChunkResponse
+        try {
+          result = await request<UploadChunkResponse>(`/api/fs/uploads/chunk?${query}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: file.slice(upload.offset, end),
+          })
+        } catch (error) {
+          if (error instanceof ApiError && error.code === 'operation_paused') {
+            currentOperation = { ...currentOperation, paused: true }
+            onProgress?.(currentOperation)
+            continue
+          }
+          throw error
+        }
         upload = result.upload
         operation = result.operation
         currentOperation = result.operation
         onProgress?.(currentOperation)
-      } while (upload.offset < upload.size)
+        if (upload.offset >= upload.size) break
+      }
       return currentOperation
     } catch (error) {
       const failure = { id: operation?.id ?? '', attempt_id: operation?.attempt_id ?? attempt }
@@ -420,6 +440,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id }),
     })
+  },
+
+  setOperationPaused(id: string, paused: boolean) {
+    return request<FileOperation>(`/api/fs/operations/${encodeURIComponent(id)}/${paused ? 'pause' : 'resume'}`, { method: 'POST' })
   },
 
   reorderOperation(id: string, direction: 'up' | 'down') {

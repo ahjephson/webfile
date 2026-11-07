@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     items_total INTEGER NOT NULL,
     queue_position INTEGER NOT NULL DEFAULT 0,
     cancellable INTEGER NOT NULL,
+    paused INTEGER NOT NULL DEFAULT 0,
     cleanup_policy TEXT NOT NULL,
     cleanup_error TEXT NOT NULL,
     started_at TEXT NOT NULL,
@@ -129,12 +130,15 @@ func ensureTaskColumns(db *sql.DB) error {
 		"progress_total": "INTEGER NOT NULL DEFAULT 0",
 		"progress_unit":  "TEXT NOT NULL DEFAULT ''",
 		"queue_position": "INTEGER NOT NULL DEFAULT 0",
+		"paused":         "INTEGER NOT NULL DEFAULT 0",
 	} {
 		if !columns[name] {
 			if _, err := db.Exec("ALTER TABLE tasks ADD COLUMN " + name + " " + definition); err != nil {
 				return err
 			}
-			added = true
+			if name == "progress_done" || name == "progress_total" || name == "progress_unit" {
+				added = true
+			}
 		}
 	}
 	if added {
@@ -168,8 +172,8 @@ func (s *Store) Upsert(operation Operation, recordEvent bool) error {
 INSERT INTO tasks (
     id, kind, sources_json, destination, state, phase, message, error,
     progress_done, progress_total, progress_unit, bytes_done, bytes_total, items_done, items_total, queue_position, cancellable,
-    cleanup_policy, cleanup_error, started_at, updated_at, finished_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    cleanup_policy, cleanup_error, started_at, updated_at, finished_at, paused
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     kind = excluded.kind,
     sources_json = excluded.sources_json,
@@ -187,6 +191,7 @@ ON CONFLICT(id) DO UPDATE SET
     items_total = excluded.items_total,
     queue_position = excluded.queue_position,
     cancellable = excluded.cancellable,
+    paused = excluded.paused,
     cleanup_policy = excluded.cleanup_policy,
     cleanup_error = excluded.cleanup_error,
     updated_at = excluded.updated_at,
@@ -195,7 +200,7 @@ ON CONFLICT(id) DO UPDATE SET
 		operation.Message, operation.Error, operation.ProgressDone, operation.ProgressTotal, operation.ProgressUnit,
 		operation.BytesDone, operation.BytesTotal, operation.ItemsDone, operation.ItemsTotal, operation.QueuePosition,
 		operation.Cancellable, operation.CleanupPolicy, operation.CleanupError,
-		formatTime(operation.StartedAt), formatTime(operation.UpdatedAt), finished)
+		formatTime(operation.StartedAt), formatTime(operation.UpdatedAt), finished, operation.Paused)
 	if err != nil {
 		return err
 	}
@@ -238,7 +243,7 @@ func (s *Store) list(tail string, limit int) ([]Operation, error) {
 	rows, err := s.db.Query(`
 SELECT id, kind, sources_json, destination, state, phase, message, error,
        progress_done, progress_total, progress_unit, bytes_done, bytes_total, items_done, items_total, queue_position, cancellable,
-       cleanup_policy, cleanup_error, started_at, tasks.updated_at, finished_at, COALESCE(checkpoint.value_json,'')
+       cleanup_policy, cleanup_error, started_at, tasks.updated_at, finished_at, COALESCE(checkpoint.value_json,''), paused
 FROM tasks LEFT JOIN task_checkpoints checkpoint ON tasks.id=checkpoint.task_id AND checkpoint.name='input'
 `+tail, limit)
 	if err != nil {
@@ -259,7 +264,7 @@ FROM tasks LEFT JOIN task_checkpoints checkpoint ON tasks.id=checkpoint.task_id 
 			&operation.Message, &operation.Error, &operation.ProgressDone, &operation.ProgressTotal,
 			&operation.ProgressUnit, &operation.BytesDone, &operation.BytesTotal,
 			&operation.ItemsDone, &operation.ItemsTotal, &operation.QueuePosition, &operation.Cancellable, &operation.CleanupPolicy,
-			&operation.CleanupError, &startedAt, &updatedAt, &finishedAt, &input,
+			&operation.CleanupError, &startedAt, &updatedAt, &finishedAt, &input, &operation.Paused,
 		); err != nil {
 			return nil, err
 		}

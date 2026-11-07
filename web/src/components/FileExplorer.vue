@@ -1547,6 +1547,11 @@ function reorderOperation(id: string, direction: 'up' | 'down') {
 	void reorderFileOperation(id, direction).catch(err => showError(err, 'Could not reorder operation'))
 }
 
+async function toggleOperationPause(operation: FileOperation) {
+  try { updateOperation(await api.setOperationPaused(operation.id, !operation.paused)) }
+  catch (err) { showError(err, operation.paused ? 'Could not resume task' : 'Could not pause task') }
+}
+
 function chooseUpload() {
   uploadInput.value?.click()
 }
@@ -2164,6 +2169,6 @@ function operationLabel(value: string) {
       :hide-inaccessible="userPreferences.hide_inaccessible"
       @submit="submitTransfer"
     />
-    <OperationsPanel v-if="isPrimary" v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @cancel="requestOperationCancellation" @password="reopenPasswordPrompt" @resolve="openConflict" @reorder="reorderOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" @download="downloadOperation" />
+    <OperationsPanel v-if="isPrimary" v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @pause="toggleOperationPause" @cancel="requestOperationCancellation" @password="reopenPasswordPrompt" @resolve="openConflict" @reorder="reorderOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" @download="downloadOperation" />
   </section>
 </template>

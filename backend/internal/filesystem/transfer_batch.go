@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"webfile/internal/taskcontrol"
 )
 
 const smallCopyLimit = 64 << 10
@@ -62,7 +63,7 @@ func (t *Transfer) copySmallBatch(ctx context.Context, emit func(string, string)
 			}
 			t.service.videoQueue.cancelPath(ctx, item.source)
 		}
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return false, err
 		}
 		batch = append(batch, smallCopy{item: item, sourceRoot: sourceRoot, targetRoot: targetRoot, source: source, target: target, info: info})

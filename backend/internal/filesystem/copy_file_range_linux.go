@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"webfile/internal/taskcontrol"
 
 	"golang.org/x/sys/unix"
 )
@@ -20,7 +21,7 @@ func copyFileRangePlatform(ctx context.Context, source, destination *os.File, pr
 		return false, err
 	}
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := taskcontrol.Wait(ctx); err != nil {
 			return false, err
 		}
 		n, copyErr := unix.CopyFileRange(int(source.Fd()), nil, int(destination.Fd()), nil, copyChunkSize(ctx), 0)
