@@ -9,7 +9,7 @@ Dependency licenses and notices are reproduced below.
 dependencies, not bundled executables in the WebFile release archive.
 
 ========================================================================
-Go standard library go1.27.3
+Go standard library go1.27.4
 ========================================================================
 
 --- LICENSE ---
