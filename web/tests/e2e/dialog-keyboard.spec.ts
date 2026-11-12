@@ -27,6 +27,22 @@ test('opening a form prioritises editable invalid fields', async ({ page }) => {
   await expect(page.getByRole('dialog')).toBeHidden()
 })
 
+test('New folder restores its opener when clicking does not focus the toolbar button', async ({ page }) => {
+  const fixture = await featureFixture(page, 'dialog-opener')
+  await page.goto(`/#path=${encodeURIComponent(fixture.path)}`)
+  const opener = page.getByRole('button', { name: 'New folder', exact: true })
+  await page.getByRole('button', { name: 'Settings', exact: true }).focus()
+  // Model browsers that activate toolbar buttons without moving keyboard focus.
+  await opener.dispatchEvent('click')
+  const dialog = page.getByRole('dialog', { name: 'New folder', exact: true })
+  const input = dialog.locator('input')
+  await expect(input).toBeFocused()
+  await input.fill('created-folder')
+  await input.press('Enter')
+  await expect(dialog).toBeHidden()
+  await expect(opener).toBeFocused()
+})
+
 test('forms focus fields, validate Enter, ignore repeats/composition, and recover after failure', async ({ page }) => {
   const fixture = await featureFixture(page, 'dialogs')
   await page.goto(`/#path=${encodeURIComponent(fixture.path)}`)

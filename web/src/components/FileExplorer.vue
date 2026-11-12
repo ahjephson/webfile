@@ -1182,7 +1182,9 @@ function applyCachedFolderSize(value: { path: string; size: number; calculatedAt
   entries.value = entries.value.map(entry => entry.path === value.path ? { ...entry, size: value.size, size_status: 'ready', size_calculated_at: value.calculatedAt } : entry)
 }
 
-function openNewFolder() {
+function openNewFolder(event: MouseEvent) {
+  // Safari can activate a button without focusing it. Let the dialog retain its opener.
+  if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus({ preventScroll: true })
   nameDialogMode.value = 'folder'
   nameDialogVisible.value = true
 }
