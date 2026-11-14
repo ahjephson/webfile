@@ -56,6 +56,7 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		transfer := s.files.NewTransfer(req.Kind, req.Sources, req.Destination)
+		journalPrepared := false
 		op := s.ops.StartTask(req.Kind, req.Sources, req.Destination, operations.TaskOptions{
 			Cancellable:   true,
 			CleanupPolicy: "The incomplete item is removed. Items completed before cancellation are retained.",
@@ -67,6 +68,17 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 				return transfer.Decide(decision)
 			},
 		}, func(ctx context.Context, reporter operations.Reporter) error {
+			if !journalPrepared {
+				journalPrepared = true
+				name, err := reporter.UndoJournalPath()
+				if err != nil || name == "" {
+					transfer.DiscardUndo()
+				} else {
+					if journal, err := transfer.BeginUndoJournal(name); err == nil {
+						reporter.KeepUndoJournal(journal.Abort)
+					}
+				}
+			}
 			ctx = filesystem.WithCopyChunkSize(ctx, req.CopyChunkMiB*1024*1024)
 			err := transfer.Run(ctx, func(p filesystem.TransferProgress) {
 				reporter.UpdatePhase(p.Phase, p.BytesDone, p.BytesTotal, p.ItemsDone, p.ItemsTotal, p.Message)
@@ -85,6 +97,7 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 				}
 				return reporter.SetUndo(plan, reason)
 			}
+			transfer.DiscardUndo()
 			return err
 		})
 		writeJSON(w, http.StatusAccepted, op)

@@ -1370,7 +1370,7 @@ function requestOperationUndo(operation: FileOperation) {
     header: `Undo ${operation.kind}?`,
     message: operation.kind === 'copy'
       ? 'Remove the copied items? Undo checks for later changes and keeps the originals. This action can only be attempted once.'
-      : 'Move the transferred items back to their original locations? Undo checks for later changes and existing files. This action can only be attempted once.',
+      : 'Move the transferred items back to their original locations, including changes made inside moved folders? Existing files will be kept. This action can only be attempted once.',
     icon: 'pi pi-undo',
     rejectLabel: 'Cancel',
     acceptLabel: 'Undo',

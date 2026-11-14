@@ -50,7 +50,7 @@ func (t *Transfer) copySmallBatch(ctx context.Context, emit func(string, string)
 			break
 		}
 		if t.undoExpected != nil {
-			if expected, ok := t.undoExpected[item.source]; !ok || stampUndo(info) != expected {
+			if expected, ok := t.undoExpected[item.source]; ok && !sameUndoIdentity(stampUndo(info), expected) {
 				return false, ErrUndoChanged
 			}
 		}
@@ -109,8 +109,7 @@ func (t *Transfer) copySmallBatch(ctx context.Context, emit func(string, string)
 	var failure error
 	for index, err := range results {
 		if err == nil {
-			t.recordUndoNode(batch[index].item.target, published[index], nil)
-			t.recordUndoRoot(batch[index].item)
+			t.recordUndoPublication(batch[index].item, published[index], nil)
 			t.items++
 			continue
 		}

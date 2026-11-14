@@ -34,6 +34,7 @@ type ConflictDecision struct {
 	ApplyRemaining bool   `json:"apply_remaining"`
 }
 type transferItem struct {
+	createdInfo    os.FileInfo
 	top            bool
 	source, target string
 	bytes, items   int64
@@ -43,7 +44,7 @@ type transferItem struct {
 	info           os.FileInfo
 }
 type Transfer struct {
-	undoNodes                            map[string]undoStamp
+	undoJournal                          *UndoJournal
 	undoRoots                            []UndoEntry
 	undoReason                           string
 	undoExpected                         map[string]undoStamp
@@ -64,7 +65,7 @@ type Transfer struct {
 }
 
 func (s *Service) NewTransfer(kind string, sources []string, destination string) *Transfer {
-	return &Transfer{service: s, kind: kind, sources: append([]string(nil), sources...), destination: CleanVirtual(destination), defaults: map[string]string{}, undoNodes: map[string]undoStamp{}, undoParents: map[string]undoStamp{}}
+	return &Transfer{service: s, kind: kind, sources: append([]string(nil), sources...), destination: CleanVirtual(destination), defaults: map[string]string{}, undoParents: map[string]undoStamp{}}
 }
 func (t *Transfer) Decide(decision ConflictDecision) error {
 	if t.pending == nil || decision.Revision != t.pending.Revision {
@@ -188,7 +189,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 				}
 				_ = os.Chmod(target, item.info.Mode().Perm())
 				_ = os.Chtimes(target, item.info.ModTime(), item.info.ModTime())
-				t.finishUndoDirectory(item.target, item.info.Mode().Perm())
+				t.finishUndoDirectory(item)
 			}
 			if t.kind == "move" {
 				_, source, e := t.service.resolver.ResolveEntry(item.source)
@@ -216,7 +217,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 			return err
 		}
 		if t.undoExpected != nil {
-			if expected, ok := t.undoExpected[item.source]; !ok || stampUndo(sourceInfo) != expected {
+			if expected, ok := t.undoExpected[item.source]; ok && !sameUndoIdentity(stampUndo(sourceInfo), expected) {
 				return ErrUndoChanged
 			}
 		}
@@ -340,15 +341,9 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 				if err := taskcontrol.Wait(ctx); err != nil {
 					return err
 				}
-				movedNodes := t.captureUndoTree(ctx, item.source, item.target)
-				if t.undoExpected != nil {
-					if err := t.service.checkUndoTree(ctx, item.source, t.undoExpected); err != nil {
-						return err
-					}
-				}
 				err = moveReviewedItem(sourceRoot, targetRoot, source, target, sourceInfo)
 				if err == nil {
-					t.recordUndoMove(item, targetRoot, target, sourceInfo, movedNodes)
+					t.recordUndoMove(item, targetRoot, target, sourceInfo)
 					t.bytes += bytes
 					t.items += items
 					t.queue = t.queue[1:]
@@ -376,8 +371,8 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 				err := root.Mkdir(relative, sourceInfo.Mode().Perm()|0700)
 				if err == nil {
 					info, statErr := root.Lstat(relative)
-					t.recordUndoNode(item.target, info, statErr)
-					t.recordUndoRoot(item)
+					item.createdInfo = info
+					t.recordUndoPublication(item, info, statErr)
 				}
 				root.Close()
 				if err != nil {
@@ -395,7 +390,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 			for _, child := range children {
 				jobs = append(jobs, transferItem{source: child.Path, target: path.Join(item.target, child.Name)})
 			}
-			jobs = append(jobs, transferItem{source: item.source, target: item.target, finish: true, restore: choice != "merge", info: sourceInfo})
+			jobs = append(jobs, transferItem{top: item.top, source: item.source, target: item.target, finish: true, restore: choice != "merge", info: sourceInfo, createdInfo: item.createdInfo})
 			t.queue = append(jobs, t.queue[1:]...)
 			t.items++
 			continue
@@ -411,7 +406,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 		}
 		if t.kind == "move" && choice != "replace" {
 			if err := moveReviewedItem(sourceRoot, targetRoot, source, target, sourceInfo); err == nil {
-				t.recordUndoMove(item, targetRoot, target, sourceInfo, nil)
+				t.recordUndoMove(item, targetRoot, target, sourceInfo)
 				t.bytes += sourceInfo.Size()
 				t.items++
 				t.queue = t.queue[1:]
@@ -429,8 +424,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 		if err != nil {
 			return err
 		}
-		t.recordUndoNode(item.target, t.published, nil)
-		t.recordUndoRoot(item)
+		t.recordUndoPublication(item, t.published, nil)
 		t.items++
 		t.queue = t.queue[1:]
 	}

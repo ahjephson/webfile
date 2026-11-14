@@ -147,6 +147,9 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	createOnly := r.Header.Get("If-None-Match") == "*"
+	if !s.invalidateUndo(w) {
+		return
+	}
 	content, err := s.files.WriteText(r.Context(), queryPath(r), data, r.Header.Get("If-Match"), createOnly)
 	if err != nil {
 		writeError(w, err)
@@ -164,6 +167,9 @@ func (s *Server) mkdir(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if !s.invalidateUndo(w) {
+		return
+	}
 	if err := s.files.Mkdir(r.Context(), req.Path); err != nil {
 		writeError(w, err)
 		return
@@ -178,6 +184,9 @@ func (s *Server) rename(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if !s.invalidateUndo(w) {
 		return
 	}
 	if err := s.files.Rename(r.Context(), req.From, req.To); err != nil {
@@ -205,6 +214,10 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		if part.FormName() != "file" || part.FileName() == "" {
 			_ = part.Close()
 			continue
+		}
+		if !s.invalidateUndo(w) {
+			_ = part.Close()
+			return
 		}
 		entry, err := s.files.Upload(r.Context(), r.URL.Query().Get("dir"), part.FileName(), part)
 		_ = part.Close()

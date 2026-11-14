@@ -98,6 +98,7 @@ export type OperationState = 'queued' | 'preparing' | 'awaiting_input' | 'runnin
 
 export interface FileOperation {
   undo_available?: boolean
+  undo_expires_at?: string
   undo_reason?: string
   paused?: boolean
   attempt_id?: string

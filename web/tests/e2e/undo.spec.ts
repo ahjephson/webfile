@@ -31,7 +31,7 @@ for (const kind of ['copy', 'move'] as const) {
   })
 }
 
-test('undo preserves edited copies and exposes a useful failure', async ({ page }) => {
+test('saving a file clears the previous undo set across tabs', async ({ page }) => {
   const fixture = await featureFixture(page, 'undo-edited')
   const destination = `${fixture.path}/destination`
   const name = `edited-${fixture.path.split('/').pop()}.txt`
@@ -39,14 +39,55 @@ test('undo preserves edited copies and exposes a useful failure', async ({ page 
   await fixture.write(`${fixture.path}/${name}`, 'original')
   const started = await fixture.start('copy', [`${fixture.path}/${name}`], destination)
   await expect.poll(async () => (await (await page.request.get('/api/fs/operations')).json()).operations.find((op: { id: string }) => op.id === started.id)?.undo_available).toBe(true)
-  await fixture.write(`${destination}/${name}`, 'edited after copy')
   await page.goto(`/#path=${encodeURIComponent(destination)}`)
   await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
-  await page.getByRole('button', { name: `Undo Copy ${name}`, exact: true }).click()
-  await page.getByRole('alertdialog', { name: 'Undo copy?', exact: true }).getByRole('button', { name: 'Undo', exact: true }).click()
-  const undo = page.getByRole('complementary').getByRole('article').filter({ hasText: `Undo copy ${name}` })
-  await expect(undo.locator('[data-task-status]')).toHaveText('failed')
-  await expect(undo).toContainText('Undo stopped because files or folders changed.')
+  const other = await page.context().newPage()
+  await other.goto(`/#path=${encodeURIComponent(destination)}`)
+  await other.getByRole('button', { name: 'Open tasks', exact: true }).click()
+  await expect(other.getByRole('button', { name: `Undo Copy ${name}`, exact: true })).toBeVisible()
+  await fixture.write(`${destination}/${name}`, 'edited after copy')
+  await expect(page.getByRole('button', { name: `Undo Copy ${name}`, exact: true })).toHaveCount(0)
+  await expect(other.getByRole('button', { name: `Undo Copy ${name}`, exact: true })).toHaveCount(0)
+  expect((await page.request.post(`/api/fs/operations/${started.id}/undo`)).status()).toBe(409)
   expect(await fixture.read(`${destination}/${name}`)).toBe('edited after copy')
   expect(await fixture.read(`${fixture.path}/${name}`)).toBe('original')
+  await other.close()
+})
+
+test('only the newest transfer is undoable and delete clears it', async ({ page }) => {
+  const f = await featureFixture(page, 'undo-latest')
+  await f.mkdir(`${f.path}/to`)
+  await f.write(`${f.path}/first.txt`, 'first')
+  await f.write(`${f.path}/second.txt`, 'second')
+  await f.write(`${f.path}/delete-me.txt`, 'disposable')
+  const first = await f.start('copy', [`${f.path}/first.txt`], `${f.path}/to`)
+  const current = async (id: string) => (await (await page.request.get('/api/fs/operations')).json()).operations.find((op: { id: string }) => op.id === id)
+  await expect.poll(async () => (await current(first.id))?.undo_available).toBe(true)
+  // Directory reads, previews and downloads preserve the set.
+  expect(await f.read(`${f.path}/first.txt`)).toBe('first')
+  expect((await page.request.get(`/api/fs/download?path=${encodeURIComponent(`${f.path}/first.txt`)}`)).ok()).toBe(true)
+  expect((await current(first.id)).undo_available).toBe(true)
+  const second = await f.start('move', [`${f.path}/second.txt`], `${f.path}/to`)
+  await expect.poll(async () => (await current(second.id))?.undo_available).toBe(true)
+  expect((await current(first.id)).undo_available ?? false).toBe(false)
+  expect((await page.request.post(`/api/fs/operations/${first.id}/undo`)).status()).toBe(409)
+  await f.start('delete', [`${f.path}/delete-me.txt`], '')
+  await expect.poll(async () => (await current(second.id))?.undo_available ?? false).toBe(false)
+  expect((await page.request.post(`/api/fs/operations/${second.id}/undo`)).status()).toBe(409)
+  expect(await f.read(`${f.path}/to/second.txt`)).toBe('second')
+})
+
+test('the undo button expires locally even if a history response is stale', async ({ page }) => {
+  const expires = new Date(Date.now() + 8000).toISOString()
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries: [] } }))
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [{
+    id: 'expiring-copy', kind: 'copy', sources: ['/file.txt'], destination: '/to', state: 'completed',
+    undo_available: true, undo_expires_at: expires, started_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    cancellable: false, progress_done: 1, progress_total: 1, bytes_done: 0, bytes_total: 0, items_done: 1, items_total: 1,
+  }] } }))
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open tasks', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Undo Copy file.txt', exact: true })).toBeVisible()
+  await expect(page.getByRole('complementary')).toContainText('Undo available until')
+  await expect(page.getByRole('button', { name: 'Undo Copy file.txt', exact: true })).toHaveCount(0, { timeout: 12000 })
 })

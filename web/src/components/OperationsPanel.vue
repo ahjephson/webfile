@@ -57,6 +57,13 @@ const thumbnailSummary = computed(() => {
 const thumbnailsExpanded = ref(true)
 const activeExpanded = ref(true)
 const historyExpanded = ref(true)
+const undoClock = ref(Date.now())
+const undoClockTimer = window.setInterval(() => { undoClock.value = Date.now() }, 1000)
+onBeforeUnmount(() => window.clearInterval(undoClockTimer))
+
+function canUndo(operation: FileOperation) {
+  return operation.undo_available && operation.state === 'completed' && !!operation.undo_expires_at && Date.parse(operation.undo_expires_at) > undoClock.value
+}
 const taskPanelContent = ref<HTMLElement | null>(null)
 let indeterminateFrame: number | null = null
 
@@ -327,6 +334,7 @@ function formatDate(value?: string) {
                 <p v-if="operation.error" class="webfile-text-error text-xs">{{ operation.error }}</p>
                 <p v-if="operation.cleanup_error" class="webfile-text-error text-xs">Cleanup: {{ operation.cleanup_error }}</p>
                 <p v-if="operation.undo_reason" class="mt-1 text-xs text-zinc-500">{{ operation.undo_reason }}</p>
+                <p v-if="canUndo(operation)" class="mt-1 text-xs text-zinc-500">Undo available until {{ formatDate(operation.undo_expires_at) }}</p>
                 <details v-if="operation.message || operation.destination" class="text-xs text-zinc-500">
                   <summary class="cursor-pointer select-none">Details</summary>
                   <dl class="mt-2 space-y-1">
@@ -337,7 +345,7 @@ function formatDate(value?: string) {
               </div>
               <div class="flex shrink-0 flex-col items-end gap-2">
                 <div class="flex items-start justify-end gap-1" data-task-actions>
-                  <Button v-if="operation.undo_available && operation.state === 'completed'" label="Undo" icon="pi pi-undo" size="small" severity="secondary" text :aria-label="`Undo ${label(operation)}`" @click="emit('undo', operation)" />
+                  <Button v-if="canUndo(operation)" label="Undo" icon="pi pi-undo" size="small" severity="secondary" text :aria-label="`Undo ${label(operation)}`" @click="emit('undo', operation)" />
                   <Button v-if="operation.kind === 'archive' && operation.state === 'completed' && operation.phase === 'completed'" v-tooltip.left="'Download archive'" icon="pi pi-download" size="small" severity="success" text :aria-label="`Download ${label(operation)}`" @click="emit('download', operation)" />
                   <Button v-tooltip.left="'Remove from history'" icon="pi pi-times" size="small" severity="secondary" text :aria-label="`Remove ${label(operation)} from history`" @click="emit('remove-history', operation)" />
                 </div>

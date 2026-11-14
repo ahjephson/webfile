@@ -72,7 +72,14 @@ CREATE TABLE IF NOT EXISTS task_checkpoints (
     value_json TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY(task_id, name)
-);`
+);
+
+CREATE TABLE IF NOT EXISTS undo_slot (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    task_id TEXT NOT NULL
+);
+INSERT OR IGNORE INTO undo_slot(singleton, task_id) VALUES(1, '');
+DELETE FROM task_checkpoints WHERE name = 'undo' AND task_id != (SELECT task_id FROM undo_slot WHERE singleton = 1);`
 
 type Store struct {
 	db *sql.DB
@@ -218,11 +225,32 @@ ON CONFLICT(id) DO UPDATE SET
 	if err != nil {
 		return err
 	}
-	undo, err := json.Marshal(undoCheckpoint{Data: operation.UndoData, Reason: operation.UndoReason})
+	undo, err := json.Marshal(undoCheckpoint{Data: operation.UndoData, Reason: operation.UndoReason, ExpiresAt: operation.UndoExpiresAt})
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO task_checkpoints(task_id,name,value_json,updated_at) VALUES(?,'undo',?,?) ON CONFLICT(task_id,name) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`, operation.ID, string(undo), formatTime(operation.UpdatedAt)); err != nil {
+	if _, err := tx.Exec(`INSERT INTO task_checkpoints(task_id,name,value_json,updated_at) SELECT ?,'undo',?,? WHERE EXISTS(SELECT 1 FROM undo_slot WHERE singleton=1 AND task_id=?) ON CONFLICT(task_id,name) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`, operation.ID, string(undo), formatTime(operation.UpdatedAt), operation.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) currentUndo() (string, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT task_id FROM undo_slot WHERE singleton=1`).Scan(&id)
+	return id, err
+}
+
+func (s *Store) advanceUndo(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE undo_slot SET task_id=? WHERE singleton=1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM task_checkpoints WHERE name='undo'`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -235,6 +263,7 @@ func (s *Store) List(limit int) ([]Operation, error) {
 func (s *Store) listForRecovery(limit int) ([]Operation, error) {
 	return s.list(`
 WHERE tasks.state NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+   OR tasks.id = (SELECT task_id FROM undo_slot WHERE singleton=1)
    OR tasks.id IN (
        SELECT id FROM tasks
        WHERE state IN ('completed', 'failed', 'cancelled', 'interrupted')
@@ -282,7 +311,7 @@ LEFT JOIN task_checkpoints undo_checkpoint ON tasks.id=undo_checkpoint.task_id A
 		if err := json.Unmarshal([]byte(undoJSON), &undo); err != nil {
 			return nil, err
 		}
-		operation.UndoData, operation.UndoReason = undo.Data, undo.Reason
+		operation.UndoData, operation.UndoReason, operation.UndoExpiresAt = undo.Data, undo.Reason, undo.ExpiresAt
 		operation.UndoAvailable = operation.State == StateCompleted && len(undo.Data) > 0
 		if input != "" {
 			operation.Input = json.RawMessage(input)
@@ -318,7 +347,7 @@ func (s *Store) Trim(maxKeep int) error {
 DELETE FROM tasks
 WHERE id IN (
     SELECT id FROM tasks
-    WHERE state IN ('completed', 'failed', 'cancelled', 'interrupted')
+    WHERE state IN ('completed', 'failed', 'cancelled', 'interrupted') AND id != (SELECT task_id FROM undo_slot WHERE singleton=1)
     ORDER BY updated_at DESC
     LIMIT -1 OFFSET ?
 )`, maxKeep)

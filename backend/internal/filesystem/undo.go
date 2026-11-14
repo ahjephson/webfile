@@ -4,26 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"golang.org/x/sys/unix"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
-	"reflect"
-	"sort"
 	"strings"
 	"syscall"
-
 	"webfile/internal/clienterror"
 	"webfile/internal/taskcontrol"
 	"webfile/internal/thumbnailcache"
-
-	"golang.org/x/sys/unix"
 )
-
-// Undo records only entries published by this transfer, never a later scan's
-// contents. The bounded journal is task metadata, not a filesystem catalogue.
-const maxUndoNodes = 10000
 
 var ErrUndoChanged = clienterror.New("undo paths changed", clienterror.UndoChanged)
 
@@ -35,324 +26,358 @@ type undoStamp struct {
 	Device   uint64      `json:"device"`
 	Inode    uint64      `json:"inode"`
 }
-
 type UndoEntry struct {
 	Source       string    `json:"source"`
 	Target       string    `json:"target"`
 	SourceParent undoStamp `json:"source_parent"`
 }
-
 type UndoPlan struct {
-	Kind  string               `json:"kind"`
-	Roots []UndoEntry          `json:"roots"`
-	Nodes map[string]undoStamp `json:"nodes"`
+	Kind    string      `json:"kind"`
+	Roots   []UndoEntry `json:"roots"`
+	Journal string      `json:"journal"`
+	Entries int64       `json:"entries"`
 }
 
 func stampUndo(info os.FileInfo) undoStamp {
 	stat := info.Sys().(*syscall.Stat_t)
 	stamp := undoStamp{Mode: info.Mode(), Device: uint64(stat.Dev), Inode: stat.Ino}
-	// Child publication/removal changes directory timestamps. Identity and the
-	// exact recorded child set protect directories without rejecting that work.
 	if !info.IsDir() {
-		stamp.Size = info.Size()
-		stamp.Modified = info.ModTime().UnixNano()
-		stamp.Changed = stat.Ctim.Nano()
+		stamp.Size, stamp.Modified, stamp.Changed = info.Size(), info.ModTime().UnixNano(), stat.Ctim.Nano()
 	}
 	return stamp
 }
-
-func (t *Transfer) disableUndo(reason string) {
-	t.undoReason = reason
-	t.undoNodes = nil
-	t.undoRoots = nil
+func (t *Transfer) BeginUndoJournal(name string) (*UndoJournal, error) {
+	journal, err := newUndoJournal(name)
+	if err != nil {
+		t.disableUndo("Undo is unavailable because its journal could not be created.")
+		return nil, err
+	}
+	t.undoJournal = journal
+	return journal, nil
 }
+func (t *Transfer) disableUndo(reason string) {
+	if t.undoJournal != nil {
+		t.undoJournal.Abort()
+		t.undoJournal = nil
+	}
+	t.undoReason, t.undoRoots = reason, nil
+}
+func (t *Transfer) DiscardUndo() { t.disableUndo("Undo is unavailable for an incomplete transfer.") }
 
-func (t *Transfer) recordUndoNode(target string, info os.FileInfo, err error) {
-	if t.undoNodes == nil {
+func (t *Transfer) recordUndoPublication(item transferItem, info os.FileInfo, err error) {
+	if t.undoJournal == nil || t.kind == "move" && !item.top {
 		return
 	}
 	if err != nil || info == nil {
 		t.disableUndo("Undo is unavailable because the transferred items could not be verified.")
 		return
 	}
-	if _, exists := t.undoNodes[CleanVirtual(target)]; !exists && len(t.undoNodes) >= maxUndoNodes {
-		t.disableUndo("Undo is unavailable for transfers with more than 10,000 entries.")
-		return
-	}
-	t.undoNodes[CleanVirtual(target)] = stampUndo(info)
-}
-
-func (t *Transfer) recordUndoRoot(item transferItem) {
-	if item.top && t.undoNodes != nil {
+	stamp := stampUndo(info)
+	if item.top {
 		t.undoRoots = append(t.undoRoots, UndoEntry{Source: item.source, Target: item.target, SourceParent: t.undoParents[item.source]})
 	}
-}
-
-func (t *Transfer) finishUndoDirectory(target string, mode os.FileMode) {
-	if stamp, ok := t.undoNodes[target]; ok {
-		stamp.Mode = os.ModeDir | mode
-		t.undoNodes[target] = stamp
+	if info.IsDir() {
+		return
+	} // Directory receipts are appended after their children.
+	if err := t.undoJournal.append(undoNode{item.target, stamp}); err != nil {
+		t.disableUndo("Undo is unavailable because its journal was discarded or could not be written.")
 	}
 }
-
-func (t *Transfer) captureUndoTree(ctx context.Context, source, target string) map[string]undoStamp {
-	if t.undoNodes == nil {
-		return nil
-	}
-	nodes, err := t.service.scanUndoTree(ctx, source, maxUndoNodes-len(t.undoNodes))
-	if err != nil {
-		t.disableUndo("Undo is unavailable because the transferred tree could not be recorded within the 10,000-entry limit.")
-		return nil
-	}
-	result := make(map[string]undoStamp, len(nodes))
-	for name, stamp := range nodes {
-		result[target+strings.TrimPrefix(name, source)] = stamp
-	}
-	return result
-}
-
-func (t *Transfer) recordUndoMove(item transferItem, root Root, absolute string, expected os.FileInfo, nodes map[string]undoStamp) {
-	if t.undoNodes == nil {
+func (t *Transfer) finishUndoDirectory(item transferItem) {
+	if t.undoJournal == nil || item.createdInfo == nil || t.kind == "move" && !item.top {
 		return
 	}
-	opened, err := os.OpenRoot(root.Path)
-	if err != nil {
-		t.recordUndoNode(item.target, nil, err)
+	stamp := stampUndo(item.createdInfo)
+	stamp.Mode = os.ModeDir | item.info.Mode().Perm()
+	if err := t.undoJournal.append(undoNode{item.target, stamp}); err != nil {
+		t.disableUndo("Undo is unavailable because its journal was discarded or could not be written.")
+	}
+}
+func (t *Transfer) recordUndoMove(item transferItem, configured Root, absolute string, expected os.FileInfo) {
+	if t.undoJournal == nil || !item.top {
 		return
-	}
-	defer opened.Close()
-	relative, err := filepath.Rel(root.Path, absolute)
-	if err != nil {
-		t.recordUndoNode(item.target, nil, err)
-		return
-	}
-	info, err := opened.Lstat(relative)
-	if err == nil && (!os.SameFile(info, expected) || info.Size() != expected.Size() || !info.ModTime().Equal(expected.ModTime())) {
-		err = ErrUndoChanged
-	}
-	for name, stamp := range nodes {
-		t.undoNodes[name] = stamp
-	}
-	t.recordUndoNode(item.target, info, err)
-	t.recordUndoRoot(item)
-}
-
-func (t *Transfer) UndoPlan() (*UndoPlan, string) {
-	if t.kind == "move" && t.skipped > 0 {
-		return nil, "Undo is unavailable for moves with skipped items."
-	}
-	if t.undoReason != "" {
-		return nil, t.undoReason
-	}
-	if len(t.undoRoots) == 0 {
-		return nil, "No transferred items to undo."
-	}
-	for i, root := range t.undoRoots {
-		for _, other := range t.undoRoots[:i] {
-			if virtualContains(root.Target, other.Target) || virtualContains(other.Target, root.Target) ||
-				virtualContains(root.Source, other.Source) || virtualContains(other.Source, root.Source) {
-				return nil, "Undo is unavailable for overlapping source items."
-			}
-		}
-	}
-	return &UndoPlan{Kind: t.kind, Roots: t.undoRoots, Nodes: t.undoNodes}, ""
-}
-
-func virtualContains(parent, child string) bool {
-	return parent == child || strings.HasPrefix(child, parent+"/")
-}
-
-func (s *Service) scanUndoTree(ctx context.Context, source string, limit int) (map[string]undoStamp, error) {
-	configured, absolute, err := s.resolver.ResolveEntry(source)
-	if err != nil {
-		return nil, err
 	}
 	root, err := os.OpenRoot(configured.Path)
 	if err != nil {
-		return nil, err
+		t.recordUndoPublication(item, nil, err)
+		return
 	}
 	defer root.Close()
 	relative, err := filepath.Rel(configured.Path, absolute)
 	if err != nil {
-		return nil, err
+		t.recordUndoPublication(item, nil, err)
+		return
 	}
-	nodes := map[string]undoStamp{}
-	var walk func(string, string) error
-	walk = func(rel, virtual string) error {
-		if err := taskcontrol.Wait(ctx); err != nil {
-			return err
+	info, err := root.Lstat(relative)
+	if err == nil && (!os.SameFile(info, expected) || info.Size() != expected.Size() || !info.ModTime().Equal(expected.ModTime())) {
+		err = ErrUndoChanged
+	}
+	t.recordUndoPublication(item, info, err)
+	if err == nil && info.IsDir() && t.undoJournal != nil {
+		if err := t.undoJournal.append(undoNode{item.target, stampUndo(info)}); err != nil {
+			t.disableUndo("Undo is unavailable because its journal could not be written.")
 		}
-		if len(nodes) >= limit {
-			return fmt.Errorf("undo entry limit exceeded")
-		}
-		if err := configured.ValidatePath(filepath.Join(configured.Path, rel)); err != nil {
-			return err
-		}
-		info, err := root.Lstat(rel)
-		if err != nil {
-			return err
-		}
-		nodes[virtual] = stampUndo(info)
-		if !info.IsDir() {
-			return nil
-		}
-		file, err := root.Open(rel)
-		if err != nil {
-			return err
-		}
-		opened, err := file.Stat()
-		if err != nil || !os.SameFile(info, opened) {
-			file.Close()
-			return ErrUndoChanged
-		}
-		defer file.Close()
-		for {
-			children, readErr := file.ReadDir(128)
-			for _, child := range children {
-				if err := walk(filepath.Join(rel, child.Name()), path.Join(virtual, child.Name())); err != nil {
-					return err
-				}
-			}
-			if errors.Is(readErr, io.EOF) {
-				return nil
-			}
-			if readErr != nil {
-				return readErr
+	}
+}
+func (t *Transfer) UndoPlan() (*UndoPlan, string) {
+	if t.kind == "move" && t.skipped > 0 {
+		t.disableUndo("Undo is unavailable for moves with skipped items.")
+	}
+	if t.undoReason != "" {
+		return nil, t.undoReason
+	}
+	if t.undoJournal == nil || len(t.undoRoots) == 0 {
+		t.disableUndo("No transferred items to undo.")
+		return nil, t.undoReason
+	}
+	for i, root := range t.undoRoots {
+		for _, other := range t.undoRoots[:i] {
+			if virtualContains(root.Target, other.Target) || virtualContains(other.Target, root.Target) || virtualContains(root.Source, other.Source) || virtualContains(other.Source, root.Source) {
+				t.disableUndo("Undo is unavailable for overlapping source items.")
+				return nil, t.undoReason
 			}
 		}
 	}
-	err = walk(relative, CleanVirtual(source))
-	return nodes, err
+	count, err := t.undoJournal.seal()
+	if err != nil {
+		t.disableUndo("Undo is unavailable because its journal could not be sealed.")
+		return nil, t.undoReason
+	}
+	return &UndoPlan{Kind: t.kind, Roots: t.undoRoots, Journal: t.undoJournal.name, Entries: count}, ""
+}
+func virtualContains(parent, child string) bool {
+	return parent == child || strings.HasPrefix(child, parent+"/")
+}
+func sameUndoIdentity(actual, expected undoStamp) bool {
+	return actual.Device == expected.Device && actual.Inode == expected.Inode && actual.Mode.Type() == expected.Mode.Type()
 }
 
-func (s *Service) checkUndoTree(ctx context.Context, target string, nodes map[string]undoStamp) error {
-	actual, err := s.scanUndoTree(ctx, target, maxUndoNodes)
+func (s *Service) checkUndoNode(node undoNode, identityOnly bool) error {
+	if IsConfiguredRootPath(node.Path) {
+		return ErrInvalidPath
+	}
+	configured, absolute, err := s.resolver.ResolveEntry(node.Path)
 	if err != nil {
 		return errors.Join(ErrUndoChanged, err)
 	}
-	expected := map[string]undoStamp{}
-	for name, stamp := range nodes {
-		if virtualContains(target, name) {
-			expected[name] = stamp
-		}
+	root, err := os.OpenRoot(configured.Path)
+	if err != nil {
+		return err
 	}
-	if !reflect.DeepEqual(expected, actual) {
+	defer root.Close()
+	relative, err := filepath.Rel(configured.Path, absolute)
+	if err != nil {
+		return err
+	}
+	info, err := root.Lstat(relative)
+	if err != nil {
+		return errors.Join(ErrUndoChanged, err)
+	}
+	stamp := stampUndo(info)
+	if identityOnly {
+		if !sameUndoIdentity(stamp, node.Stamp) {
+			return ErrUndoChanged
+		}
+	} else if stamp != node.Stamp {
 		return ErrUndoChanged
 	}
 	return nil
 }
-
-// UndoTransfer validates the entire recorded output before changing anything.
-// A claim is consumed durably by the task manager before this method is called;
-// interrupted or partially completed undo is never replayed automatically.
+func (s *Service) checkUndoSource(entry UndoEntry) error {
+	if IsConfiguredRootPath(entry.Source) {
+		return ErrInvalidPath
+	}
+	parent, err := s.resolver.OpenExisting(path.Dir(entry.Source))
+	if err != nil {
+		return errors.Join(ErrUndoChanged, err)
+	}
+	info, err := parent.Stat()
+	parent.Close()
+	if err != nil || !sameUndoIdentity(stampUndo(info), entry.SourceParent) {
+		return ErrUndoChanged
+	}
+	_, absolute, err := s.resolver.ResolveForCreate(entry.Source)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(absolute); !errors.Is(err, fs.ErrNotExist) {
+		return ErrUndoChanged
+	}
+	return nil
+}
 func (s *Service) UndoTransfer(ctx context.Context, plan UndoPlan, report func(TransferProgress)) error {
-	if (plan.Kind != "copy" && plan.Kind != "move") || len(plan.Roots) == 0 || len(plan.Nodes) == 0 || len(plan.Nodes) > maxUndoNodes {
+	reader, err := OpenUndoJournal(plan)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	return s.UndoTransferJournal(ctx, plan, reader, report)
+}
+
+// Two streaming passes validate the complete sealed receipt set before any
+// mutation, then replay children-before-parent receipts with fresh checks.
+func (s *Service) UndoTransferJournal(ctx context.Context, plan UndoPlan, reader *UndoReader, report func(TransferProgress)) error {
+	if (plan.Kind != "copy" && plan.Kind != "move") || len(plan.Roots) == 0 || len(plan.Roots) > 1000 || plan.Entries <= 0 {
 		return ErrInvalidPath
 	}
 	var paths []string
-	for _, entry := range plan.Roots {
-		if IsConfiguredRootPath(entry.Source) || IsConfiguredRootPath(entry.Target) {
+	for _, root := range plan.Roots {
+		if CleanVirtual(root.Target) != root.Target || IsConfiguredRootPath(root.Target) {
 			return ErrInvalidPath
 		}
-		paths = append(paths, entry.Source, entry.Target)
-		if err := s.checkUndoTree(ctx, entry.Target, plan.Nodes); err != nil {
-			return err
-		}
+		paths = append(paths, root.Source, root.Target)
 		if plan.Kind == "move" {
-			parent, err := s.resolver.OpenExisting(path.Dir(entry.Source))
-			if err != nil {
-				return errors.Join(ErrUndoChanged, err)
-			}
-			info, err := parent.Stat()
-			parent.Close()
-			if err != nil || stampUndo(info) != entry.SourceParent {
-				return ErrUndoChanged
-			}
-			_, absolute, err := s.resolver.ResolveForCreate(entry.Source)
-			if err != nil {
+			if err := s.checkUndoSource(root); err != nil {
 				return err
-			}
-			if _, err := os.Lstat(absolute); !errors.Is(err, fs.ErrNotExist) {
-				return ErrUndoChanged
 			}
 		}
 	}
+	var seen int64
+	if err := reader.each(ctx, func(node undoNode) error {
+		allowed := false
+		for _, root := range plan.Roots {
+			if plan.Kind == "copy" && virtualContains(root.Target, node.Path) || plan.Kind == "move" && root.Target == node.Path {
+				allowed = true
+				break
+			}
+		}
+		if !allowed || CleanVirtual(node.Path) != node.Path {
+			return ErrInvalidPath
+		}
+		seen++
+		return s.checkUndoNode(node, plan.Kind == "move")
+	}); err != nil {
+		return err
+	}
+	if seen != plan.Entries {
+		return ErrUndoChanged
+	}
+	if plan.Kind == "copy" {
+		var actual int64
+		for _, root := range plan.Roots {
+			count, err := s.CountDeleteEntries(ctx, root.Target)
+			if err != nil {
+				return err
+			}
+			actual += count
+		}
+		if actual != plan.Entries {
+			return ErrUndoChanged
+		}
+	} else if plan.Entries != int64(len(plan.Roots)) {
+		return ErrUndoChanged
+	}
 	defer s.InvalidateFolderSizes(paths...)
-	var removed int64
-	for index := len(plan.Roots) - 1; index >= 0; index-- {
-		entry := plan.Roots[index]
+	if plan.Kind == "copy" {
+		targets := make([]string, 0, len(plan.Roots))
+		for _, root := range plan.Roots {
+			s.videoQueue.cancelPath(ctx, root.Target)
+			targets = append(targets, root.Target)
+		}
+		tickets := s.captureThumbnailChanges(ctx, targets)
+		defer func() {
+			changes := make([]thumbnailcache.LocationChange, 0, len(tickets))
+			for _, ticket := range tickets {
+				changes = append(changes, thumbnailcache.LocationChange{Ticket: ticket, Purge: true})
+			}
+			s.applyThumbnailChanges(changes)
+		}()
+	}
+	var done int64
+	err := reader.each(ctx, func(node undoNode) error {
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
 		if plan.Kind == "move" {
-			// The ordinary transfer retains anchored, no-overwrite publication,
-			// cross-filesystem fallback, exclusions and source-change checks.
-			transfer := s.NewTransfer("move", []string{entry.Target}, path.Dir(entry.Source))
-			transfer.disableUndo("")
-			transfer.undoExpected = plan.Nodes
-			if err := transfer.initialize(ctx); err != nil {
+			var entry *UndoEntry
+			for i := range plan.Roots {
+				if plan.Roots[i].Target == node.Path {
+					entry = &plan.Roots[i]
+					break
+				}
+			}
+			if entry == nil {
+				return ErrInvalidPath
+			}
+			if err := s.checkUndoSource(*entry); err != nil {
 				return err
 			}
-			transfer.queue[0].target = entry.Source
+			if err := s.checkUndoNode(node, true); err != nil {
+				return err
+			}
+			transfer := s.NewTransfer("move", []string{entry.Target}, path.Dir(entry.Source))
+			transfer.disableUndo("")
+			transfer.undoExpected = map[string]undoStamp{entry.Target: node.Stamp}
+			sourceRoot, source, err := s.resolver.ResolveEntry(entry.Target)
+			if err != nil {
+				return err
+			}
+			targetRoot, target, err := s.resolver.ResolveForCreate(entry.Source)
+			if err != nil {
+				return err
+			}
+			if isSameOrDescendant(source, target) {
+				return ErrUndoChanged
+			}
+			info, err := os.Lstat(source)
+			if err != nil {
+				return err
+			}
+			parent, err := os.Stat(filepath.Dir(target))
+			if err != nil {
+				return err
+			}
+			// A same-filesystem folder rename needs one receipt and no subtree
+			// scan. Cross-filesystem fallback still uses the ordinary transfer.
+			if canRenameTransferTree(sourceRoot, targetRoot) && info.Sys().(*syscall.Stat_t).Dev == parent.Sys().(*syscall.Stat_t).Dev {
+				transfer.initialized = true
+				transfer.totalItems = 1
+				transfer.queue = []transferItem{{top: true, source: entry.Target, target: entry.Source, measured: true, items: 1}}
+			} else {
+				if err := transfer.initialize(ctx); err != nil {
+					return err
+				}
+				transfer.queue[0].target = entry.Source
+			}
 			if err := transfer.Run(ctx, report); err != nil {
 				return err
 			}
 		} else {
-			s.videoQueue.cancelPath(ctx, entry.Target)
-			tickets := s.captureThumbnailChanges(ctx, []string{entry.Target})
-			var names []string
-			for name := range plan.Nodes {
-				if virtualContains(entry.Target, name) {
-					names = append(names, name)
-				}
+			configured, absolute, err := s.resolver.ResolveEntry(node.Path)
+			if err != nil {
+				return err
 			}
-			sort.Slice(names, func(i, j int) bool { return len(names[i]) > len(names[j]) })
-			for _, name := range names {
-				if err := taskcontrol.Wait(ctx); err != nil {
-					return err
-				}
-				configured, absolute, err := s.resolver.ResolveEntry(name)
-				if err != nil {
-					return err
-				}
-				root, err := os.OpenRoot(configured.Path)
-				if err != nil {
-					return err
-				}
-				relative, err := filepath.Rel(configured.Path, absolute)
-				if err != nil {
-					root.Close()
-					return err
-				}
-				parent, err := root.OpenRoot(filepath.Dir(relative))
+			root, err := os.OpenRoot(configured.Path)
+			if err != nil {
+				return err
+			}
+			relative, err := filepath.Rel(configured.Path, absolute)
+			if err != nil {
 				root.Close()
-				if err != nil {
-					return err
-				}
-				err = removeUndoEntry(parent, filepath.Base(relative), plan.Nodes[name])
-				parent.Close()
-				if err != nil {
-					return errors.Join(err, ErrUndoChanged)
-				}
-				removed++
-				if report != nil {
-					report(TransferProgress{Phase: "undoing", ItemsDone: removed, ItemsTotal: int64(len(plan.Nodes)), Message: "Removing copied items"})
-				}
+				return err
 			}
-			if len(tickets) == 1 {
-				s.applyThumbnailChanges([]thumbnailcache.LocationChange{{Ticket: tickets[0], Purge: true}})
+			parent, err := root.OpenRoot(filepath.Dir(relative))
+			root.Close()
+			if err != nil {
+				return err
+			}
+			err = removeUndoEntry(parent, filepath.Base(relative), node.Stamp)
+			parent.Close()
+			if err != nil {
+				return errors.Join(err, ErrUndoChanged)
 			}
 		}
-		if report != nil && plan.Kind == "move" {
-			report(TransferProgress{Phase: "undoing", ItemsDone: int64(len(plan.Roots) - index), ItemsTotal: int64(len(plan.Roots)), Message: "Undoing " + plan.Kind})
+		done++
+		if report != nil {
+			report(TransferProgress{Phase: "undoing", ItemsDone: done, ItemsTotal: plan.Entries, Message: "Undoing " + plan.Kind})
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	if report != nil {
-		total := int64(len(plan.Nodes))
-		if plan.Kind == "move" {
-			total = int64(len(plan.Roots))
-		}
-		report(TransferProgress{Phase: transferPhaseCompleted, ItemsDone: total, ItemsTotal: total, Message: strings.ToUpper(plan.Kind[:1]) + plan.Kind[1:] + " undone"})
+		report(TransferProgress{Phase: transferPhaseCompleted, ItemsDone: done, ItemsTotal: plan.Entries, Message: strings.ToUpper(plan.Kind[:1]) + plan.Kind[1:] + " undone"})
 	}
 	return nil
 }

@@ -6,8 +6,9 @@ const activeStates = ['queued', 'preparing', 'awaiting_input', 'running', 'cance
 const terminalStates = ['completed', 'failed', 'cancelled', 'interrupted']
 
 function retainOperations(operations: FileOperation[]): FileOperation[] {
+  const undo = operations.find(operation => operation.undo_available)
   let history = 0
-  return operations.filter(operation => activeStates.includes(operation.state) || history++ < 50)
+  return operations.filter(operation => activeStates.includes(operation.state) || operation.id === undo?.id || history++ < (undo ? 49 : 50))
 }
 
 function updatedAfter(left: FileOperation, right: FileOperation): boolean {
@@ -46,7 +47,7 @@ function createFileOperations(onTerminal: TerminalHandler) {
 
   // WebSocket delivery is best effort. Reconcile while work is active so a
   // dropped terminal event cannot leave any kind of task pending indefinitely.
-  watch(() => activeOperations.value.length > 0 || operations.value.some(operation => operation.client_failure) || pendingFailureReports.value, active => {
+  watch(() => activeOperations.value.length > 0 || operations.value.some(operation => operation.client_failure || operation.undo_available) || pendingFailureReports.value, active => {
     if (reconciliationTimer !== undefined) clearInterval(reconciliationTimer)
     reconciliationTimer = active ? setInterval(async () => {
       if (reconciling) return

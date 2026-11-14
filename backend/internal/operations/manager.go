@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -39,6 +41,7 @@ const (
 )
 
 type Operation struct {
+	UndoExpiresAt  *time.Time      `json:"undo_expires_at,omitempty"`
 	UndoData       json.RawMessage `json:"-"`
 	UndoAvailable  bool            `json:"undo_available,omitempty"`
 	UndoReason     string          `json:"undo_reason,omitempty"`
@@ -151,6 +154,8 @@ type RunFunc func(context.Context, Reporter) error
 type CleanupFunc func(context.Context, Operation) error
 
 type TaskOptions struct {
+	// OnFinish releases resources on every terminal path and must not call Manager.
+	OnFinish      func()
 	InputHandler  func(json.RawMessage) error
 	Cancellable   bool
 	CleanupPolicy string
@@ -158,6 +163,8 @@ type TaskOptions struct {
 }
 
 type record struct {
+	undoCleanup        func()
+	onFinish           func()
 	externalProgressAt time.Time
 	control            *taskcontrol.Control
 	inputHandler       func(json.RawMessage) error
@@ -175,6 +182,10 @@ type record struct {
 }
 
 type Manager struct {
+	undoDir        string
+	undoTemporary  bool
+	undoTimer      *time.Timer
+	undoOwner      string
 	historyCleanup func(Operation) error
 	mu             sync.Mutex
 	records        map[string]*record
@@ -199,6 +210,20 @@ func Open(databasePath string, maxKeep, maxConcurrent int) (*Manager, error) {
 		return nil, err
 	}
 	manager := newManager(store, maxKeep, maxConcurrent)
+	manager.undoDir = filepath.Join(filepath.Dir(databasePath), "undo-journals")
+	if err := os.MkdirAll(manager.undoDir, 0700); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	if err := os.Chmod(manager.undoDir, 0700); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	manager.undoOwner, err = store.currentUndo()
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	stored, err := store.listForRecovery(manager.maxKeep)
 	if err != nil {
 		_ = store.Close()
@@ -228,6 +253,10 @@ func Open(databasePath string, maxKeep, maxConcurrent int) (*Manager, error) {
 			}
 		}
 		manager.records[operation.ID] = &record{op: operation, lastPersistence: now}
+	}
+	if err := manager.recoverUndo(); err != nil {
+		_ = store.Close()
+		return nil, err
 	}
 	manager.trimLocked()
 	return manager, nil
@@ -276,6 +305,9 @@ func (m *Manager) StartTask(kind string, sources []string, destination string, o
 
 	m.mu.Lock()
 	if m.closed {
+		if options.OnFinish != nil {
+			options.OnFinish()
+		}
 		op.State = StateFailed
 		op.Error = string(clienterror.Unavailable)
 		op.Cancellable = false
@@ -283,7 +315,23 @@ func (m *Manager) StartTask(kind string, sources []string, destination string, o
 		m.mu.Unlock()
 		return op
 	}
-	rec := &record{op: op, run: run, cleanup: options.Cleanup, inputHandler: options.InputHandler, control: taskcontrol.New()}
+	owner := ""
+	if kind == "copy" || kind == "move" {
+		owner = id
+	}
+	if changesUserFiles(kind) {
+		if err := m.advanceUndoLocked(owner); err != nil {
+			slog.Error("advance undo slot", "err", err)
+			op.State, op.Phase, op.Error, op.Cancellable = StateFailed, "failed", string(clienterror.Unavailable), false
+			op.FinishedAt = timePointer(now)
+			m.mu.Unlock()
+			if options.OnFinish != nil {
+				options.OnFinish()
+			}
+			return op
+		}
+	}
+	rec := &record{op: op, run: run, cleanup: options.Cleanup, inputHandler: options.InputHandler, control: taskcontrol.New(), onFinish: options.OnFinish}
 	m.records[id] = rec
 	m.queue = append(m.queue, id)
 	m.refreshQueuePositionsLocked()
@@ -423,10 +471,19 @@ func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 				rec.op.Message = "Completed"
 			}
 		}
-		rec.op.UndoAvailable = rec.op.State == StateCompleted && len(rec.op.UndoData) > 0
-		if rec.op.State != StateCompleted {
+		rec.run, rec.cleanup, rec.inputHandler = nil, nil, nil
+		if rec.onFinish != nil {
+			rec.onFinish()
+			rec.onFinish = nil
+		}
+		rec.op.UndoAvailable = rec.op.State == StateCompleted && rec.op.ID == m.undoOwner && len(rec.op.UndoData) > 0
+		if rec.op.UndoAvailable {
+			rec.op.UndoExpiresAt = timePointer(now.Add(UndoLifetime))
+			m.armUndoTimerLocked()
+		} else {
+			m.discardJournalLocked(rec)
 			rec.op.UndoData = nil
-			rec.op.UndoReason = ""
+			rec.op.UndoExpiresAt = nil
 		}
 		m.persistLocked(rec, true)
 		m.broadcastLocked(rec.op)
@@ -486,6 +543,12 @@ func (m *Manager) StartExternal(id, attempt, message string) (Operation, bool) {
 func (m *Manager) upsertExternalLocked(id, kind string, sources []string, destination string, state State, bytesDone, bytesTotal, itemsDone, itemsTotal int64, message, errText, attempt string) Operation {
 	now := time.Now().UTC()
 	rec := m.records[id]
+	if changesUserFiles(kind) && (rec == nil || rec.op.AttemptID != attempt) {
+		if err := m.advanceUndoLocked(""); err != nil {
+			slog.Error("invalidate undo for external task", "err", err)
+			return Operation{ID: id, Kind: kind, State: StateFailed, Error: string(clienterror.Unavailable), StartedAt: now, UpdatedAt: now, FinishedAt: timePointer(now)}
+		}
+	}
 	previousState := State("")
 	if rec == nil {
 		rec = &record{op: Operation{ID: id, Kind: kind, Sources: append([]string(nil), sources...), Destination: destination, StartedAt: now}, external: true}
@@ -610,6 +673,12 @@ func (m *Manager) Cancel(id string) bool {
 	}
 	rec.op.Paused = false
 	if !rec.external && (rec.op.State == StateQueued || rec.op.State == StateAwaitingInput && rec.cancel == nil) {
+		m.discardJournalLocked(rec)
+		if rec.onFinish != nil {
+			rec.onFinish()
+			rec.onFinish = nil
+		}
+		rec.run, rec.cleanup, rec.inputHandler = nil, nil, nil
 		rec.op.Input = nil
 		now := time.Now().UTC()
 		rec.op.State = StateCancelled
@@ -682,6 +751,7 @@ func (m *Manager) SetExternalCancel(id string, cancel context.CancelFunc) (Opera
 func (m *Manager) List() []Operation {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	_ = m.expireUndoLocked(time.Now().UTC())
 	out := make([]Operation, 0, len(m.records))
 	for _, rec := range m.records {
 		out = append(out, cloneOperation(rec.op))
@@ -693,6 +763,7 @@ func (m *Manager) List() []Operation {
 func (m *Manager) Get(id string) (Operation, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	_ = m.expireUndoLocked(time.Now().UTC())
 	rec := m.records[id]
 	if rec == nil {
 		return Operation{}, false
@@ -799,6 +870,11 @@ func (m *Manager) removeFromQueueLocked(id string) {
 func (m *Manager) ClearHistory() (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if owner := m.records[m.undoOwner]; owner != nil && terminalState(owner.op.State) {
+		if err := m.advanceUndoLocked(""); err != nil {
+			return 0, err
+		}
+	}
 	if m.historyCleanup != nil {
 		for _, rec := range m.records {
 			if terminalState(rec.op.State) {
@@ -832,6 +908,12 @@ func (m *Manager) RemoveHistory(id string) (bool, error) {
 	if rec == nil || !terminalState(rec.op.State) {
 		return false, nil
 	}
+	if id == m.undoOwner {
+		if err := m.advanceUndoLocked(""); err != nil {
+			return false, err
+		}
+	}
+	m.discardJournalLocked(rec)
 	if m.historyCleanup != nil {
 		if err := m.historyCleanup(cloneOperation(rec.op)); err != nil {
 			return false, err
@@ -872,9 +954,19 @@ func (m *Manager) Close(ctx context.Context) error {
 		return nil
 	}
 	m.closed = true
+	if m.undoTimer != nil {
+		m.undoTimer.Stop()
+		m.undoTimer = nil
+	}
 	now := time.Now().UTC()
 	for _, rec := range m.records {
 		if rec.op.State == StateQueued || rec.op.State == StateAwaitingInput && rec.cancel == nil {
+			m.discardJournalLocked(rec)
+			if rec.onFinish != nil {
+				rec.onFinish()
+				rec.onFinish = nil
+			}
+			rec.run, rec.cleanup, rec.inputHandler = nil, nil, nil
 			rec.op.Paused = false
 			rec.op.Input = nil
 			rec.op.State = StateInterrupted
@@ -904,6 +996,9 @@ func (m *Manager) Close(ctx context.Context) error {
 	}
 	if m.store != nil {
 		return m.store.Close()
+	}
+	if m.undoTemporary {
+		_ = os.RemoveAll(m.undoDir)
 	}
 	return nil
 }
@@ -1077,6 +1172,10 @@ func (m *Manager) trimLocked() {
 		if remaining <= m.maxKeep {
 			break
 		}
+		if rec.op.ID == m.undoOwner {
+			continue
+		}
+		m.discardJournalLocked(rec)
 		if m.historyCleanup != nil {
 			if err := m.historyCleanup(cloneOperation(rec.op)); err != nil {
 				slog.Error("clean evicted task artifacts", slog.String("id", rec.op.ID), slog.String("err", err.Error()))
@@ -1120,6 +1219,9 @@ func terminalState(state State) bool {
 
 func cloneOperation(op Operation) Operation {
 	out := op
+	if op.UndoExpiresAt != nil {
+		out.UndoExpiresAt = timePointer(*op.UndoExpiresAt)
+	}
 	out.UndoData = append(json.RawMessage(nil), op.UndoData...)
 	out.Input = append(json.RawMessage(nil), op.Input...)
 	out.Sources = append([]string(nil), op.Sources...)

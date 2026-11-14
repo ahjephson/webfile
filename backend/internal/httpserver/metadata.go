@@ -33,6 +33,9 @@ func (s *Server) chmod(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if !s.invalidateUndo(w) {
+		return
+	}
 	if err := s.files.Chmod(r.Context(), req.Path, req.Mode); err != nil {
 		writeError(w, err)
 		return
@@ -48,6 +51,9 @@ func (s *Server) chown(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if !s.invalidateUndo(w) {
 		return
 	}
 	if err := s.files.Chown(r.Context(), req.Path, req.Owner, req.Group); err != nil {
