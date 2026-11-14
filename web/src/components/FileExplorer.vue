@@ -277,6 +277,7 @@ const {
   start: startFileOperation,
   startExtractions,
   reorder: reorderFileOperation,
+  undo: undoFileOperation,
   clearHistory: clearFinishedOperations,
   removeHistory: removeFinishedOperation,
 } = useFileOperations(onOperationTerminal)
@@ -1364,10 +1365,31 @@ function requestOperationCancellation(operation: FileOperation) {
   })
 }
 
+function requestOperationUndo(operation: FileOperation) {
+  confirm.require({
+    header: `Undo ${operation.kind}?`,
+    message: operation.kind === 'copy'
+      ? 'Remove the copied items? Undo checks for later changes and keeps the originals. This action can only be attempted once.'
+      : 'Move the transferred items back to their original locations? Undo checks for later changes and existing files. This action can only be attempted once.',
+    icon: 'pi pi-undo',
+    rejectLabel: 'Cancel',
+    acceptLabel: 'Undo',
+    accept: async () => {
+      try {
+        await undoFileOperation(operation.id)
+        signalTaskAdded()
+      } catch (err) {
+        showError(err, 'Could not start undo')
+        return false
+      }
+    },
+  })
+}
+
 function clearOperationHistory() {
   confirm.require({
     header: 'Clear task history',
-    message: 'Clear all completed, failed, cancelled and interrupted tasks? Active tasks will be kept.',
+    message: 'Clear all completed, failed, cancelled and interrupted tasks? This also removes their Undo actions. Active tasks will be kept.',
     icon: 'pi pi-exclamation-triangle',
     rejectLabel: 'Cancel',
     acceptLabel: 'Clear history',
@@ -1387,7 +1409,7 @@ function clearOperationHistory() {
 function removeOperationHistory(operation: FileOperation) {
   confirm.require({
     header: 'Remove task from history',
-    message: 'Remove this task from history? This does not affect any files.',
+    message: 'Remove this task from history? This also removes its Undo action. Your files stay in place.',
     icon: 'pi pi-exclamation-triangle',
     rejectLabel: 'Cancel',
     acceptLabel: 'Remove',
@@ -1899,7 +1921,7 @@ function capitalize(value: string) {
 }
 
 function operationLabel(value: string) {
-  return capitalize(value)
+  return capitalize(value.replaceAll('_', ' '))
 }
 </script>
 
@@ -2171,6 +2193,6 @@ function operationLabel(value: string) {
       :hide-inaccessible="userPreferences.hide_inaccessible"
       @submit="submitTransfer"
     />
-    <OperationsPanel v-if="isPrimary" v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @pause="toggleOperationPause" @cancel="requestOperationCancellation" @password="reopenPasswordPrompt" @resolve="openConflict" @reorder="reorderOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" @download="downloadOperation" />
+    <OperationsPanel v-if="isPrimary" v-model:visible="operationsVisible" :operations="operations" :thumbnail-jobs="thumbnailJobs" @undo="requestOperationUndo" @pause="toggleOperationPause" @cancel="requestOperationCancellation" @password="reopenPasswordPrompt" @resolve="openConflict" @reorder="reorderOperation" @cancel-thumbnail="cancelThumbnailJob" @clear-history="clearOperationHistory" @remove-history="removeOperationHistory" @download="downloadOperation" />
   </section>
 </template>

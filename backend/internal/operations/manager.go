@@ -39,6 +39,9 @@ const (
 )
 
 type Operation struct {
+	UndoData       json.RawMessage `json:"-"`
+	UndoAvailable  bool            `json:"undo_available,omitempty"`
+	UndoReason     string          `json:"undo_reason,omitempty"`
 	Paused         bool            `json:"paused"`
 	Input          json.RawMessage `json:"input,omitempty"`
 	ID             string          `json:"id"`
@@ -419,6 +422,11 @@ func (m *Manager) execute(ctx context.Context, id, kind string, run RunFunc) {
 			if rec.op.Message == "" || rec.op.Message == "Starting" {
 				rec.op.Message = "Completed"
 			}
+		}
+		rec.op.UndoAvailable = rec.op.State == StateCompleted && len(rec.op.UndoData) > 0
+		if rec.op.State != StateCompleted {
+			rec.op.UndoData = nil
+			rec.op.UndoReason = ""
 		}
 		m.persistLocked(rec, true)
 		m.broadcastLocked(rec.op)
@@ -1112,6 +1120,7 @@ func terminalState(state State) bool {
 
 func cloneOperation(op Operation) Operation {
 	out := op
+	out.UndoData = append(json.RawMessage(nil), op.UndoData...)
 	out.Input = append(json.RawMessage(nil), op.Input...)
 	out.Sources = append([]string(nil), op.Sources...)
 	if op.BytesPerSecond != nil {

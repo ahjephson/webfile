@@ -16,7 +16,7 @@ func (m *Manager) SetPaused(id string, paused bool) (Operation, error) {
 		return Operation{}, errors.New("task cannot be paused or resumed")
 	}
 	switch rec.op.Kind {
-	case "copy", "move", "delete", "extract", "archive", "upload":
+	case "copy", "move", "delete", "extract", "archive", "upload", "undo_copy", "undo_move":
 	default:
 		return Operation{}, errors.New("task does not support pause")
 	}

@@ -49,6 +49,11 @@ func (t *Transfer) copySmallBatch(ctx context.Context, emit func(string, string)
 		if err != nil || !info.Mode().IsRegular() || info.Size() > smallCopyLimit {
 			break
 		}
+		if t.undoExpected != nil {
+			if expected, ok := t.undoExpected[item.source]; !ok || stampUndo(info) != expected {
+				return false, ErrUndoChanged
+			}
+		}
 		if _, err := os.Lstat(target); !errors.Is(err, fs.ErrNotExist) {
 			break
 		}
@@ -76,6 +81,7 @@ func (t *Transfer) copySmallBatch(ctx context.Context, emit func(string, string)
 	var progressMu sync.Mutex
 	var workers sync.WaitGroup
 	results := make([]error, len(batch))
+	published := make([]os.FileInfo, len(batch))
 	for index, copy := range batch {
 		workers.Add(1)
 		go func() {
@@ -90,6 +96,7 @@ func (t *Transfer) copySmallBatch(ctx context.Context, emit func(string, string)
 				emit(phase, message)
 			}
 			results[index] = worker.copyItem(ctx, copy.sourceRoot, copy.targetRoot, copy.source, copy.target, copy.info, nil, false, report)
+			published[index] = worker.published
 			if results[index] != nil {
 				progressMu.Lock()
 				t.bytes -= reported
@@ -102,6 +109,8 @@ func (t *Transfer) copySmallBatch(ctx context.Context, emit func(string, string)
 	var failure error
 	for index, err := range results {
 		if err == nil {
+			t.recordUndoNode(batch[index].item.target, published[index], nil)
+			t.recordUndoRoot(batch[index].item)
 			t.items++
 			continue
 		}

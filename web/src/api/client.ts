@@ -434,6 +434,10 @@ export const api = {
     return { operations: arrayOrEmpty(response.operations).map(reconcileUploadFailure) }
   },
 
+  undoOperation(id: string) {
+    return request<FileOperation>(`/api/fs/operations/${encodeURIComponent(id)}/undo`, { method: 'POST' })
+  },
+
   cancelOperation(id: string) {
     return request<{ ok: boolean }>('/api/fs/operations/cancel', {
       method: 'POST',

@@ -97,6 +97,8 @@ export interface UploadSession {
 export type OperationState = 'queued' | 'preparing' | 'awaiting_input' | 'running' | 'cancelling' | 'cleaning_up' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 
 export interface FileOperation {
+  undo_available?: boolean
+  undo_reason?: string
   paused?: boolean
   attempt_id?: string
   client_failure?: boolean

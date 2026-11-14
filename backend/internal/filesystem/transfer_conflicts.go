@@ -34,6 +34,7 @@ type ConflictDecision struct {
 	ApplyRemaining bool   `json:"apply_remaining"`
 }
 type transferItem struct {
+	top            bool
 	source, target string
 	bytes, items   int64
 	measured       bool
@@ -42,6 +43,12 @@ type transferItem struct {
 	info           os.FileInfo
 }
 type Transfer struct {
+	undoNodes                            map[string]undoStamp
+	undoRoots                            []UndoEntry
+	undoReason                           string
+	undoExpected                         map[string]undoStamp
+	undoParents                          map[string]undoStamp
+	published                            os.FileInfo
 	service                              *Service
 	kind                                 string
 	sources                              []string
@@ -57,7 +64,7 @@ type Transfer struct {
 }
 
 func (s *Service) NewTransfer(kind string, sources []string, destination string) *Transfer {
-	return &Transfer{service: s, kind: kind, sources: append([]string(nil), sources...), destination: CleanVirtual(destination), defaults: map[string]string{}}
+	return &Transfer{service: s, kind: kind, sources: append([]string(nil), sources...), destination: CleanVirtual(destination), defaults: map[string]string{}, undoNodes: map[string]undoStamp{}, undoParents: map[string]undoStamp{}}
 }
 func (t *Transfer) Decide(decision ConflictDecision) error {
 	if t.pending == nil || decision.Revision != t.pending.Revision {
@@ -119,6 +126,11 @@ func (t *Transfer) initialize(ctx context.Context) error {
 			return fmt.Errorf("duplicate source item")
 		}
 		seen[absolute] = true
+		parentInfo, err := os.Stat(filepath.Dir(absolute))
+		if err != nil {
+			return err
+		}
+		t.undoParents[CleanVirtual(source)] = stampUndo(parentInfo)
 		target := filepath.Join(destination, filepath.Base(absolute))
 		if isSameOrDescendant(absolute, target) {
 			return fmt.Errorf("destination cannot be the source or beneath it")
@@ -136,7 +148,7 @@ func (t *Transfer) initialize(ctx context.Context) error {
 		}
 		t.totalBytes += bytes
 		t.totalItems += items
-		t.queue = append(t.queue, transferItem{source: CleanVirtual(source), target: path.Join(t.destination, path.Base(CleanVirtual(source))), bytes: bytes, items: items, measured: true})
+		t.queue = append(t.queue, transferItem{top: true, source: CleanVirtual(source), target: path.Join(t.destination, path.Base(CleanVirtual(source))), bytes: bytes, items: items, measured: true})
 	}
 	t.initialized = true
 	return nil
@@ -176,6 +188,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 				}
 				_ = os.Chmod(target, item.info.Mode().Perm())
 				_ = os.Chtimes(target, item.info.ModTime(), item.info.ModTime())
+				t.finishUndoDirectory(item.target, item.info.Mode().Perm())
 			}
 			if t.kind == "move" {
 				_, source, e := t.service.resolver.ResolveEntry(item.source)
@@ -201,6 +214,11 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 		sourceInfo, err := os.Lstat(source)
 		if err != nil {
 			return err
+		}
+		if t.undoExpected != nil {
+			if expected, ok := t.undoExpected[item.source]; !ok || stampUndo(sourceInfo) != expected {
+				return ErrUndoChanged
+			}
 		}
 		targetInfo, targetErr := os.Lstat(target)
 		if targetErr != nil && !errors.Is(targetErr, fs.ErrNotExist) {
@@ -297,6 +315,9 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 			t.pending = nil
 			t.decision = nil
 		}
+		if choice == "replace" || choice == "merge" {
+			t.disableUndo("Undo is unavailable for transfers that replace files or merge existing folders.")
+		}
 		if sourceInfo.IsDir() {
 			if t.kind == "move" {
 				if err := sourceRoot.validateMoveSource(ctx, source); err != nil {
@@ -319,8 +340,15 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 				if err := taskcontrol.Wait(ctx); err != nil {
 					return err
 				}
+				movedNodes := t.captureUndoTree(ctx, item.source, item.target)
+				if t.undoExpected != nil {
+					if err := t.service.checkUndoTree(ctx, item.source, t.undoExpected); err != nil {
+						return err
+					}
+				}
 				err = moveReviewedItem(sourceRoot, targetRoot, source, target, sourceInfo)
 				if err == nil {
+					t.recordUndoMove(item, targetRoot, target, sourceInfo, movedNodes)
 					t.bytes += bytes
 					t.items += items
 					t.queue = t.queue[1:]
@@ -346,6 +374,11 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 					return e
 				}
 				err := root.Mkdir(relative, sourceInfo.Mode().Perm()|0700)
+				if err == nil {
+					info, statErr := root.Lstat(relative)
+					t.recordUndoNode(item.target, info, statErr)
+					t.recordUndoRoot(item)
+				}
 				root.Close()
 				if err != nil {
 					if errors.Is(err, fs.ErrExist) {
@@ -378,6 +411,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 		}
 		if t.kind == "move" && choice != "replace" {
 			if err := moveReviewedItem(sourceRoot, targetRoot, source, target, sourceInfo); err == nil {
+				t.recordUndoMove(item, targetRoot, target, sourceInfo, nil)
 				t.bytes += sourceInfo.Size()
 				t.items++
 				t.queue = t.queue[1:]
@@ -395,6 +429,8 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 		if err != nil {
 			return err
 		}
+		t.recordUndoNode(item.target, t.published, nil)
+		t.recordUndoRoot(item)
 		t.items++
 		t.queue = t.queue[1:]
 	}
@@ -480,6 +516,10 @@ func (t *Transfer) copyItem(ctx context.Context, sourceRoot, targetRoot Root, so
 	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
+	stagedInfo, err := os.Lstat(staged)
+	if err != nil {
+		return err
+	}
 	target = filepath.Join(anchored, filepath.Base(target))
 	if replace {
 		current, err = os.Lstat(target)
@@ -528,6 +568,13 @@ func (t *Transfer) copyItem(ctx context.Context, sourceRoot, targetRoot Root, so
 	} else if err = renameNoReplace(staged, target); err != nil {
 		t.bytes = startBytes
 		return err
+	}
+	t.published, err = os.Lstat(target)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(t.published, stagedInfo) || t.published.Size() != stagedInfo.Size() || !t.published.ModTime().Equal(stagedInfo.ModTime()) {
+		t.published = nil
 	}
 	if t.kind == "move" {
 		current, err = sourceFS.Lstat(sourceRelative)

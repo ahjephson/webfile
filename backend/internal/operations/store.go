@@ -218,6 +218,13 @@ ON CONFLICT(id) DO UPDATE SET
 	if err != nil {
 		return err
 	}
+	undo, err := json.Marshal(undoCheckpoint{Data: operation.UndoData, Reason: operation.UndoReason})
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO task_checkpoints(task_id,name,value_json,updated_at) VALUES(?,'undo',?,?) ON CONFLICT(task_id,name) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`, operation.ID, string(undo), formatTime(operation.UpdatedAt)); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -243,8 +250,9 @@ func (s *Store) list(tail string, limit int) ([]Operation, error) {
 	rows, err := s.db.Query(`
 SELECT id, kind, sources_json, destination, state, phase, message, error,
        progress_done, progress_total, progress_unit, bytes_done, bytes_total, items_done, items_total, queue_position, cancellable,
-       cleanup_policy, cleanup_error, started_at, tasks.updated_at, finished_at, COALESCE(checkpoint.value_json,''), paused
+       cleanup_policy, cleanup_error, started_at, tasks.updated_at, finished_at, COALESCE(checkpoint.value_json,''), paused, COALESCE(undo_checkpoint.value_json,'{}')
 FROM tasks LEFT JOIN task_checkpoints checkpoint ON tasks.id=checkpoint.task_id AND checkpoint.name='input'
+LEFT JOIN task_checkpoints undo_checkpoint ON tasks.id=undo_checkpoint.task_id AND undo_checkpoint.name='undo'
 `+tail, limit)
 	if err != nil {
 		return nil, err
@@ -259,16 +267,23 @@ FROM tasks LEFT JOIN task_checkpoints checkpoint ON tasks.id=checkpoint.task_id 
 		var updatedAt string
 		var finishedAt sql.NullString
 		var input string
+		var undoJSON string
 		if err := rows.Scan(
 			&operation.ID, &operation.Kind, &sources, &operation.Destination, &state, &operation.Phase,
 			&operation.Message, &operation.Error, &operation.ProgressDone, &operation.ProgressTotal,
 			&operation.ProgressUnit, &operation.BytesDone, &operation.BytesTotal,
 			&operation.ItemsDone, &operation.ItemsTotal, &operation.QueuePosition, &operation.Cancellable, &operation.CleanupPolicy,
-			&operation.CleanupError, &startedAt, &updatedAt, &finishedAt, &input, &operation.Paused,
+			&operation.CleanupError, &startedAt, &updatedAt, &finishedAt, &input, &operation.Paused, &undoJSON,
 		); err != nil {
 			return nil, err
 		}
 		operation.State = State(state)
+		var undo undoCheckpoint
+		if err := json.Unmarshal([]byte(undoJSON), &undo); err != nil {
+			return nil, err
+		}
+		operation.UndoData, operation.UndoReason = undo.Data, undo.Reason
+		operation.UndoAvailable = operation.State == StateCompleted && len(undo.Data) > 0
 		if input != "" {
 			operation.Input = json.RawMessage(input)
 		}

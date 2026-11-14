@@ -78,6 +78,13 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 				}
 				return operations.ErrAwaitingInput
 			}
+			if err == nil {
+				plan, reason := transfer.UndoPlan()
+				if plan == nil {
+					return reporter.SetUndo(nil, reason)
+				}
+				return reporter.SetUndo(plan, reason)
+			}
 			return err
 		})
 		writeJSON(w, http.StatusAccepted, op)

@@ -141,6 +141,13 @@ function createFileOperations(onTerminal: TerminalHandler) {
     await load()
   }
 
+  async function undo(id: string) {
+    const operation = await api.undoOperation(id)
+    update(operation)
+    await load()
+    return operation
+  }
+
   async function clearHistory() {
     const result = await api.clearOperationHistory()
     historyRevision++
@@ -154,5 +161,5 @@ function createFileOperations(onTerminal: TerminalHandler) {
     operations.value = operations.value.filter(operation => operation.id !== id)
   }
 
-  return { operations, activeOperations, load, update, start, startExtractions, reorder, clearHistory, removeHistory }
+  return { operations, activeOperations, load, update, start, startExtractions, reorder, undo, clearHistory, removeHistory }
 }

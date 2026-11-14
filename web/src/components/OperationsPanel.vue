@@ -11,6 +11,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  undo: [operation: FileOperation]
   pause: [operation: FileOperation]
   'update:visible': [value: boolean]
   cancel: [operation: FileOperation]
@@ -113,7 +114,8 @@ function active(operation: FileOperation) {
 
 function label(operation: FileOperation) {
   const noun = operation.sources?.length === 1 ? operation.sources[0].split('/').pop() : `${operation.sources?.length ?? 0} items`
-  const operationKind = `${operation.kind[0]?.toUpperCase() ?? ''}${operation.kind.slice(1)}`
+  const kind = operation.kind.replaceAll('_', ' ')
+  const operationKind = `${kind[0]?.toUpperCase() ?? ''}${kind.slice(1)}`
   return `${operationKind} ${noun ?? ''}`.trim()
 }
 
@@ -324,6 +326,7 @@ function formatDate(value?: string) {
                 <div class="mt-1 text-xs text-zinc-500">{{ formatDate(operation.finished_at || operation.updated_at) }}</div>
                 <p v-if="operation.error" class="webfile-text-error text-xs">{{ operation.error }}</p>
                 <p v-if="operation.cleanup_error" class="webfile-text-error text-xs">Cleanup: {{ operation.cleanup_error }}</p>
+                <p v-if="operation.undo_reason" class="mt-1 text-xs text-zinc-500">{{ operation.undo_reason }}</p>
                 <details v-if="operation.message || operation.destination" class="text-xs text-zinc-500">
                   <summary class="cursor-pointer select-none">Details</summary>
                   <dl class="mt-2 space-y-1">
@@ -334,6 +337,7 @@ function formatDate(value?: string) {
               </div>
               <div class="flex shrink-0 flex-col items-end gap-2">
                 <div class="flex items-start justify-end gap-1" data-task-actions>
+                  <Button v-if="operation.undo_available && operation.state === 'completed'" label="Undo" icon="pi pi-undo" size="small" severity="secondary" text :aria-label="`Undo ${label(operation)}`" @click="emit('undo', operation)" />
                   <Button v-if="operation.kind === 'archive' && operation.state === 'completed' && operation.phase === 'completed'" v-tooltip.left="'Download archive'" icon="pi pi-download" size="small" severity="success" text :aria-label="`Download ${label(operation)}`" @click="emit('download', operation)" />
                   <Button v-tooltip.left="'Remove from history'" icon="pi pi-times" size="small" severity="secondary" text :aria-label="`Remove ${label(operation)} from history`" @click="emit('remove-history', operation)" />
                 </div>

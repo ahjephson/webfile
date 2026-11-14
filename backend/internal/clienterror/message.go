@@ -28,6 +28,7 @@ const (
 	Recovery     Message = "Some files have been retained for recovery. Contact your administrator before retrying."
 	Cleanup      Message = "Cleanup could not be completed. Some files may remain; contact your administrator."
 	Unavailable  Message = "Tasks are currently unavailable. Please try again."
+	UndoChanged  Message = "Undo stopped because files or folders changed. Review the remaining items."
 )
 
 type diagnostic struct {
@@ -81,7 +82,7 @@ func Stored(text string) string {
 	switch Message(text) {
 	case "", Unknown, NotFound, Permission, Exists, NoSpace, Quota, ReadOnly,
 		InvalidPath, NotDirectory, TooLarge, Cancelled, Timeout, Incomplete,
-		Recovery, Cleanup, Unavailable:
+		Recovery, Cleanup, Unavailable, UndoChanged:
 		return text
 	default:
 		return string(Unknown)
