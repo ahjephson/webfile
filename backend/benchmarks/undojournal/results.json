@@ -1,0 +1,267 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "scope": "Standalone benchmark only; no application undo implementation changes.",
+  "environment": {
+    "os": "Linux 6.18.58.1-microsoft-standard-WSL2",
+    "cpu": "AMD Ryzen 7 9800X3D",
+    "filesystem": "Native WSL Linux ext filesystem, not /mnt/c",
+    "go": "go1.27.4",
+    "sqlite": "3.49.1",
+    "driver": "modernc.org/sqlite v1.36.3",
+    "source_sha256": "b961f16e1323ebbdb3706043b54512dd91a986994b4b81d3a0b0715a748c2733",
+    "executable_sha256": "4be0c67960b64d77766dee2d6f3b8a9773db89b2f8bb5741fa359d9314b1f6b4"
+  },
+  "dataset": {
+    "regular_files": 1000000,
+    "directories": 1,
+    "total_receipts": 1000001,
+    "file_content_bytes": 0,
+    "virtual_file_path_characters": 67,
+    "layout": "One flat directory; real files with actual device, inode, mode, size, mtime and ctime."
+  },
+  "configuration": {
+    "batch_entries": 256,
+    "sqlite_cache_target_mib": 8,
+    "mmap_enabled": false,
+    "journal_mode": "WAL",
+    "synchronous": "FULL",
+    "wal_autocheckpoint_pages": 1000,
+    "table": "Path primary key WITHOUT ROWID; seven scalar columns; no whole-manifest JSON."
+  },
+  "methodology": [
+    "Create the fixture outside the timed recording/validation runs.",
+    "Each measured phase runs in its own fresh process. Peak RSS is captured by /usr/bin/time.",
+    "Recording streams directory entries, reads actual metadata, and commits each batch. Time includes the final WAL checkpoint.",
+    "Validation streams the actual filesystem and compares every receipt against indexed database rows in batches, then checks the total count. It detects missing, unexpected and metadata-changed entries.",
+    "Scan reads and consumes every stored row in reverse path order without filesystem metadata checks.",
+    "Repeat the million-file phases three times with separate fresh databases. A 100,000-file control runs once.",
+    "Edited, added and missing-file rejection checks passed on a separate 1,024-file smoke fixture."
+  ],
+  "limitations": [
+    "OS filesystem and inode caches were not flushed; these are warm-cache local-storage measurements, not cold-cache, NAS or HDD results.",
+    "RSS covers the standalone process, including Go and SQLite, but excludes reclaimable kernel filesystem caches. The idle standalone executable measured 6,896 KiB RSS.",
+    "This is metadata validation only; it does not hash file contents, execute undo, or provide an atomic snapshot against concurrent filesystem changes.",
+    "The flat empty-file fixture does not measure file-content transfer buffers, deep traversal, or long-path distributions.",
+    "SQLite cache_size is a cache target, not a hard whole-process memory limit."
+  ],
+  "disk": {
+    "final_database_bytes": 115552256,
+    "final_allocated_bytes": 115556352,
+    "max_observed_database_wal_shm_bytes": 121061040,
+    "final_database_mib": 110.19921875,
+    "max_observed_with_wal_shm_mib": 115.45280456542969
+  },
+  "summary": {
+    "record": {
+      "median_seconds": 52.902949292,
+      "seconds_range": [
+        52.571184719,
+        53.544082012
+      ],
+      "median_entries_per_second": 18902.556726666662,
+      "peak_rss_mib_range": [
+        32.78125,
+        33.34765625
+      ]
+    },
+    "validate": {
+      "median_seconds": 9.097582989,
+      "seconds_range": [
+        8.924785373,
+        9.138927987
+      ],
+      "median_entries_per_second": 109919.41499287378,
+      "peak_rss_mib_range": [
+        38.0390625,
+        38.54296875
+      ]
+    },
+    "scan": {
+      "median_seconds": 0.835326248,
+      "seconds_range": [
+        0.82857472,
+        0.841691657
+      ],
+      "median_entries_per_second": 1197138.2467560149,
+      "peak_rss_mib_range": [
+        29.61328125,
+        29.97265625
+      ]
+    }
+  },
+  "measurements": [
+    {
+      "mode": "record",
+      "go": "go1.27.4",
+      "sqlite": "3.49.1",
+      "entries": 100001,
+      "seconds": 4.388957277,
+      "entries_per_second": 22784.68294144664,
+      "batch": 256,
+      "cache_kib": 8192,
+      "database_bytes": 11513856,
+      "allocated_bytes": 11517952,
+      "peak_journal_files_bytes": 17026376,
+      "checkpoint_seconds": 0.007482615,
+      "run": "record-100k",
+      "peak_rss_kib": 33452
+    },
+    {
+      "mode": "validate",
+      "go": "go1.27.4",
+      "sqlite": "3.49.1",
+      "entries": 100001,
+      "seconds": 0.904071846,
+      "entries_per_second": 110611.78427626868,
+      "batch": 256,
+      "cache_kib": 8192,
+      "database_bytes": 11513856,
+      "allocated_bytes": 11517952,
+      "run": "validate-100k",
+      "peak_rss_kib": 36820
+    },
+    {
+      "mode": "record",
+      "go": "go1.27.4",
+      "sqlite": "3.49.1",
+      "entries": 1000001,
+      "seconds": 53.544082012,
+      "entries_per_second": 18676.218966194723,
+      "batch": 256,
+      "cache_kib": 8192,
+      "database_bytes": 115552256,
+      "allocated_bytes": 115556352,
+      "peak_journal_files_bytes": 121061040,
+      "checkpoint_seconds": 0.009118802,
+      "run": "record-million-1",
+      "peak_rss_kib": 34148
+    },
+    {
+      "mode": "validate",
+      "go": "go1.27.4",
+      "sqlite": "3.49.1",
+      "entries": 1000001,
+      "seconds": 9.138927987,
+      "entries_per_second": 109422.13369253896,
+      "batch": 256,
+      "cache_kib": 8192,
+      "database_bytes": 115552256,
+      "allocated_bytes": 115556352,
+      "run": "validate-million-1",
+      "peak_rss_kib": 39288
+    },
+    {
+      "mode": "scan",
+      "go": "go1.27.4",
+      "sqlite": "3.49.1",
+      "entries": 1000001,
+      "seconds": 0.835326248,
+      "entries_per_second": 1197138.2467560149,
+      "batch": 256,
+      "cache_kib": 8192,
+      "database_bytes": 115552256,
+      "allocated_bytes": 115556352,
+      "checksum": 916321853747,
+      "run": "scan-million-1",
+      "peak_rss_kib": 30324
+    },
+    {
+      "mode": "record",
+      "go": "go1.27.4",
+      "sqlite": "3.49.1",
+      "entries": 1000001,
+      "seconds": 52.902949292,
+      "entries_per_second": 18902.556726666662,
+      "batch": 256,
+      "cache_kib": 8192,
+      "database_bytes": 115552256,
+      "allocated_bytes": 115556352,
+      "peak_journal_files_bytes": 121061040,
+      "checkpoint_seconds": 0.008690483,
+      "run": "record-million-2",
+      "peak_rss_kib": 33568
+    },
+    {
+      "mode": "validate",
+      "go": "go1.27.4",
+      "sqlite": "3.49.1",
+      "entries": 1000001,
+      "seconds": 8.924785373,
+      "entries_per_second": 112047.62447568608,
+      "batch": 256,
+      "cache_kib": 8192,
+      "database_bytes": 115552256,
+      "allocated_bytes": 115556352,
+      "run": "validate-million-2",
+      "peak_rss_kib": 38952
+    },
+    {
+      "mode": "scan",
+      "go": "go1.27.4",
+      "sqlite": "3.49.1",
+      "entries": 1000001,
+      "seconds": 0.82857472,
+      "entries_per_second": 1206892.9643424314,
+      "batch": 256,
+      "cache_kib": 8192,
+      "database_bytes": 115552256,
+      "allocated_bytes": 115556352,
+      "checksum": 916321853747,
+      "run": "scan-million-2",
+      "peak_rss_kib": 30380
+    },
+    {
+      "mode": "record",
+      "go": "go1.27.4",
+      "sqlite": "3.49.1",
+      "entries": 1000001,
+      "seconds": 52.571184719,
+      "entries_per_second": 19021.84638495668,
+      "batch": 256,
+      "cache_kib": 8192,
+      "database_bytes": 115552256,
+      "allocated_bytes": 115556352,
+      "peak_journal_files_bytes": 121061040,
+      "checkpoint_seconds": 0.011008342,
+      "run": "record-million-3",
+      "peak_rss_kib": 33912
+    },
+    {
+      "mode": "validate",
+      "go": "go1.27.4",
+      "sqlite": "3.49.1",
+      "entries": 1000001,
+      "seconds": 9.097582989,
+      "entries_per_second": 109919.41499287378,
+      "batch": 256,
+      "cache_kib": 8192,
+      "database_bytes": 115552256,
+      "allocated_bytes": 115556352,
+      "run": "validate-million-3",
+      "peak_rss_kib": 39468
+    },
+    {
+      "mode": "scan",
+      "go": "go1.27.4",
+      "sqlite": "3.49.1",
+      "entries": 1000001,
+      "seconds": 0.841691657,
+      "entries_per_second": 1188084.724000062,
+      "batch": 256,
+      "cache_kib": 8192,
+      "database_bytes": 115552256,
+      "allocated_bytes": 115556352,
+      "checksum": 916321853747,
+      "run": "scan-million-3",
+      "peak_rss_kib": 30692
+    }
+  ],
+  "reproduction": {
+    "build": "cd \"$HOME/code/webfile/backend\" && go build -o ../dist/undo-journal-benchmark/bench ./benchmarks/undojournal",
+    "fixture": "./bench -mode fixture -fixture fresh-fixture -count 1000000",
+    "record": "/usr/bin/time -f peak_RSS_KiB=%M ./bench -mode record -fixture fresh-fixture -db fresh-journal.db",
+    "validate": "/usr/bin/time -f peak_RSS_KiB=%M ./bench -mode validate -fixture fresh-fixture -db fresh-journal.db",
+    "scan": "/usr/bin/time -f peak_RSS_KiB=%M ./bench -mode scan -db fresh-journal.db"
+  }
+}
