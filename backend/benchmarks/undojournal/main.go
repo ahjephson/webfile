@@ -26,6 +26,11 @@ type receipt struct {
 }
 
 type measurement struct {
+	Writer                string  `json:"writer,omitempty"`
+	Source                string  `json:"source,omitempty"`
+	CommitEntries         int     `json:"commit_entries,omitempty"`
+	SyncPolicy            string  `json:"sync_policy,omitempty"`
+	SyncEntries           int     `json:"sync_entries,omitempty"`
 	Mode                  string  `json:"mode"`
 	Go                    string  `json:"go"`
 	SQLite                string  `json:"sqlite,omitempty"`
@@ -42,7 +47,11 @@ type measurement struct {
 }
 
 func main() {
-	mode := flag.String("mode", "", "fixture, record, validate, scan, or idle")
+	mode := flag.String("mode", "", "fixture, record, validate, scan, idle, capture, or validate-stream")
+	writer := flag.String("writer", "indexed-bulk", "capture writer: discard, indexed-bulk, append-sql, binary")
+	input := flag.String("input", "", "pre-captured binary receipts; avoids another filesystem metadata scan")
+	commitEntries := flag.Int("commit-entries", 16384, "SQL capture entries per durable transaction")
+	syncEntries := flag.Int("sync-entries", 0, "binary capture fsync interval; zero syncs only at completion")
 	fixture := flag.String("fixture", "", "isolated fixture directory")
 	database := flag.String("db", "", "isolated journal database")
 	count := flag.Int("count", 1000000, "regular files in fixture")
@@ -56,6 +65,8 @@ func main() {
 	start := time.Now()
 	var err error
 	switch *mode {
+	case "capture", "validate-stream":
+		err = optimized(*mode, *writer, *input, *fixture, *database, *batch, *commitEntries, *cache, &result, *syncEntries)
 	case "idle":
 	case "fixture":
 		if *fixture == "" {
@@ -129,6 +140,13 @@ func createFixture(root string, count int) error {
 }
 
 func openJournal(name string, create bool, cache int) (*sql.DB, error) {
+	return openJournalSchema(name, create, cache, `CREATE TABLE entries (
+path TEXT PRIMARY KEY, mode INTEGER NOT NULL, device INTEGER NOT NULL,
+inode INTEGER NOT NULL, size INTEGER NOT NULL, modified INTEGER NOT NULL,
+changed INTEGER NOT NULL) WITHOUT ROWID`)
+}
+
+func openJournalSchema(name string, create bool, cache int, schema string) (*sql.DB, error) {
 	if create {
 		file, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 		if err != nil {
@@ -153,10 +171,7 @@ PRAGMA wal_autocheckpoint=1000; PRAGMA busy_timeout=5000;`, cache)
 		return nil, err
 	}
 	if create {
-		_, err = db.Exec(`CREATE TABLE entries (
-path TEXT PRIMARY KEY, mode INTEGER NOT NULL, device INTEGER NOT NULL,
-inode INTEGER NOT NULL, size INTEGER NOT NULL, modified INTEGER NOT NULL,
-changed INTEGER NOT NULL) WITHOUT ROWID`)
+		_, err = db.Exec(schema)
 		if err != nil {
 			db.Close()
 			return nil, err
