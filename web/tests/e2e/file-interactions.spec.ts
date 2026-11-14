@@ -3041,7 +3041,8 @@ test('task drawer separates active work from persistent history', async ({ page 
 
   await interruptedTask.getByRole('button', { name: 'Remove Extract archive.zip from history' }).click()
   const removeConfirmation = page.getByRole('alertdialog', { name: 'Remove task from history' })
-  await expect(removeConfirmation).toContainText('does not affect any files')
+  await expect(removeConfirmation).toContainText('This also removes its Undo action.')
+  await expect(removeConfirmation).toContainText('Your files stay in place.')
   await removeConfirmation.getByRole('button', { name: 'Remove', exact: true }).click()
 
   await expect.poll(() => removedHistoryID).toBe('extract-interrupted')
