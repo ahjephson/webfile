@@ -21,6 +21,35 @@ async function mediaFolder(page: Page) {
   } }
 }
 
+test('image tiles keep their icon until the thumbnail loads and on generation failure', async ({ page }) => {
+  await mediaFolder(page)
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/docs', entries: [entry('photo.jpg'), entry('broken.jpg')] } }))
+  let releaseThumbnails!: () => void
+  const ready = new Promise<void>(resolve => { releaseThumbnails = resolve })
+  await page.route('**/api/fs/thumbnail?**', async route => {
+    await ready
+    if (new URL(route.request().url()).searchParams.get('path') === '/docs/broken.jpg') {
+      await route.fulfill({ status: 500 })
+    } else {
+      await route.fulfill({ contentType: 'image/svg+xml', body: image })
+    }
+  })
+  await page.goto('/#path=%2Fdocs')
+  const photo = page.locator('[data-file-entry]').filter({ hasText: 'photo.jpg' })
+  const broken = page.locator('[data-file-entry]').filter({ hasText: 'broken.jpg' })
+  try {
+    await expect(photo.locator('[data-file-icon]')).toBeVisible()
+    await expect(broken.locator('[data-file-icon]')).toBeVisible()
+    await expect(photo.locator('[data-file-thumbnail]')).toHaveCSS('opacity', '0')
+  } finally {
+    releaseThumbnails()
+  }
+  await expect(photo.locator('[data-file-thumbnail]')).toHaveCSS('opacity', '1')
+  await expect(photo.locator('[data-file-icon]')).toHaveCount(0)
+  await expect(broken.locator('[data-file-thumbnail]')).toHaveCount(0)
+  await expect(broken.locator('[data-file-icon]')).toBeVisible()
+})
+
 test('grid refreshes changed image thumbnails and retains unchanged ones', async ({ page }) => {
   const realtime = await mediaFolder(page)
   let version = 1, reads = 0

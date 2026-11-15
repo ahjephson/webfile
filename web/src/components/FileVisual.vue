@@ -15,6 +15,7 @@ const props = defineProps<{
 const detectedContentType = ref('')
 const thumbnailSettings = inject(thumbnailSettingsKey, computed(() => defaultThumbnailSettings))
 const thumbnailFailed = ref(false)
+const imageThumbnailReady = ref(false)
 const videoSprite = ref<HTMLElement | null>(null)
 const videoFrame = ref(0)
 const videoFrameWidth = ref(0)
@@ -32,6 +33,7 @@ const lockedFile = computed(() => !props.entry.is_dir && props.entry.can_read ==
 const showImageThumbnail = computed(() => thumbnailSettings.value.images_enabled && props.tile && !props.entry.is_dir && !lockedFile.value && visual.value.kind === 'image' && !thumbnailFailed.value)
 const imageThumbnailUrl = computed(() => api.thumbnailUrl(props.entry.path, 320, 320, `${props.entry.size}:${props.entry.modified}`))
 const showVideoThumbnail = computed(() => thumbnailSettings.value.videos_enabled && props.thumbnailEnabled !== false && props.tile && !props.entry.is_dir && !lockedFile.value && visual.value.kind === 'video' && !thumbnailFailed.value)
+watch([imageThumbnailUrl, showImageThumbnail], () => { imageThumbnailReady.value = false }, { flush: 'sync' })
 const tileHeight = computed(() => ({ small: '4rem', medium: '7rem', large: '10rem' })[props.tileSize ?? 'medium'])
 const tileIconSize = computed(() => ({ small: '2.5rem', medium: '4rem', large: '5.5rem' })[props.tileSize ?? 'medium'])
 const videoSpriteStyle = computed(() => ({
@@ -104,6 +106,14 @@ function clearVideoThumbnail() {
   videoThumbnailUrl.value = ''
 }
 
+function onImageThumbnailLoad(event: Event) {
+  if ((event.target as HTMLImageElement).getAttribute('src') === imageThumbnailUrl.value) imageThumbnailReady.value = true
+}
+
+function onImageThumbnailError(event: Event) {
+  if ((event.target as HTMLImageElement).getAttribute('src') === imageThumbnailUrl.value) thumbnailFailed.value = true
+}
+
 function startVideoAnimation() {
   if (!showVideoThumbnail.value || videoTimer !== null) return
   videoFrameWidth.value = videoSprite.value?.clientWidth ?? 0
@@ -149,17 +159,22 @@ function stopVideoAnimation() {
     @mouseenter="startVideoAnimation"
     @mouseleave="stopVideoAnimation"
   >
-    <img
-      v-if="showImageThumbnail"
-      :src="imageThumbnailUrl"
-      :alt="`Preview ${entry.name}`"
-      class="absolute inset-0 m-auto block object-contain"
-      style="width: auto; height: auto; max-width: 100%; max-height: 100%"
-      loading="lazy"
-      draggable="false"
-      data-file-thumbnail
-      @error="thumbnailFailed = true"
-    />
+    <template v-if="showImageThumbnail">
+      <i v-if="!imageThumbnailReady" :class="[visual.icon, visual.color]" :style="{ fontSize: tileIconSize }" aria-hidden="true" data-file-icon />
+      <img
+        :key="imageThumbnailUrl"
+        :src="imageThumbnailUrl"
+        :alt="`Preview ${entry.name}`"
+        class="absolute inset-0 m-auto block object-contain"
+        :class="{ 'opacity-0': !imageThumbnailReady }"
+        style="width: auto; height: auto; max-width: 100%; max-height: 100%"
+        loading="lazy"
+        draggable="false"
+        data-file-thumbnail
+        @load="onImageThumbnailLoad"
+        @error="onImageThumbnailError"
+      />
+    </template>
     <template v-else-if="showVideoThumbnail">
       <i :class="[visual.icon, visual.color]" :style="{ fontSize: tileIconSize }" aria-hidden="true" data-file-icon />
       <span
