@@ -21,8 +21,8 @@ concurrency:
 jobs:
   publish:
     name: Publish tested Linux package
-    if: github.event.repository.private
-    runs-on: [self-hosted, Linux, X64, home-personal-amd64, webfile-build]
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       actions: read

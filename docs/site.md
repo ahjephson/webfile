@@ -2,7 +2,7 @@
 
 The website source lives in `site/`. The product page is static HTML/CSS/JavaScript in `site/website/`, and the searchable documentation uses MkDocs Material with pages in `site/content/`.
 
-The canonical public address will be `https://ahjephson.dev/webfile/`, with documentation under `/webfile/docs/`. The GitHub Pages origin will be `https://ahjephson.github.io/webfile/`. Both use the same project path. Publication remains deferred until the repository becomes public.
+The canonical public address is `https://ahjephson.dev/webfile/`, with documentation under `/webfile/docs/`. GitHub Pages hosts the site at `https://ahjephson.github.io/webfile/`. Both use the same project path.
 
 ## Build and preview
 
@@ -33,11 +33,11 @@ Edit product copy and styles in `site/website/`; edit user guides in `site/conte
 
 The user guides contain no pinned application release numbers. Product download and release links lead to the latest GitHub release; versioned release notes remain on GitHub.
 
-## Publish at the public launch
+## Publication
 
-After the repository becomes public, configure **Settings → Pages → Source → GitHub Actions**. Restrict the `github-pages` deployment environment to `main`.
+Pages uses **Settings → Pages → Source → GitHub Actions**. The `github-pages` deployment environment is restricted to `main`.
 
-The personal domain is owned by the separate infrastructure deployment for `ahjephson.dev`. At launch, arrange for `/webfile/` and its descendants to proxy to the GitHub Pages origin while preserving the complete path and query; redirect `/webfile` to `/webfile/`. Keep the personal site's other routes intact. Do not add an apex `CNAME` to this repository or change the domain's DNS to point at this project: that would take over the personal site's domain instead of mounting a project path. Domain routing must be reviewed and released through the infrastructure repository's existing process. The generated canonical URLs and sitemap already use `ahjephson.dev`.
+The personal domain is owned by the separate infrastructure deployment for `ahjephson.dev`. Its Worker proxies `/webfile/` and its descendants to the GitHub Pages origin, preserving the complete path and query, and redirects `/webfile` to `/webfile/`. Other personal-site routes retain their existing handling. Do not add an apex `CNAME` to this repository or point the domain's DNS at this project: that would take over the personal site's domain. Release domain routing changes through the infrastructure repository's existing process. Canonical URLs and the sitemap use `ahjephson.dev`.
 
 `.github/workflows/pages.yml` builds and validates the site for relevant pull requests and main-branch changes, and deploys only `main`. It uses GitHub-hosted runners and skips all jobs while the repository is private, preserving the private-runner cost policy. A manual run from `main` can publish the initial site after Pages is enabled. The site workflow is separate from application release validation and does not modify release assets or tags.
 

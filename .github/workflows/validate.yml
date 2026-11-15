@@ -16,8 +16,8 @@ concurrency:
 jobs:
   production:
     name: Production package
-    if: github.event.repository.private && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, Linux, X64, home-personal-amd64, webfile-build]
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -27,10 +27,15 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-          cache: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install production dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential libpam0g-dev 7zip ffmpeg
       - name: Validate and package
         env:
           COMMIT: ${{ github.sha }}
@@ -57,7 +62,7 @@ jobs:
 
   chromium:
     name: Chromium
-    if: github.event.repository.private && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event.repository.private == false
     uses: ./.github/workflows/browser-validation.yml
     with:
       project: chromium-touch
@@ -65,7 +70,7 @@ jobs:
 
   webkit:
     name: WebKit
-    if: github.event.repository.private && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event.repository.private == false
     uses: ./.github/workflows/browser-validation.yml
     with:
       project: webkit-ipad
