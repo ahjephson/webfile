@@ -97,6 +97,7 @@ func (q *videoThumbnailQueue) configure(workers, maxQueued int, timeout time.Dur
 	if workers == 0 {
 		for id, job := range q.ids {
 			if job.view.Cancellable {
+				job.retryWhenEnabled = true
 				ids = append(ids, id)
 			}
 		}

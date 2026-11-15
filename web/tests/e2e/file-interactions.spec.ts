@@ -2246,6 +2246,8 @@ test('a tall image is contained within both dimensions of the preview canvas', a
 })
 
 test('an image is constrained and hidden until its fitted size is ready', async ({ page }) => {
+  let releaseImage!: () => void
+  const imageReady = new Promise<void>(resolve => { releaseImage = resolve })
   await page.route('**/api/fs/dir**', route => route.fulfill({
     json: {
       path: '/',
@@ -2254,7 +2256,7 @@ test('an image is constrained and hidden until its fitted size is ready', async 
   }))
   await page.route('**/api/fs/content-type**', route => route.fulfill({ json: { path: '/delayed.svg', content_type: 'image/png' } }))
   await page.route('**/api/fs/download**', async route => {
-    await new Promise(resolve => setTimeout(resolve, 750))
+    await imageReady
     await route.fulfill({
       contentType: 'image/svg+xml',
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="3000"><rect width="4000" height="3000" fill="red"/></svg>',
@@ -2264,15 +2266,19 @@ test('an image is constrained and hidden until its fitted size is ready', async 
   await page.goto('/')
   await page.locator('[data-file-entry]').dblclick()
   const image = page.locator('img[alt="delayed.svg"]')
-  await expect(image).toBeAttached()
-  await expect(image).toHaveAttribute('data-image-loaded', 'false')
-  await expect(page.getByLabel('Loading image')).toBeVisible()
-  const initialStyle = await image.evaluate(element => ({
-    maxWidth: (element as HTMLImageElement).style.maxWidth,
-    maxHeight: (element as HTMLImageElement).style.maxHeight,
-    visibility: (element as HTMLImageElement).style.visibility,
-  }))
-  expect(initialStyle).toEqual({ maxWidth: '100%', maxHeight: '100%', visibility: 'hidden' })
+  try {
+    await expect(image).toBeAttached()
+    await expect(image).toHaveAttribute('data-image-loaded', 'false')
+    await expect(page.getByLabel('Loading image')).toBeVisible()
+    const initialStyle = await image.evaluate(element => ({
+      maxWidth: (element as HTMLImageElement).style.maxWidth,
+      maxHeight: (element as HTMLImageElement).style.maxHeight,
+      visibility: (element as HTMLImageElement).style.visibility,
+    }))
+    expect(initialStyle).toEqual({ maxWidth: '100%', maxHeight: '100%', visibility: 'hidden' })
+  } finally {
+    releaseImage()
+  }
 
   await expect(image).toHaveAttribute('data-image-loaded', 'true')
   await expect(image).toBeVisible()

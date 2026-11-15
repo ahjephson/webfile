@@ -190,15 +190,27 @@ for (const fail of [false, true]) {
 test('task history limits retain every active task on load and realtime updates', async ({ page }) => {
   await mockFolder(page)
   const active = Array.from({ length: 55 }, (_, index) => task(`active-${index}`))
-  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: active } }))
+  const history: ReturnType<typeof task>[] = []
+  await page.route('**/api/fs/operations', route => route.fulfill({ json: { operations: [...active, ...history] } }))
   let send = (_message: unknown) => {}
-  await page.routeWebSocket('**/api/fs/ws', socket => { send = message => socket.send(JSON.stringify(message)) })
+  let connected!: () => void
+  const connectionReady = new Promise<void>(resolve => { connected = resolve })
+  await page.routeWebSocket('**/api/fs/ws', socket => {
+    send = message => socket.send(JSON.stringify(message))
+    connected()
+  })
   await page.goto('/#path=%2Fdocs')
   await expect(page).toHaveURL(/#path=%2Fdocs$/)
   await page.getByRole('button', { name: 'Open tasks' }).click()
   const tasks = page.getByRole('complementary')
   await expect(tasks.getByRole('button', { name: 'Collapse Active (55)' })).toBeVisible()
-  for (let index = 0; index < 60; index++) send({ type: 'operation-updated', operation: task(`history-${index}`, 'completed') })
+  await connectionReady
+  // Cancelled fixtures exercise terminal history without creating 60 success toasts.
+  for (let index = 0; index < 60; index++) {
+    const operation = task(`history-${index}`, 'cancelled')
+    history.unshift(operation)
+    send({ type: 'operation-updated', operation })
+  }
   await expect(tasks.getByRole('button', { name: 'Collapse History (50)' })).toBeVisible()
   await expect(tasks.getByRole('button', { name: 'Collapse Active (55)' })).toBeVisible()
   await expect(tasks.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(55)

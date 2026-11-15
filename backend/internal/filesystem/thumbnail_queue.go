@@ -34,13 +34,14 @@ type VideoThumbnailJob struct {
 }
 
 type videoThumbnailJob struct {
-	view       VideoThumbnailJob
-	source     thumbnailSource
-	logicalKey string
-	eligibleAt time.Time
-	done       chan struct{}
-	cancel     context.CancelFunc
-	ctx        context.Context
+	view             VideoThumbnailJob
+	source           thumbnailSource
+	logicalKey       string
+	eligibleAt       time.Time
+	done             chan struct{}
+	cancel           context.CancelFunc
+	ctx              context.Context
+	retryWhenEnabled bool
 }
 
 type videoThumbnailQueue struct {
@@ -102,7 +103,8 @@ func (q *videoThumbnailQueue) scheduleBatch(sources []thumbnailSource) []VideoTh
 	for _, source := range sources {
 		logicalKey := videoThumbnailLogicalKey(source)
 		if existing := q.jobs[logicalKey]; existing != nil {
-			needsSlot := isThumbnailTerminal(existing.view.State) && (existing.source.key != source.key || existing.view.State == "cancelled" || existing.view.State == "failed" && time.Since(existing.view.UpdatedAt) >= q.retryBackoff)
+			retryCancelled := existing.view.State == "cancelled" && existing.retryWhenEnabled
+			needsSlot := isThumbnailTerminal(existing.view.State) && (existing.source.key != source.key || retryCancelled || existing.view.State == "failed" && time.Since(existing.view.UpdatedAt) >= q.retryBackoff)
 			if needsSlot && len(q.queued)+len(q.settling) >= q.maxQueued {
 				continue
 			}
@@ -114,6 +116,7 @@ func (q *videoThumbnailQueue) scheduleBatch(sources []thumbnailSource) []VideoTh
 				existing.view.Error, existing.view.FinishedAt, existing.view.UpdatedAt = "", nil, now.UTC()
 				existing.eligibleAt = now.Add(q.settleDelay)
 				if isThumbnailTerminal(existing.view.State) {
+					existing.retryWhenEnabled = false
 					existing.done = make(chan struct{})
 					existing.view.State, existing.view.Cancellable, existing.view.StartedAt = "settling", true, nil
 					q.settling = append(q.settling, existing)
@@ -127,7 +130,8 @@ func (q *videoThumbnailQueue) scheduleBatch(sources []thumbnailSource) []VideoTh
 				if previousState != "settling" {
 					q.publishLocked(q.snapshotLocked(existing))
 				}
-			} else if existing.view.State == "cancelled" || existing.view.State == "failed" && time.Since(existing.view.UpdatedAt) >= q.retryBackoff {
+			} else if retryCancelled || existing.view.State == "failed" && time.Since(existing.view.UpdatedAt) >= q.retryBackoff {
+				existing.retryWhenEnabled = false
 				now := time.Now()
 				existing.done = make(chan struct{})
 				existing.view.State, existing.view.Error, existing.view.Cancellable = "settling", "", true
