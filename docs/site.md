@@ -29,7 +29,7 @@ Open `http://127.0.0.1:8123/webfile/` in the Codex app's in-app browser. Check t
 
 ## Maintain the site
 
-Edit product copy and styles in `site/website/`; edit user guides in `site/content/`. Shared maintainer policies remain authoritative in `docs/` and are copied into the site during the build. Keep installation instructions consistent with the actual installer, configuration schema and service files. The illustrated file workspace on the product page is labelled as an illustration and uses fictional files.
+Edit product copy and styles in `site/website/`; edit user guides in `site/content/`. Shared maintainer policies remain authoritative in `docs/` and are copied into the site during the build. Keep installation instructions consistent with the actual installer, configuration schema and service files. The product page uses an unretouched screenshot of the running development app with fictional files. Capture provenance and reproduction instructions are in `site/website/assets/README.md`; `site/demo.py` prepares an isolated fixture workspace without exposing personal folders or account details.
 
 The documentation describes the current source tree and shows the release marker. It does not maintain separate documentation snapshots for older releases; versioned release notes remain available on GitHub.
 
