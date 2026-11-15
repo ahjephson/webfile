@@ -59,6 +59,7 @@ nav:
       - Reverse proxy: reverse-proxy.md
   - Use WebFile:
       - Browse and manage files: files.md
+      - Monaco editor: editor.md
       - Transfers and tasks: tasks.md
       - Previews and archives: previews.md
       - Troubleshooting: troubleshooting.md

@@ -14,6 +14,7 @@ WebFile is a Linux file manager you use in a browser. It reads your existing fil
 | Use local accounts and secure connections | [Authentication and TLS](authentication.md) |
 | Publish WebFile behind a proxy | [Reverse proxy](reverse-proxy.md) |
 | Work with files in the browser | [Browse and manage files](files.md) |
+| Edit text, code or Markdown | [Text and code editor](editor.md) |
 | Understand background work and Undo | [Transfers and tasks](tasks.md) |
 | Diagnose a deployment problem | [Troubleshooting](troubleshooting.md) |
 

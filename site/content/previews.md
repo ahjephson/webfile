@@ -2,6 +2,8 @@
 
 WebFile uses the logged-in user's read permissions for previews and downloads. Format support depends on the file, installed server tools and browser.
 
+Text and code files open in the [Monaco editor](editor.md), which also provides a live Markdown preview.
+
 ## Images, video and audio
 
 Images can open in the gallery, with touch navigation and fullscreen/immersive controls. Video thumbnails use server-side FFmpeg; the browser does not download a source video just to animate a file tile.

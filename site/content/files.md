@@ -35,7 +35,7 @@ Each worker permits one search, limited to 1,000 matches, 100,000 entries, 64 le
 
 ## Edit and delete
 
-Create a folder or text/code file from the file actions. The Monaco editor uses the server's configured size limit, 5 MiB in the example configuration.
+Create a folder or text/code file from the file actions. See [Text and code editor](editor.md) for Monaco's editing controls, Markdown preview, saving and conflict handling.
 
 !!! warning "Delete is permanent"
     Delete removes files and folders after confirmation. There is no trash workflow. Keep independent backups, and check the selected items before confirming.
