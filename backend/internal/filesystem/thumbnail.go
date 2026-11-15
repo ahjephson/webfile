@@ -23,7 +23,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/disintegration/imaging"
+	"github.com/kovidgoyal/imaging"
 
 	"golang.org/x/sys/unix"
 	"webfile/internal/thumbnailcache"

@@ -208,6 +208,10 @@ func (s *Server) handle(conn net.Conn, brokerGID int) {
 }
 
 func (s *Server) ensureWorker(id identity.Identity, brokerGID int, cacheSocket, cacheToken string) (string, error) {
+	uid, _, err := id.OwnershipIDs()
+	if err != nil {
+		return "", err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	userDir := filepath.Join(s.WorkerDir, strconv.FormatUint(uint64(id.UID), 10))
@@ -227,7 +231,7 @@ func (s *Server) ensureWorker(id identity.Identity, brokerGID int, cacheSocket, 
 	if err := os.MkdirAll(userDir, 0o710); err != nil {
 		return "", err
 	}
-	if err := os.Chown(userDir, int(id.UID), brokerGID); err != nil {
+	if err := os.Chown(userDir, uid, brokerGID); err != nil {
 		return "", err
 	}
 	if err := os.Chmod(userDir, 0o710); err != nil {
@@ -251,7 +255,7 @@ func (s *Server) ensureWorker(id identity.Identity, brokerGID int, cacheSocket, 
 		_, _ = cmd.Process.Wait()
 		return "", err
 	}
-	if err := os.Chown(socket, int(id.UID), brokerGID); err != nil {
+	if err := os.Chown(socket, uid, brokerGID); err != nil {
 		_ = cmd.Process.Kill()
 		return "", err
 	}

@@ -6,7 +6,7 @@ toolchain go1.27.4
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/disintegration/imaging v1.6.2
+	github.com/kovidgoyal/imaging v1.6.5
 	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.36.3
 )

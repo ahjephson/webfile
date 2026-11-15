@@ -221,6 +221,10 @@ func (m *Manager) startViaLauncherLocked(ctx context.Context, id identity.Identi
 }
 
 func (m *Manager) startLocalLocked(ctx context.Context, id identity.Identity, cacheToken string) (*Process, error) {
+	uid, gid, err := id.OwnershipIDs()
+	if err != nil {
+		return nil, err
+	}
 	if m.executable == "" {
 		return nil, errors.New("worker executable is empty")
 	}
@@ -238,7 +242,7 @@ func (m *Manager) startLocalLocked(ctx context.Context, id identity.Identity, ca
 		return nil, err
 	}
 	if uint32(os.Geteuid()) != id.UID {
-		if err := os.Chown(userDir, int(id.UID), int(id.GID)); err != nil {
+		if err := os.Chown(userDir, uid, gid); err != nil {
 			return nil, fmt.Errorf("chown worker dir: %w", err)
 		}
 	}

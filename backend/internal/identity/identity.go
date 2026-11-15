@@ -2,6 +2,7 @@ package identity
 
 import (
 	"fmt"
+	"math"
 	"os/user"
 	"strconv"
 )
@@ -12,6 +13,23 @@ type Identity struct {
 	GID      uint32   `json:"gid"`
 	Groups   []uint32 `json:"-"`
 	Home     string   `json:"home"`
+}
+
+// OwnershipIDs converts Linux IDs to the native int expected by os.Chown.
+// Linux reserves the all-ones ID to mean "leave ownership unchanged".
+func (id Identity) OwnershipIDs() (int, int, error) {
+	if id.UID == math.MaxUint32 || id.GID == math.MaxUint32 {
+		return 0, 0, fmt.Errorf("reserved filesystem ownership ID")
+	}
+	uid, err := strconv.Atoi(strconv.FormatUint(uint64(id.UID), 10))
+	if err != nil {
+		return 0, 0, fmt.Errorf("uid exceeds native ownership range: %w", err)
+	}
+	gid, err := strconv.Atoi(strconv.FormatUint(uint64(id.GID), 10))
+	if err != nil {
+		return 0, 0, fmt.Errorf("gid exceeds native ownership range: %w", err)
+	}
+	return uid, gid, nil
 }
 
 func Lookup(username string) (Identity, error) {

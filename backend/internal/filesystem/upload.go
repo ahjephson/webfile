@@ -261,7 +261,7 @@ func (m *UploadManager) Cancel(id string) error {
 	if cancel := m.active[id]; cancel != nil {
 		cancel()
 	}
-	_ = os.Remove(filepath.Join(m.baseDir, rec.TempName))
+	_ = os.Remove(filepath.Join(m.baseDir, filepath.Base(rec.TempName)))
 	return os.Remove(m.recordPath(id))
 }
 
@@ -297,11 +297,11 @@ func (m *UploadManager) ensureDir() error {
 }
 
 func (m *UploadManager) recordPath(id string) string {
-	return filepath.Join(m.baseDir, id+".json")
+	return filepath.Join(m.baseDir, filepath.Base(id)+".json")
 }
 
 func (m *UploadManager) readRecordLocked(id string) (uploadRecord, error) {
-	if id == "" || strings.ContainsAny(id, `/\\`) {
+	if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" || !filepath.IsLocal(id) {
 		return uploadRecord{}, ErrInvalidPath
 	}
 	data, err := os.ReadFile(m.recordPath(id))
