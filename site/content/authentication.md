@@ -1,6 +1,6 @@
 # Authentication and TLS
 
-Production builds support two authentication modes. Both require secure cookies. The HTTP, authentication-free development build is deliberately incompatible with production settings.
+Choose where users sign in. WebFile can check local account credentials through PAM, or accept an authenticated username from a trusted proxy. Both modes require HTTPS in the browser and secure cookies.
 
 ## PAM with direct TLS
 
@@ -37,6 +37,6 @@ WebFile stores a SHA-256 hash of each browser session token. Persistent sessions
 
 Temporary elevation is explicit and time-limited. In proxy mode, the proxy identity must still accompany requests; PAM remains available for the elevation prompt. An elevated worker does not make the ordinary broker privileged.
 
-## Keep development local
+## Use a server release for deployment
 
-Development builds accept plain HTTP with `auth.mode: "none"`. They reject PAM or TLS settings. Use the checked-in loopback development configuration on a trusted local machine, with disposable test files. Never expose this mode publicly.
+Install a release package for a server deployment. Authentication-free development builds are intended for local testing and must not be exposed publicly.

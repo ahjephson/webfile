@@ -1,10 +1,38 @@
 # Install on Linux
 
-Use the packaged Linux AMD64 release on a Debian or Ubuntu host with systemd. You need administrator access to install the services and a permitted local account to sign in.
+WebFile runs on Linux and uses local accounts and filesystem permissions. Choose a package that matches your processor and check the requirements before installing.
 
-## 1. Install runtime dependencies
+## Requirements
 
-Install a compatible `7zz` or `7z`, plus `ffmpeg` and `ffprobe` if you want video thumbnails. Debian and Ubuntu package names vary by distribution release. Confirm the installed tools:
+| Component | Requirement |
+| --- | --- |
+| Processor | The prebuilt package targets AMD64 (x86-64). |
+| System libraries | Compatible glibc and Linux-PAM libraries. |
+| Service manager | The supplied installer and service files use systemd. |
+| Local accounts | Users must have permitted Linux accounts. |
+| Archives | Install a compatible `7zz` or `7z`. |
+| Video thumbnails | Install `ffmpeg` and `ffprobe` if you want this feature. |
+| Browser access | HTTPS, JavaScript, cookies and WebSockets. |
+
+WebFile is not restricted to Debian or Ubuntu. The supplied PAM policy uses their `common-auth` and `common-account` conventions; adapt it to your distribution before installation if those policies are absent. Other architectures, C libraries or service managers require a source build or deployment changes; see the [repository build guide](https://github.com/ahjephson/webfile#production-build).
+
+Node.js and a Go toolchain are not required to run the prebuilt package.
+
+## Download and verify
+
+Download the Linux archive and its matching SHA-256 file from the [latest release](https://github.com/ahjephson/webfile/releases/latest) into the same empty directory. From that directory, run:
+
+```bash
+sha256sum -c webfile-*-linux-amd64.tar.gz.sha256 &&
+tar -xzf webfile-*-linux-amd64.tar.gz &&
+cd webfile-*-linux-amd64
+```
+
+The checksum must report `OK` before you continue.
+
+## Prepare the installation
+
+Check the installed tools:
 
 ```bash
 command -v 7zz || command -v 7z
@@ -12,70 +40,44 @@ command -v ffmpeg
 command -v ffprobe
 ```
 
-The example configuration uses `/usr/bin/7zz`. Set `archive.executable` to your installed executable if its path differs. Node.js and a Go SDK are not required on the runtime host.
+Set `archive.executable` in the configuration to the installed 7-Zip path. Review `deploy/webfile.pam` and adjust its authentication and account rules to your distribution's PAM policy. The installer copies this file to `/etc/pam.d/webfile`.
 
-## 2. Download and verify
-
-Download the archive and its matching checksum from the [release page](https://github.com/ahjephson/webfile/releases). For the release recorded in this repository:
-
-```bash
-version={{VERSION}}
-curl --fail --location --remote-name \
-  "https://github.com/ahjephson/webfile/releases/download/$version/webfile-$version-linux-amd64.tar.gz"
-curl --fail --location --remote-name \
-  "https://github.com/ahjephson/webfile/releases/download/$version/webfile-$version-linux-amd64.tar.gz.sha256"
-sha256sum -c "webfile-$version-linux-amd64.tar.gz.sha256"
-tar -xzf "webfile-$version-linux-amd64.tar.gz"
-cd "webfile-$version-linux-amd64"
-```
-
-Continue only if verification succeeds.
-
-## 3. Prepare configuration and TLS
-
-The default installation uses PAM and serves HTTPS on port 8080. Prepare the configuration and a certificate/key pair valid for the address your browsers will use:
-
-```bash
-sudo install -d -m 0755 /etc/webfile
-sudo install -m 0644 webfile.example.json /etc/webfile/webfile.json
-sudo install -d -m 0700 /etc/webfile/tls
-sudo install -m 0644 /path/to/webfile.crt /etc/webfile/tls/webfile.crt
-sudo install -m 0600 /path/to/webfile.key /etc/webfile/tls/webfile.key
-sudoedit /etc/webfile/webfile.json
-```
-
-Review `roots`, the archive executable and thumbnail paths. Keep `auth.cookie_secure` enabled. The configuration must contain no credentials: workers read it after switching to the user's identity.
-
-The installer creates the `webfile` service account and group. It sets the TLS directory to `root:webfile` with mode `0750`. Before running it, allow the broker to read the private key once that group exists:
+The default setup uses PAM login and serves HTTPS on port 8080. Install a certificate valid for the hostname you will use, then prepare the configuration:
 
 ```bash
 getent group webfile || sudo groupadd --system webfile
-sudo chown root:webfile /etc/webfile/tls/webfile.key
-sudo chmod 0640 /etc/webfile/tls/webfile.key
-sudo ./deploy/install.sh ./webfile
+sudo install -d -m 0755 /etc/webfile
+sudo install -m 0644 webfile.example.json /etc/webfile/webfile.json
+sudo install -d -o root -g webfile -m 0750 /etc/webfile/tls
+sudo install -o root -g webfile -m 0644 /path/to/webfile.crt /etc/webfile/tls/webfile.crt
+sudo install -o root -g webfile -m 0640 /path/to/webfile.key /etc/webfile/tls/webfile.key
+sudoedit /etc/webfile/webfile.json
 ```
 
-For a trusted proxy deployment, configure the [proxy authentication mode](reverse-proxy.md) before starting services. The installer still checks for the default certificate files; install them as above even when the proxy listener will not use direct TLS.
+Replace the certificate source paths with your own. Review the configured roots and tool paths, and keep `auth.cookie_secure` enabled. The configuration is readable by local users, so keep credentials and private-key contents out of it.
 
-## 4. Check the services
+For proxy authentication, use the settings in the [reverse proxy guide](reverse-proxy.md). The installer currently checks for the default TLS files even in proxy mode, so provide them before running it.
+
+## Install and sign in
 
 ```bash
+sudo ./deploy/install.sh ./webfile
 systemctl status webfile webfile-launcher
 webfile version
 ```
 
-Visit `https://your-host:8080` and sign in using a permitted local Linux account. The default minimum user UID is 1000. Filesystem permissions still determine which files that account can read or change.
+The installer creates the service account, installs the services and starts them. Open `https://your-host:8080` and sign in with a permitted local account. The default minimum user UID is 1000.
 
-If startup fails, use the [troubleshooting guide](troubleshooting.md). Do not switch a production installation to the unauthenticated development mode.
+If the service or login fails, check [troubleshooting](troubleshooting.md) before changing permissions or authentication settings.
 
-## Update an existing installation
+## Update an installation
 
-Back up configuration and user data independently. Use HTTPS URLs for both the desired package and its matching checksum:
+Back up your configuration and user data. On the [release page](https://github.com/ahjephson/webfile/releases/latest), copy the HTTPS links for the package and its matching checksum, then substitute them below:
 
 ```bash
-sudo webfile-update \
-  'https://github.com/ahjephson/webfile/releases/download/{{VERSION}}/webfile-{{VERSION}}-linux-amd64.tar.gz' \
-  'https://github.com/ahjephson/webfile/releases/download/{{VERSION}}/webfile-{{VERSION}}-linux-amd64.tar.gz.sha256'
+sudo webfile-update '<package-url>' '<checksum-url>'
 ```
 
-The updater verifies the checksum, replaces the binary and shipped service files, restarts both services, and restores the prior installation if startup fails. It preserves `/etc/webfile/webfile.json`. Confirm the version and service status afterward.
+The updater verifies the checksum, installs the binary and shipped service files, and restarts the services. If startup fails, it restores the previous installation. It preserves `/etc/webfile/webfile.json`.
+
+Review the shipped PAM policy before updating on a distribution that needs a custom policy: the updater replaces `/etc/pam.d/webfile` with the one from the package.

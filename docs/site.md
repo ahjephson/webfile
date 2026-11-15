@@ -15,7 +15,7 @@ dist/docs-venv/bin/python -m unittest discover -s site -p 'test_*.py'
 dist/docs-venv/bin/python site/build.py
 ```
 
-The build writes only to `dist/site` and temporary staging. It reads the current version and release notes from `releases/`, copies shared security/contribution/development/release guides from `docs/`, and validates local links, assets and fragment targets using the `/webfile/` project prefix. Generated output is not committed.
+The build writes only to `dist/site` and temporary staging. It publishes the user guides in `site/content/` and validates local links, assets and fragment targets using the `/webfile/` project prefix. Repository development and release guidance stays in `docs/`; it is not copied into the website. Generated output is not committed.
 
 To preview the same project prefix locally:
 
@@ -29,9 +29,9 @@ Open `http://127.0.0.1:8123/webfile/` in the Codex app's in-app browser. Check t
 
 ## Maintain the site
 
-Edit product copy and styles in `site/website/`; edit user guides in `site/content/`. Shared maintainer policies remain authoritative in `docs/` and are copied into the site during the build. Keep installation instructions consistent with the actual installer, configuration schema and service files. The product page uses an unretouched screenshot of the running development app with fictional files. Capture provenance and reproduction instructions are in `site/website/assets/README.md`; `site/demo.py` prepares an isolated fixture workspace without exposing personal folders or account details.
+Edit product copy and styles in `site/website/`; edit user guides in `site/content/`. Keep maintainer instructions and contribution policies in the repository. Review user guides for unnecessary implementation details and assumptions about a particular distribution or authentication provider. Keep installation instructions consistent with the actual installer, configuration schema and service files. The product page uses an unretouched screenshot of the running development app with fictional files. Capture provenance and reproduction instructions are in `site/website/assets/README.md`; `site/demo.py` prepares an isolated fixture workspace without exposing personal folders or account details. Asset README files are not published.
 
-The documentation describes the current source tree and shows the release marker. It does not maintain separate documentation snapshots for older releases; versioned release notes remain available on GitHub.
+The user guides contain no pinned application release numbers. Product download and release links lead to the latest GitHub release; versioned release notes remain on GitHub.
 
 ## Publish at the public launch
 

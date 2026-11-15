@@ -44,12 +44,14 @@ Video thumbnails require `ffmpeg` and `ffprobe`. The cache never grants access t
 
 ## Listener and public URL overrides
 
-The `serve` command can override the listener and public mount without changing the worker-facing configuration:
+Use `--public-url` to tell WebFile the address people use in their browsers. For a proxy listening on the same server:
 
 ```bash
 webfile serve -config /etc/webfile/webfile.json \
   --http 127.0.0.1:6201 \
-  --public-url https://files.example.com/tools/webfile
+  --public-url https://files.example.com
 ```
 
 `--http` cannot be combined with `--host` or `--port`. `--public-url` derives the base path and allowed external origin; it cannot be combined with `--base-path` or `--origins`. See the [reverse proxy guide](reverse-proxy.md) before using an HTTP backend listener in production.
+
+To serve beneath a path, include it in the URL, for example `https://files.example.com/files/`, and configure the proxy to preserve that path.

@@ -257,7 +257,7 @@ webfile serve -config /etc/webfile/webfile.json \
 
 ### Supported environment
 
-- Linux AMD64 with systemd; Debian and Ubuntu are the packaged deployment targets.
+- Linux AMD64 with compatible glibc and Linux-PAM libraries. The supplied installer uses systemd and a Debian-style PAM policy; other distributions may need policy changes.
 - Current Chromium, Firefox and Safari/WebKit browsers. The automated browser suite covers touch-enabled Chromium and WebKit; physical tablet testing is part of the release checklist.
 - JavaScript, cookies and WebSocket support are required.
 

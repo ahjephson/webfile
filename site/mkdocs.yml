@@ -62,9 +62,7 @@ nav:
       - Transfers and tasks: tasks.md
       - Previews and archives: previews.md
       - Troubleshooting: troubleshooting.md
-  - Project:
-      - Release notes: release-notes.md
+  - Help:
       - Security policy: security.md
-      - Contributing: contributing.md
-      - Development: development.md
-      - Release checklist: release-checklist.md
+      - Report a problem: https://github.com/ahjephson/webfile/issues
+      - Releases: https://github.com/ahjephson/webfile/releases

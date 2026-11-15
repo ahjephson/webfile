@@ -48,3 +48,9 @@ class SiteValidationTests(unittest.TestCase):
         self.page('<p>{{VERSION}}</p>')
         with self.assertRaisesRegex(SystemExit, "unresolved template value"):
             validate(self.root)
+
+    def test_repository_only_guidance_is_rejected(self):
+        self.page('<p>WebFile</p>')
+        (self.root / "docs" / "development.html").write_text('<h1>Maintainer instructions</h1>')
+        with self.assertRaisesRegex(SystemExit, "Repository-only guidance must not be published"):
+            validate(self.root)

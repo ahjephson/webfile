@@ -5,15 +5,11 @@ on:
     branches: [main]
     paths:
       - 'site/**'
-      - 'docs/**'
-      - 'releases/**'
       - 'web/public/favicon.svg'
       - '.github/workflows/pages.yml'
   pull_request:
     paths:
       - 'site/**'
-      - 'docs/**'
-      - 'releases/**'
       - 'web/public/favicon.svg'
       - '.github/workflows/pages.yml'
   workflow_dispatch:

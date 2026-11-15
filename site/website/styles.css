@@ -539,12 +539,6 @@ h3 {
   justify-content: space-between;
   color: var(--amber)
 }
-.checksum-link {
-  font-size: 10px;
-  color: #a9bbc6;
-  display: inline-block;
-  margin-top: 8px
-}
 .install-note {
   font-size: 10px;
   line-height: 1.9;

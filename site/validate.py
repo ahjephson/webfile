@@ -31,6 +31,9 @@ def validate(root):
             raise SystemExit(f"Missing required entry page: {required}")
     pages = {file.resolve(): Page(file.read_text(encoding="utf-8")) for file in root.rglob("*.html")}
     errors = []
+    for name in ("development", "release-checklist", "contributing", "release-notes"):
+        if (root / "docs" / f"{name}.html").exists():
+            errors.append(f"Repository-only guidance must not be published: {name}.html")
     for file, page in pages.items():
         text = file.read_text(encoding="utf-8")
         if "{{VERSION}}" in text or "{{PUBLIC_BASE}}" in text:

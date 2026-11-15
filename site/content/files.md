@@ -23,7 +23,7 @@ Right-click opens the context menu. On touch devices, use explicit selection mod
 
 Use Cut/Copy and Paste, the destination browser, or drag and drop. Dragging moves by default; Ctrl-drag copies and Shift-drag moves, with the choice applied at drop time. Copy and move work across configured roots when Linux permissions allow it.
 
-If a destination exists, review the conflict options. Rename and Keep both publishing use atomic no-replace operations; an unsupported filesystem reports an error instead of silently overwriting a target.
+If a destination exists, review the conflict options. Rename and Keep both preserve existing files; if the filesystem cannot safely create the new name, WebFile reports an error.
 
 See [transfers and tasks](tasks.md) for progress, cancellation and Undo.
 
@@ -40,4 +40,4 @@ Create a folder or text/code file from the file actions. The Monaco editor uses 
 !!! warning "Delete is permanent"
     Delete removes files and folders after confirmation. There is no trash workflow. Keep independent backups, and check the selected items before confirming.
 
-Details shows Linux ownership and metadata. Permission-change endpoints exist in the backend, but the current Details pane presents ownership and permissions as read-only information.
+Details shows file metadata, Linux ownership and permissions. These values are read-only in the interface.

@@ -12,16 +12,18 @@ WebFile is a Linux file manager you use in a browser. It reads your existing fil
 | Install the Linux AMD64 package | [Installation](installation.md) |
 | Choose folders and configure services | [Configuration](configuration.md) |
 | Use local accounts and secure connections | [Authentication and TLS](authentication.md) |
-| Put WebFile behind an authenticating proxy | [Reverse proxy](reverse-proxy.md) |
+| Publish WebFile behind a proxy | [Reverse proxy](reverse-proxy.md) |
 | Work with files in the browser | [Browse and manage files](files.md) |
 | Understand background work and Undo | [Transfers and tasks](tasks.md) |
 | Diagnose a deployment problem | [Troubleshooting](troubleshooting.md) |
 
 ## Supported environment
 
-The packaged target is **Linux AMD64 with systemd**, using Debian or Ubuntu. The server needs 7-Zip for archive operations and FFmpeg/ffprobe for video thumbnails. Node.js is needed to build the frontend, not to run a release package.
+WebFile runs on Linux. The prebuilt package requires an **AMD64 (x86-64)** system with compatible glibc and Linux-PAM libraries. The supplied installer uses systemd; its PAM policy may need adapting to your distribution. See [installation requirements](installation.md#requirements).
 
-Use a current browser with JavaScript, cookies and WebSockets enabled. Automated browser coverage uses touch-enabled Chromium and WebKit; physical tablet checks are part of the release process.
+Install 7-Zip for archive operations and FFmpeg/ffprobe for video thumbnails. Running a release package does not require Node.js or a Go toolchain.
+
+Use a current browser with JavaScript, cookies and WebSockets enabled. The interface supports desktop and touch controls.
 
 ## The security boundary
 
@@ -29,4 +31,4 @@ The broker runs as an unprivileged service account. A small root launcher starts
 
 Production builds require PAM with direct TLS, or a trusted authenticating reverse proxy with secure cookies. The unauthenticated HTTP development build is for a trusted local machine. Read the [security policy](security.md) before exposing an installation.
 
-These guides describe the current source tree. The release marker is **{{VERSION}}**; consult the [release notes](release-notes.md) for published changes.
+For changes between releases, see the [release history](https://github.com/ahjephson/webfile/releases).
