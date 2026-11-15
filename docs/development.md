@@ -4,7 +4,7 @@
 
 WebFile is a Linux-first web file manager. The Go backend performs direct filesystem IO and the Vue 3/TypeScript frontend provides the browser UI. The filesystem is the source of truth: do not introduce a file catalogue or require an initial scan before a configured root can be used.
 
-Read the [project README](../README.md) for the current feature and architecture summary. This file is the self-contained authority for the Windows/WSL development process. Run the commands below from the repository root unless a different working directory is specified.
+Read the [project README](../README.md) for an overview, [architecture](architecture.md) for process boundaries and repository layout, and [building](building.md) for local setup. This file is the self-contained authority for the Windows/WSL development process. Run the commands below from the repository root unless a different working directory is specified.
 
 Important locations:
 

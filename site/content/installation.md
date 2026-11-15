@@ -14,7 +14,7 @@ WebFile runs on Linux and uses local accounts and filesystem permissions. Choose
 | Video thumbnails | Install `ffmpeg` and `ffprobe` if you want this feature. |
 | Browser access | HTTPS, JavaScript, cookies and WebSockets. |
 
-WebFile is not restricted to Debian or Ubuntu. The supplied PAM policy uses their `common-auth` and `common-account` conventions; adapt it to your distribution before installation if those policies are absent. Other architectures, C libraries or service managers require a source build or deployment changes; see the [repository build guide](https://github.com/ahjephson/webfile#production-build).
+WebFile is not restricted to Debian or Ubuntu. The supplied PAM policy uses their `common-auth` and `common-account` conventions; adapt it to your distribution before installation if those policies are absent. Other architectures, C libraries or service managers require a source build or deployment changes; see the [repository build guide](https://github.com/ahjephson/webfile/blob/main/docs/building.md#production-build).
 
 Node.js and a Go toolchain are not required to run the prebuilt package.
 

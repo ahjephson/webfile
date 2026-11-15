@@ -1,10 +1,14 @@
-# WebFile documentation
+# Repository guides
 
-Start with the [project README](../README.md) for features, configuration, installation and development. The [security policy](SECURITY.md) describes deployment boundaries and vulnerability reporting, and the [contribution guide](CONTRIBUTING.md) explains the development checks.
+Start with the [project README](../README.md) for an overview, or the [published documentation](https://ahjephson.dev/webfile/docs/) for installation, configuration and everyday use. This directory contains contributor and maintainer guidance.
 
 ## Maintainer guides
 
-- [Architecture and development invariants](development.md)
+- [Build and run from source](building.md)
+- [Architecture and repository layout](architecture.md)
+- [Contributing and development checks](CONTRIBUTING.md)
+- [Development workflow and invariants](development.md)
+- [Security policy and vulnerability reporting](SECURITY.md)
 - [Release checklist and package provenance](release-checklist.md)
 - [Feature backlog](feature-backlog.md)
 - [Release notes and version marker](../releases/)
