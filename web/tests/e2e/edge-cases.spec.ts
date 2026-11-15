@@ -50,6 +50,7 @@ test('repeated elevation changes keep the folder and exactly one realtime connec
     await expect(page.getByRole('button', { name: 'Drop elevated access', exact: true })).toBeVisible()
     await expect.poll(() => sockets).toBe(round * 2 + 2)
     await page.getByRole('button', { name: 'Drop elevated access', exact: true }).click()
+    await page.getByRole('alertdialog', { name: 'Remove elevated access?' }).getByRole('button', { name: 'Remove elevation', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Elevate access', exact: true })).toBeVisible()
     await expect.poll(() => sockets).toBe(round * 2 + 3)
     await expect(page).toHaveURL(/#path=%2Fdocs$/)

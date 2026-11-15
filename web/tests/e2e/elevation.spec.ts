@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('prompts for temporary elevation and exposes an immediate drop action', async ({ page }) => {
+test('prompts for temporary elevation and confirms removing it', async ({ page }) => {
   let elevated = false
   let submittedPassword = ''
   const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString()
@@ -52,5 +52,13 @@ test('prompts for temporary elevation and exposes an immediate drop action', asy
   await expect(page.getByText(/Elevated until/)).toBeVisible()
 
   await page.getByRole('button', { name: 'Drop elevated access' }).click()
+  const confirmation = page.getByRole('alertdialog', { name: 'Remove elevated access?' })
+  await expect(confirmation).toBeVisible()
+  expect(elevated).toBe(true)
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(confirmation).toBeHidden()
+  expect(elevated).toBe(true)
+  await page.getByRole('button', { name: 'Drop elevated access' }).click()
+  await confirmation.getByRole('button', { name: 'Remove elevation', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Elevate access' })).toBeVisible()
 })

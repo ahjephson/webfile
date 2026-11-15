@@ -1,8 +1,16 @@
-import type { Preferences } from '@/types/files'
+import type { Preferences, ThumbnailSettings } from '@/types/files'
+import type { ComputedRef, InjectionKey } from 'vue'
+
+export const thumbnailSettingsKey: InjectionKey<ComputedRef<ThumbnailSettings>> = Symbol('thumbnailSettings')
+export const defaultThumbnailSettings: ThumbnailSettings = {
+  images_enabled: true, videos_enabled: true, image_workers: 2, video_workers: 2,
+  video_ffmpeg_threads: 2, video_timeout_seconds: 300, max_queued: 200,
+}
 
 export type UserPreferences = Required<Preferences>
 
 export const defaultPreferences: UserPreferences = {
+  thumbnails: defaultThumbnailSettings,
   sort_field: 'name',
   sort_direction: 'asc',
   view_mode: 'list',
@@ -23,10 +31,16 @@ export const defaultPreferences: UserPreferences = {
 }
 
 export function normalizePreferences(value: Preferences = {}): UserPreferences {
+  const thumbnails = { ...defaultThumbnailSettings, ...value.thumbnails }
+  for (const key of ['image_workers', 'video_workers', 'video_ffmpeg_threads', 'video_timeout_seconds', 'max_queued'] as const) {
+    const max = key === 'max_queued' ? 10000 : key === 'video_timeout_seconds' ? 3600 : 32
+    if (!Number.isInteger(thumbnails[key]) || thumbnails[key] < 1 || thumbnails[key] > max) thumbnails[key] = defaultThumbnailSettings[key]
+  }
   const fontSize = Number.isInteger(value.editor_font_size) && value.editor_font_size! >= 10 && value.editor_font_size! <= 28
     ? value.editor_font_size!
     : defaultPreferences.editor_font_size
   return {
+    thumbnails,
     sort_field: ['modified', 'size', 'type'].includes(value.sort_field ?? '') ? value.sort_field! : 'name',
     sort_direction: value.sort_direction === 'desc' ? 'desc' : 'asc',
     view_mode: value.view_mode === 'grid' ? 'grid' : 'list',

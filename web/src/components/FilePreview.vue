@@ -5,6 +5,7 @@ import { api } from '@/api/client'
 import type { FileEntry } from '@/types/files'
 import type { PreviewKind } from '@/utils/preview'
 import ImageGallery from '@/components/ImageGallery.vue'
+import ArchivePreview from '@/components/ArchivePreview.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -113,8 +114,9 @@ function onKeyDown(event: KeyboardEvent) {
     </div>
 
     <div class="relative grid min-h-0 flex-1 place-items-center overflow-hidden">
+      <ArchivePreview v-if="kind === 'archive'" :key="path" :path="path" />
       <video
-        v-if="kind === 'video' && !mediaError"
+        v-else-if="kind === 'video' && !mediaError"
         :src="source"
         class="h-full w-full min-h-0 min-w-0 bg-black object-contain"
         controls

@@ -112,6 +112,7 @@ The task, event, artifact and checkpoint tables provide durable backing for arch
 Extraction and folder-download ZIP creation are delegated to a configured CLI such as `7zz`; WebFile does not maintain archive-format implementations.
 
 - configurable executable/argument mapping;
+- browse archive contents and folders without extraction; encrypted headers prompt for a password directly in the preview, with retry for incorrect passwords and explicit opening errors. Listings are limited to 30 seconds, 50,000 entries and 8 MiB of output. Extract the archive to open individual members;
 - folder downloads run as cancellable archive tasks, publish through a private partial file and expose a Download action only after the ZIP is complete;
 - folder archive preflight enforces configured exclusions and rejects included symlinks or special files before invoking 7-Zip;
 - the normal Extract… dialog previews each archive-named output folder before extraction starts;
@@ -185,6 +186,8 @@ sudo apt install ffmpeg
 ```
 
 WebFile samples representative frames once and stores the resulting WebP sprite in the persistent, broker-owned thumbnail cache. Cache hits still require the requesting worker to open and stat the source as the logged-in user. Video generation uses a separate request-driven queue (two FFmpeg workers and two threads per process by default); the Tasks drawer shows queued and running video work without adding it to durable file-operation history. Ordinary image thumbnails use a separate fast path and stay out of the Tasks UI. The browser never downloads a source video merely to animate a file tile.
+
+Settings exposes per-account generation controls: image and video enable switches, concurrent image/video workers (1–32), threads per video process (1–32), video timeout (1–3600 seconds) and maximum queued videos (1–10,000). Changes apply without restarting; disabling video thumbnails cancels queued and running generation. Accounts without saved generation preferences inherit the server's `thumbnails` defaults. Set `image_workers` or `video_workers` to zero in server configuration to disable that kind by default. Cache paths, socket and total cache size remain server configuration options.
 
 ## Development
 

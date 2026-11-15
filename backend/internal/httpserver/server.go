@@ -21,24 +21,26 @@ import (
 	"webfile/internal/clienterror"
 	"webfile/internal/filesystem"
 	"webfile/internal/operations"
+	"webfile/internal/thumbnailsettings"
 	"webfile/internal/ui"
 	"webfile/internal/watch"
 )
 
 type Server struct {
-	files           *filesystem.Service
-	uploads         *filesystem.UploadManager
-	watch           *watch.Manager
-	extractor       *archive.Extractor
-	ops             *operations.Manager
-	passwords       *passwordBroker
-	archivePassword passwordCache
-	archiveDir      string
-	mux             *http.ServeMux
+	files               *filesystem.Service
+	uploads             *filesystem.UploadManager
+	watch               *watch.Manager
+	extractor           *archive.Extractor
+	ops                 *operations.Manager
+	passwords           *passwordBroker
+	archivePassword     passwordCache
+	archiveDir          string
+	archivePreviewSlots chan struct{}
+	mux                 *http.ServeMux
 }
 
 func NewWorker(files *filesystem.Service, uploads *filesystem.UploadManager, watchManager *watch.Manager, extractor *archive.Extractor, opManager *operations.Manager, archiveDir string) *Server {
-	s := &Server{files: files, uploads: uploads, watch: watchManager, extractor: extractor, ops: opManager, passwords: newPasswordBroker(), archiveDir: archiveDir, mux: http.NewServeMux()}
+	s := &Server{files: files, uploads: uploads, watch: watchManager, extractor: extractor, ops: opManager, passwords: newPasswordBroker(), archiveDir: archiveDir, archivePreviewSlots: make(chan struct{}, 2), mux: http.NewServeMux()}
 	opManager.SetHistoryCleanup(func(operation operations.Operation) error {
 		if operation.Kind == "archive" {
 			return removeArchiveArtifacts(archiveDir, operation.ID)
@@ -56,7 +58,16 @@ func NewWorker(files *filesystem.Service, uploads *filesystem.UploadManager, wat
 }
 
 func (s *Server) Handler() http.Handler {
-	return requestLog(recoverer(s.mux))
+	return requestLog(recoverer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if encoded := r.Header.Get(thumbnailsettings.Header); encoded != "" {
+			var settings thumbnailsettings.Settings
+			if err := json.Unmarshal([]byte(encoded), &settings); err != nil || s.files.ConfigureThumbnails(settings) != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid thumbnail settings."})
+				return
+			}
+		}
+		s.mux.ServeHTTP(w, r)
+	})))
 }
 
 func (s *Server) routes() {
@@ -67,6 +78,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/fs/search", s.search)
 	s.mux.HandleFunc("GET /api/fs/file", s.readFile)
 	s.mux.HandleFunc("GET /api/fs/content-type", s.contentType)
+	s.mux.HandleFunc("POST /api/fs/archive/preview", s.previewArchive)
 	s.mux.HandleFunc("PUT /api/fs/file", s.writeFile)
 	s.mux.HandleFunc("POST /api/fs/mkdir", s.mkdir)
 	s.mux.HandleFunc("POST /api/fs/rename", s.rename)
@@ -294,6 +306,10 @@ func (s *Server) thumbnail(w http.ResponseWriter, r *http.Request) {
 	height := thumbnailDimension(r.URL.Query().Get("height"), 320)
 	result, err := s.files.RequestThumbnail(r.Context(), queryPath(r), width, height)
 	if err != nil {
+		if errors.Is(err, filesystem.ErrThumbnailsDisabled) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "Thumbnail generation is disabled."})
+			return
+		}
 		if errors.Is(err, filesystem.ErrThumbnailQueueFull) {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 			return

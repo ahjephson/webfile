@@ -51,6 +51,8 @@ type ThumbnailResult struct {
 }
 
 type ThumbnailOptions struct {
+	ImagesDisabled     bool
+	VideosDisabled     bool
 	Cache              thumbnailcache.Cache
 	ImageWorkers       int
 	VideoWorkers       int
@@ -109,6 +111,10 @@ func (s *Service) RequestThumbnail(ctx context.Context, virtualPath string, maxW
 		return ThumbnailResult{}, err
 	}
 	defer file.Close()
+	settings := s.ThumbnailSettings()
+	if strings.HasPrefix(source.mediaType, "video/") && !settings.VideosEnabled || !strings.HasPrefix(source.mediaType, "video/") && !settings.ImagesEnabled {
+		return ThumbnailResult{}, ErrThumbnailsDisabled
+	}
 
 	if thumbnail, ok, err := s.cachedThumbnail(ctx, source); err != nil {
 		return ThumbnailResult{}, err
@@ -136,6 +142,9 @@ func (s *Service) RequestThumbnail(ctx context.Context, virtualPath string, maxW
 // supplied by the directory listing is preserved even when requests would
 // otherwise arrive concurrently from multiple tiles.
 func (s *Service) QueueVideoThumbnails(ctx context.Context, virtualPaths []string, maxWidth, maxHeight int) ([]VideoThumbnailJob, error) {
+	if !s.ThumbnailSettings().VideosEnabled {
+		return []VideoThumbnailJob{}, nil
+	}
 	sources := make([]thumbnailSource, 0, len(virtualPaths))
 	seen := make(map[string]struct{}, len(virtualPaths))
 	for _, virtualPath := range virtualPaths {
@@ -184,14 +193,12 @@ func (s *Service) generateImageDeduplicated(ctx context.Context, file *os.File, 
 	s.thumbnailFlights[source.key] = flight
 	s.thumbnailFlightMu.Unlock()
 
-	select {
-	case s.thumbnailSlots <- struct{}{}:
-		defer func() { <-s.thumbnailSlots }()
-	case <-ctx.Done():
-		flight.err = ctx.Err()
+	if err := s.thumbnailSlots.acquire(ctx); err != nil {
+		flight.err = err
 		s.finishThumbnailFlight(source.key, flight)
 		return Thumbnail{}, flight.err
 	}
+	defer s.thumbnailSlots.release()
 	if thumbnail, ok, err := s.cachedThumbnail(ctx, source); err != nil {
 		flight.err = err
 	} else if ok {

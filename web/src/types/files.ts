@@ -64,7 +64,18 @@ export interface FileDetails {
   size_refreshing?: boolean
 }
 
+export interface ThumbnailSettings {
+  images_enabled: boolean
+  videos_enabled: boolean
+  image_workers: number
+  video_workers: number
+  video_ffmpeg_threads: number
+  video_timeout_seconds: number
+  max_queued: number
+}
+
 export interface Preferences {
+  thumbnails?: ThumbnailSettings
   sort_field?: 'name' | 'modified' | 'size' | 'type'
   sort_direction?: 'asc' | 'desc'
   view_mode?: 'list' | 'grid'

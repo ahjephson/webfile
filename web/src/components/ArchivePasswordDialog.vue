@@ -9,6 +9,7 @@ const props = defineProps<{
   archiveName: string
   busy?: boolean
   error?: string
+  purpose?: 'extract' | 'preview'
 }>()
 const emit = defineEmits<{
   'update:visible': [value: boolean]
@@ -19,13 +20,15 @@ const emit = defineEmits<{
 }>()
 const password = ref('')
 
-watch(() => props.visible, visible => {
-  if (!visible) return
+watch(() => props.visible, () => {
   password.value = ''
 })
 
 function submit() {
-  if (password.value && !props.busy) emit('submit', password.value)
+  if (password.value && !props.busy) {
+    emit('submit', password.value)
+    password.value = ''
+  }
 }
 
 function updateVisible(value: boolean) {
@@ -48,7 +51,7 @@ function updateVisible(value: boolean) {
     @after-hide="emit('after-hide')"
   >
     <form class="space-y-4" autocomplete="off" @submit.prevent="submit">
-      <p class="text-sm text-zinc-300">This archive is encrypted. Enter its password to continue extraction.</p>
+      <p class="text-sm text-zinc-300">{{ purpose === 'preview' ? 'Enter the password to view this archive’s contents.' : 'This archive is encrypted. Enter its password to continue extraction.' }}</p>
       <p v-if="error" class="webfile-text-error text-sm" role="alert">{{ error }}</p>
       <div class="space-y-2">
         <label for="archive-password" class="block text-sm font-medium">Password</label>
@@ -62,7 +65,7 @@ function updateVisible(value: boolean) {
         />
       </div>
       <div class="flex justify-end gap-2">
-        <Button label="Later" severity="secondary" text :disabled="busy" @click="emit('dismiss')" />
+        <Button v-if="purpose !== 'preview'" label="Later" severity="secondary" text :disabled="busy" @click="emit('dismiss')" />
         <Button data-dialog-cancel label="Cancel" severity="secondary" text :disabled="busy" @click="emit('cancel')" />
         <Button data-dialog-primary label="Continue" type="submit" :loading="busy" :disabled="busy || !password" />
       </div>

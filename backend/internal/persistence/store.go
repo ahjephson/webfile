@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	"webfile/internal/thumbnailsettings"
 )
 
 const schemaVersion = 1
@@ -18,23 +19,24 @@ type SessionRecord struct {
 }
 
 type Preferences struct {
-	SortField             string `json:"sort_field,omitempty"`
-	SortDirection         string `json:"sort_direction,omitempty"`
-	ViewMode              string `json:"view_mode,omitempty"`
-	GridSize              string `json:"grid_size,omitempty"`
-	ShowHidden            bool   `json:"show_hidden,omitempty"`
-	HideInaccessible      bool   `json:"hide_inaccessible,omitempty"`
-	Theme                 string `json:"theme,omitempty"`
-	EditorWordWrap        bool   `json:"editor_word_wrap,omitempty"`
-	EditorFontSize        int    `json:"editor_font_size,omitempty"`
-	EditorLineNumbers     *bool  `json:"editor_line_numbers,omitempty"`
-	EditorShowWhitespace  bool   `json:"editor_show_whitespace,omitempty"`
-	EditorMinimap         bool   `json:"editor_minimap,omitempty"`
-	EditorToolbar         string `json:"editor_toolbar,omitempty"`
-	EditorMarkdownPreview bool   `json:"editor_markdown_preview,omitempty"`
-	CopyChunkMiB          int    `json:"copy_chunk_mib,omitempty"`
-	ExtractExistingFiles  string `json:"extract_existing_files,omitempty"`
-	ExtractDeleteArchive  *bool  `json:"extract_delete_archive,omitempty"`
+	Thumbnails            *thumbnailsettings.Settings `json:"thumbnails,omitempty"`
+	SortField             string                      `json:"sort_field,omitempty"`
+	SortDirection         string                      `json:"sort_direction,omitempty"`
+	ViewMode              string                      `json:"view_mode,omitempty"`
+	GridSize              string                      `json:"grid_size,omitempty"`
+	ShowHidden            bool                        `json:"show_hidden,omitempty"`
+	HideInaccessible      bool                        `json:"hide_inaccessible,omitempty"`
+	Theme                 string                      `json:"theme,omitempty"`
+	EditorWordWrap        bool                        `json:"editor_word_wrap,omitempty"`
+	EditorFontSize        int                         `json:"editor_font_size,omitempty"`
+	EditorLineNumbers     *bool                       `json:"editor_line_numbers,omitempty"`
+	EditorShowWhitespace  bool                        `json:"editor_show_whitespace,omitempty"`
+	EditorMinimap         bool                        `json:"editor_minimap,omitempty"`
+	EditorToolbar         string                      `json:"editor_toolbar,omitempty"`
+	EditorMarkdownPreview bool                        `json:"editor_markdown_preview,omitempty"`
+	CopyChunkMiB          int                         `json:"copy_chunk_mib,omitempty"`
+	ExtractExistingFiles  string                      `json:"extract_existing_files,omitempty"`
+	ExtractDeleteArchive  *bool                       `json:"extract_delete_archive,omitempty"`
 }
 
 type userState struct {

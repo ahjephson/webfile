@@ -88,6 +88,14 @@ export interface HealthStatus {
   build_date: string
 }
 
+export interface ArchivePreviewEntry {
+  path: string
+  is_dir: boolean
+  size: number
+  modified?: string
+  encrypted: boolean
+}
+
 interface UploadInitResponse {
   upload: UploadSession
   operation: FileOperation
@@ -176,6 +184,12 @@ function reportUploadFailure(failure: PendingUploadFailure): Promise<FileOperati
 }
 
 export const api = {
+  previewArchive(path: string, password: string, signal?: AbortSignal) {
+    return request<{ entries: ArchivePreviewEntry[] }>('/api/fs/archive/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, password }), signal,
+    })
+  },
   abandonUploads,
   forgetPreparedUpload,
   reconcileUploadFailure,

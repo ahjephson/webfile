@@ -155,6 +155,14 @@ test('inaccessible entries show a lock indicator in list and grid views', async 
 
     await expect(restrictedFile.getByRole('img', { name: 'No permission to read DumpStack.log' })).toBeVisible()
     await expect(restrictedFile.locator('[data-file-lock]')).toBeVisible()
+    const iconBounds = await restrictedFile.locator('[data-file-icon]').boundingBox()
+    const lockBounds = await restrictedFile.locator('[data-file-lock]').boundingBox()
+    expect(iconBounds).not.toBeNull()
+    expect(lockBounds).not.toBeNull()
+    expect(lockBounds!.x).toBeLessThan(iconBounds!.x + iconBounds!.width)
+    expect(lockBounds!.x + lockBounds!.width).toBeGreaterThan(iconBounds!.x + iconBounds!.width)
+    expect(lockBounds!.y).toBeLessThan(iconBounds!.y + iconBounds!.height)
+    expect(lockBounds!.y + lockBounds!.height).toBeGreaterThan(iconBounds!.y + iconBounds!.height)
     await restrictedFile.dblclick()
     await expect(page).not.toHaveURL(/file=/)
   }

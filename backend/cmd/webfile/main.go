@@ -140,12 +140,13 @@ func serve(args []string) {
 	currentIdentity, err := identity.Current()
 	fatalIf(err, "resolve current user")
 	mainServer := httpserver.NewMain(httpserver.MainOptions{
-		Version:        version,
-		Commit:         commit,
-		BuildDate:      buildDate,
-		BasePath:       mountPath,
-		AllowedOrigins: allowedOrigins,
-		AuthMode:       cfg.Auth.Mode,
+		ThumbnailDefaults: cfg.Thumbnails.GenerationSettings(),
+		Version:           version,
+		Commit:            commit,
+		BuildDate:         buildDate,
+		BasePath:          mountPath,
+		AllowedOrigins:    allowedOrigins,
+		AuthMode:          cfg.Auth.Mode,
 		Authenticate: func(ctx context.Context, username, password string) error {
 			return launcher.ClientAuthenticate(ctx, cfg.Runtime.LauncherSocket, username, password)
 		},
@@ -392,6 +393,8 @@ func workerMain(args []string) {
 	fatalIf(err, "filesystem resolver failed")
 	files := filesystem.NewServiceWithThumbnailOptions(resolver, cfg.EditorMaxBytes, filesystem.ThumbnailOptions{
 		Cache:              thumbnailcache.NewClient(*cacheSocket, *cacheToken),
+		ImagesDisabled:     cfg.Thumbnails.ImageWorkers == 0,
+		VideosDisabled:     cfg.Thumbnails.VideoWorkers == 0,
 		ImageWorkers:       cfg.Thumbnails.ImageWorkers,
 		VideoWorkers:       cfg.Thumbnails.VideoWorkers,
 		VideoFFmpegThreads: cfg.Thumbnails.VideoFFmpegThreads,

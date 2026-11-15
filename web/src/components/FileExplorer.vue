@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
+import { thumbnailSettingsKey } from '@/preferences'
 import Button from 'primevue/button'
 import ContextMenu from 'primevue/contextmenu'
 import InputText from 'primevue/inputtext'
@@ -224,6 +225,7 @@ const settingsSaving = ref(false)
 const conflictVisible = ref(false), conflictBusy = ref(false), conflictError = ref(''), conflictOperationId = ref('')
 const shownConflicts = new Set<string>()
 const userPreferences = ref<UserPreferences>({ ...defaultPreferences })
+provide(thumbnailSettingsKey, computed(() => userPreferences.value.thumbnails))
 const thumbnailJobs = workspace.thumbnailJobs
 const pendingVideoThumbnailPaths = ref<Set<string>>(new Set())
 const detailsVisible = ref(restoredExplorerState.detailsVisible)
@@ -390,7 +392,7 @@ const filteredEntries = computed(() => {
   })
   return sortEntries(visible, sortField.value, sortDirection.value)
 })
-const orderedVideoThumbnailEntries = computed(() => viewMode.value !== 'grid' ? [] : filteredEntries.value
+const orderedVideoThumbnailEntries = computed(() => viewMode.value !== 'grid' || !userPreferences.value.thumbnails.videos_enabled ? [] : filteredEntries.value
   .filter(entry => !entry.is_dir && entry.can_read !== false && fileVisualForPath(entry.path).kind === 'video')
   .map(entry => ({ path: entry.path, version: `${entry.size}:${entry.modified}` })))
 
@@ -756,6 +758,7 @@ async function saveSettings(preferences: UserPreferences) {
   try {
     const saved = normalizePreferences(await persistPreferences(preferences))
     applyPreferences(saved)
+    await workspace.thumbnails.load()
     settingsVisible.value = false
     toast.add({ severity: 'success', summary: 'Settings saved', life: 2000 })
   } catch (err) {
@@ -1306,6 +1309,17 @@ async function pasteClipboard() {
   if (await beginOperation(clipboard.mode, clipboard.paths, currentPath.value) && clipboard.mode === 'move') {
     fileClipboard.value = null
   }
+}
+
+function confirmDropElevation() {
+  confirm.require({
+    header: 'Remove elevated access?',
+    message: 'Return to your normal permissions? Tasks using elevated access will be stopped.',
+    icon: 'pi pi-shield',
+    rejectLabel: 'Cancel',
+    acceptLabel: 'Remove elevation',
+    accept: () => { emit('dropElevation') },
+  })
 }
 
 function deleteEntries(items: FileEntry[] = selectedEntries.value) {
@@ -1997,7 +2011,7 @@ function operationLabel(value: string) {
           size="small"
           outlined
           aria-label="Drop elevated access"
-          @click="emit('dropElevation')"
+          @click="confirmDropElevation"
         />
         <span class="hidden items-center gap-1 text-xs text-zinc-500 sm:flex">
           <i class="pi pi-circle-fill text-[0.45rem]" :class="watchConnected ? 'webfile-accent-success' : 'text-zinc-600'" /> live

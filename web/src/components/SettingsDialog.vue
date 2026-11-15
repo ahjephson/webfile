@@ -19,7 +19,7 @@ const emit = defineEmits<{
   save: [preferences: UserPreferences]
 }>()
 
-const draft = ref<UserPreferences>({ ...props.preferences })
+const draft = ref<UserPreferences>({ ...props.preferences, thumbnails: { ...props.preferences.thumbnails } })
 const build = ref<HealthStatus | null>(null)
 const themeOptions = [
   { label: 'System', value: 'system' },
@@ -52,7 +52,7 @@ const extractExistingOptions = [
 
 watch(() => props.visible, visible => {
   if (!visible) return
-  draft.value = { ...props.preferences }
+  draft.value = { ...props.preferences, thumbnails: { ...props.preferences.thumbnails } }
   void api.health().then(value => { build.value = value }).catch(() => { build.value = null })
 })
 
@@ -63,7 +63,7 @@ function close() {
 
 function save() {
   if (props.saving) return
-  emit('save', { ...draft.value })
+  emit('save', { ...draft.value, thumbnails: { ...draft.value.thumbnails } })
 }
 </script>
 
@@ -101,6 +101,41 @@ function save() {
           <label class="settings-row">
             <span><strong>Hide inaccessible files and folders</strong><small>Exclude files you cannot read and folders you cannot open.</small></span>
             <ToggleSwitch v-model="draft.hide_inaccessible" aria-label="Hide inaccessible files and folders" />
+          </label>
+        </div>
+      </section>
+
+      <section aria-labelledby="thumbnail-settings-heading">
+        <h2 id="thumbnail-settings-heading" class="mb-1 text-sm font-semibold text-zinc-100">Thumbnails</h2>
+        <p class="mb-3 text-xs text-zinc-500">Generation limits for your account. Changes apply to new work; disabling video thumbnails also cancels queued and running video generation. Cache storage is managed by the server administrator.</p>
+        <div class="webfile-section-list rounded-lg border border-zinc-800">
+          <label class="settings-row">
+            <span><strong>Image thumbnails</strong><small>Show image previews in grid view.</small></span>
+            <ToggleSwitch v-model="draft.thumbnails.images_enabled" aria-label="Image thumbnails" />
+          </label>
+          <label class="settings-row">
+            <span><strong>Concurrent image thumbnails</strong><small>Number generated at once, from 1 to 32.</small></span>
+            <InputNumber v-model="draft.thumbnails.image_workers" :min="1" :max="32" :allow-empty="false" :disabled="!draft.thumbnails.images_enabled" show-buttons input-class="w-20" aria-label="Concurrent image thumbnails" />
+          </label>
+          <label class="settings-row">
+            <span><strong>Video thumbnails</strong><small>Generate video previews. Turn off to avoid thumbnail video processes.</small></span>
+            <ToggleSwitch v-model="draft.thumbnails.videos_enabled" aria-label="Video thumbnails" />
+          </label>
+          <label class="settings-row">
+            <span><strong>Concurrent video thumbnails</strong><small>Use 1 on slower machines or increase for faster machines, up to 32.</small></span>
+            <InputNumber v-model="draft.thumbnails.video_workers" :min="1" :max="32" :allow-empty="false" :disabled="!draft.thumbnails.videos_enabled" show-buttons input-class="w-20" aria-label="Concurrent video thumbnails" />
+          </label>
+          <label class="settings-row">
+            <span><strong>Threads per video process</strong><small>Processing threads per video, from 1 to 32.</small></span>
+            <InputNumber v-model="draft.thumbnails.video_ffmpeg_threads" :min="1" :max="32" :allow-empty="false" :disabled="!draft.thumbnails.videos_enabled" show-buttons input-class="w-20" aria-label="Threads per video process" />
+          </label>
+          <label class="settings-row">
+            <span><strong>Video timeout</strong><small>Maximum generation time per video, from 1 to 3600 seconds.</small></span>
+            <InputNumber v-model="draft.thumbnails.video_timeout_seconds" :min="1" :max="3600" :allow-empty="false" :disabled="!draft.thumbnails.videos_enabled" suffix=" s" show-buttons input-class="w-20" aria-label="Video thumbnail timeout" />
+          </label>
+          <label class="settings-row">
+            <span><strong>Maximum queued videos</strong><small>Waiting videos per account, from 1 to 10,000.</small></span>
+            <InputNumber v-model="draft.thumbnails.max_queued" :min="1" :max="10000" :allow-empty="false" :disabled="!draft.thumbnails.videos_enabled" show-buttons input-class="w-20" aria-label="Maximum queued videos" />
           </label>
         </div>
       </section>

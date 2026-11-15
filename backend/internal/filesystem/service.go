@@ -20,6 +20,7 @@ import (
 
 	"webfile/internal/clienterror"
 	"webfile/internal/thumbnailcache"
+	"webfile/internal/thumbnailsettings"
 )
 
 var (
@@ -57,23 +58,25 @@ type FileType struct {
 }
 
 type Service struct {
-	searchSlots       chan struct{}
-	resolver          *Resolver
-	editorMaxBytes    int64
-	thumbnailCache    thumbnailcache.Cache
-	thumbnailSlots    chan struct{}
-	thumbnailFlightMu sync.Mutex
-	thumbnailFlights  map[string]*thumbnailFlight
-	videoThumbnails   videoThumbnailGenerator
-	videoQueue        *videoThumbnailQueue
-	folderSizeMu      sync.Mutex
-	folderSizeCache   map[string]folderSizeCacheEntry
-	folderSizePending map[string]*folderSizeJob
-	folderSizeSlots   chan struct{}
-	folderSizeContext context.Context
-	folderSizeCancel  context.CancelFunc
-	folderSizeWait    sync.WaitGroup
-	folderSizeClosed  bool
+	searchSlots         chan struct{}
+	resolver            *Resolver
+	editorMaxBytes      int64
+	thumbnailCache      thumbnailcache.Cache
+	thumbnailSlots      *thumbnailLimiter
+	thumbnailSettingsMu sync.Mutex
+	thumbnailSettings   thumbnailsettings.Settings
+	thumbnailFlightMu   sync.Mutex
+	thumbnailFlights    map[string]*thumbnailFlight
+	videoThumbnails     videoThumbnailGenerator
+	videoQueue          *videoThumbnailQueue
+	folderSizeMu        sync.Mutex
+	folderSizeCache     map[string]folderSizeCacheEntry
+	folderSizePending   map[string]*folderSizeJob
+	folderSizeSlots     chan struct{}
+	folderSizeContext   context.Context
+	folderSizeCancel    context.CancelFunc
+	folderSizeWait      sync.WaitGroup
+	folderSizeClosed    bool
 }
 
 func NewService(resolver *Resolver, editorMaxBytes int64) *Service {
@@ -87,7 +90,8 @@ func NewServiceWithThumbnailOptions(resolver *Resolver, editorMaxBytes int64, op
 		resolver:          resolver,
 		editorMaxBytes:    editorMaxBytes,
 		thumbnailCache:    options.Cache,
-		thumbnailSlots:    make(chan struct{}, options.ImageWorkers),
+		thumbnailSlots:    newThumbnailLimiter(options.ImageWorkers),
+		thumbnailSettings: thumbnailsettings.Settings{ImagesEnabled: !options.ImagesDisabled, VideosEnabled: !options.VideosDisabled, ImageWorkers: options.ImageWorkers, VideoWorkers: options.VideoWorkers, VideoFFmpegThreads: options.VideoFFmpegThreads, VideoTimeoutSeconds: int(options.VideoTimeout.Seconds()), MaxQueued: options.MaxQueued},
 		thumbnailFlights:  make(map[string]*thumbnailFlight),
 		videoThumbnails:   videoThumbnailGenerator{ffmpeg: "ffmpeg", ffprobe: "ffprobe", threads: options.VideoFFmpegThreads},
 		folderSizeCache:   make(map[string]folderSizeCacheEntry),
@@ -96,6 +100,12 @@ func NewServiceWithThumbnailOptions(resolver *Resolver, editorMaxBytes int64, op
 	}
 	service.folderSizeContext, service.folderSizeCancel = context.WithCancel(context.Background())
 	service.videoQueue = newVideoThumbnailQueue(service, options)
+	if options.ImagesDisabled {
+		service.thumbnailSlots.setLimit(0)
+	}
+	if options.VideosDisabled {
+		service.videoQueue.configure(0, options.MaxQueued, options.VideoTimeout)
+	}
 	return service
 }
 

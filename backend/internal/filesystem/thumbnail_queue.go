@@ -46,6 +46,9 @@ type videoThumbnailJob struct {
 type videoThumbnailQueue struct {
 	service       *Service
 	workers       int
+	spawned       int
+	active        int
+	disabled      bool
 	maxQueued     int
 	timeout       time.Duration
 	mu            sync.Mutex
@@ -66,9 +69,9 @@ type videoThumbnailQueue struct {
 
 func newVideoThumbnailQueue(service *Service, options ThumbnailOptions) *videoThumbnailQueue {
 	queue := &videoThumbnailQueue{
-		service: service, workers: options.VideoWorkers, maxQueued: options.MaxQueued, timeout: options.VideoTimeout,
+		service: service, workers: options.VideoWorkers, spawned: options.VideoWorkers, maxQueued: options.MaxQueued, timeout: options.VideoTimeout,
 		jobs: make(map[string]*videoThumbnailJob), ids: make(map[string]*videoThumbnailJob),
-		subscribers: make(map[chan VideoThumbnailJob]struct{}), settleWake: make(chan struct{}, 1), wake: make(chan struct{}, options.VideoWorkers), stop: make(chan struct{}),
+		subscribers: make(map[chan VideoThumbnailJob]struct{}), settleWake: make(chan struct{}, 1), wake: make(chan struct{}, 32), stop: make(chan struct{}),
 		retryBackoff: 10 * time.Second, completedLife: 3 * time.Second, settleDelay: 2 * time.Second,
 	}
 	queue.workerWait.Add(1)
@@ -90,12 +93,16 @@ func (q *videoThumbnailQueue) schedule(source thumbnailSource) (VideoThumbnailJo
 
 func (q *videoThumbnailQueue) scheduleBatch(sources []thumbnailSource) []VideoThumbnailJob {
 	q.mu.Lock()
+	if q.disabled {
+		q.mu.Unlock()
+		return nil
+	}
 	jobs := make([]VideoThumbnailJob, 0, len(sources))
 	added := 0
 	for _, source := range sources {
 		logicalKey := videoThumbnailLogicalKey(source)
 		if existing := q.jobs[logicalKey]; existing != nil {
-			needsSlot := isThumbnailTerminal(existing.view.State) && (existing.source.key != source.key || existing.view.State == "failed" && time.Since(existing.view.UpdatedAt) >= q.retryBackoff)
+			needsSlot := isThumbnailTerminal(existing.view.State) && (existing.source.key != source.key || existing.view.State == "cancelled" || existing.view.State == "failed" && time.Since(existing.view.UpdatedAt) >= q.retryBackoff)
 			if needsSlot && len(q.queued)+len(q.settling) >= q.maxQueued {
 				continue
 			}
@@ -120,7 +127,7 @@ func (q *videoThumbnailQueue) scheduleBatch(sources []thumbnailSource) []VideoTh
 				if previousState != "settling" {
 					q.publishLocked(q.snapshotLocked(existing))
 				}
-			} else if existing.view.State == "failed" && time.Since(existing.view.UpdatedAt) >= q.retryBackoff {
+			} else if existing.view.State == "cancelled" || existing.view.State == "failed" && time.Since(existing.view.UpdatedAt) >= q.retryBackoff {
 				now := time.Now()
 				existing.done = make(chan struct{})
 				existing.view.State, existing.view.Error, existing.view.Cancellable = "settling", "", true
@@ -296,16 +303,21 @@ func (q *videoThumbnailQueue) runWorker() {
 			}
 		}
 		q.run(job)
+		q.mu.Lock()
+		q.active--
+		q.mu.Unlock()
+		q.signal()
 	}
 }
 
 func (q *videoThumbnailQueue) next() (*videoThumbnailJob, time.Duration) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if len(q.queued) == 0 {
+	if len(q.queued) == 0 || q.active >= q.workers {
 		return nil, 0
 	}
 	job := q.queued[0]
+	q.active++
 	q.queued = q.queued[1:]
 	q.publishQueuePositionsLocked()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -337,8 +349,13 @@ func (q *videoThumbnailQueue) run(job *videoThumbnailJob) {
 	if err == nil {
 		q.setState(job, "generating", "")
 		var data []byte
-		generationCtx, generationCancel := context.WithTimeout(ctx, q.timeout)
-		data, err = q.service.videoThumbnails.generate(generationCtx, source.absolute, source.width, source.height)
+		q.mu.Lock()
+		timeout := q.timeout
+		q.mu.Unlock()
+		generator := q.service.videoThumbnails
+		generator.threads = q.service.ThumbnailSettings().VideoFFmpegThreads
+		generationCtx, generationCancel := context.WithTimeout(ctx, timeout)
+		data, err = generator.generate(generationCtx, source.absolute, source.width, source.height)
 		generationCancel()
 		latest, latestFile, inspectErr := q.service.inspectThumbnailSource(ctx, source.virtualPath, source.width, source.height)
 		if inspectErr == nil {

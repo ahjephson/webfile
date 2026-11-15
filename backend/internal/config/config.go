@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"webfile/internal/thumbnailsettings"
 )
 
 type Root struct {
@@ -68,6 +69,14 @@ type Thumbnails struct {
 	VideoFFmpegThreads  int    `json:"video_ffmpeg_threads"`
 	VideoTimeoutSeconds int    `json:"video_timeout_seconds"`
 	MaxQueued           int    `json:"max_queued"`
+}
+
+func (t Thumbnails) GenerationSettings() thumbnailsettings.Settings {
+	return thumbnailsettings.Settings{
+		ImagesEnabled: t.ImageWorkers != 0, VideosEnabled: t.VideoWorkers != 0,
+		ImageWorkers: max(1, t.ImageWorkers), VideoWorkers: max(1, t.VideoWorkers),
+		VideoFFmpegThreads: t.VideoFFmpegThreads, VideoTimeoutSeconds: t.VideoTimeoutSeconds, MaxQueued: t.MaxQueued,
+	}
 }
 
 type Config struct {
@@ -302,14 +311,14 @@ func (c *Config) Validate() error {
 	if c.Thumbnails.CacheMaxBytes <= 0 {
 		return errors.New("thumbnails.cache_max_bytes must be greater than zero")
 	}
-	if c.Thumbnails.ImageWorkers <= 0 || c.Thumbnails.VideoWorkers <= 0 || c.Thumbnails.VideoFFmpegThreads <= 0 {
-		return errors.New("thumbnail worker counts must be greater than zero")
+	if c.Thumbnails.ImageWorkers < 0 || c.Thumbnails.ImageWorkers > 32 || c.Thumbnails.VideoWorkers < 0 || c.Thumbnails.VideoWorkers > 32 || c.Thumbnails.VideoFFmpegThreads < 1 || c.Thumbnails.VideoFFmpegThreads > 32 {
+		return errors.New("thumbnail worker counts must be between 0 and 32; video threads must be between 1 and 32")
 	}
-	if c.Thumbnails.VideoTimeoutSeconds <= 0 {
-		return errors.New("thumbnails.video_timeout_seconds must be greater than zero")
+	if c.Thumbnails.VideoTimeoutSeconds <= 0 || c.Thumbnails.VideoTimeoutSeconds > 3600 {
+		return errors.New("thumbnails.video_timeout_seconds must be between 1 and 3600")
 	}
-	if c.Thumbnails.MaxQueued <= 0 {
-		return errors.New("thumbnails.max_queued must be greater than zero")
+	if c.Thumbnails.MaxQueued <= 0 || c.Thumbnails.MaxQueued > 10000 {
+		return errors.New("thumbnails.max_queued must be between 1 and 10000")
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,29 +17,31 @@ import (
 	"webfile/internal/identity"
 	"webfile/internal/persistence"
 	"webfile/internal/session"
+	"webfile/internal/thumbnailsettings"
 	"webfile/internal/worker"
 )
 
 type MainOptions struct {
-	Version          string
-	Commit           string
-	BuildDate        string
-	BasePath         string
-	AllowedOrigins   []string
-	AuthMode         string
-	Authenticate     func(context.Context, string, string) error
-	Sessions         *session.Store
-	ProxyUserHeader  string
-	TrustedProxies   []netip.Prefix
-	LogoutURL        string
-	State            *persistence.Store
-	Workers          *worker.Manager
-	CurrentUser      identity.Identity
-	CookieSecure     bool
-	LoginMaxAttempts int
-	LoginWindow      time.Duration
-	LoginBlock       time.Duration
-	ElevationTTL     time.Duration
+	ThumbnailDefaults thumbnailsettings.Settings
+	Version           string
+	Commit            string
+	BuildDate         string
+	BasePath          string
+	AllowedOrigins    []string
+	AuthMode          string
+	Authenticate      func(context.Context, string, string) error
+	Sessions          *session.Store
+	ProxyUserHeader   string
+	TrustedProxies    []netip.Prefix
+	LogoutURL         string
+	State             *persistence.Store
+	Workers           *worker.Manager
+	CurrentUser       identity.Identity
+	CookieSecure      bool
+	LoginMaxAttempts  int
+	LoginWindow       time.Duration
+	LoginBlock        time.Duration
+	ElevationTTL      time.Duration
 }
 
 type MainServer struct {
@@ -57,6 +60,9 @@ type elevationState struct {
 }
 
 func NewMain(opts MainOptions) *MainServer {
+	if opts.ThumbnailDefaults.Validate() != nil {
+		opts.ThumbnailDefaults = thumbnailsettings.Default()
+	}
 	opts.BasePath = normalizeBasePath(opts.BasePath)
 	s := &MainServer{
 		opts:           opts,
@@ -229,6 +235,13 @@ func (s *MainServer) proxyFilesystem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "The file service is currently unavailable. Please try again."})
 		return
 	}
+	settings := s.opts.State.Preferences(id.Username).Thumbnails
+	if settings == nil {
+		settings = &s.opts.ThumbnailDefaults
+	}
+	encoded, _ := json.Marshal(settings)
+	// Overwrite client input: only validated, persisted preferences reach workers.
+	r.Header.Set(thumbnailsettings.Header, string(encoded))
 	process.Proxy.ServeHTTP(w, r)
 }
 
@@ -395,7 +408,12 @@ func (s *MainServer) getPreferences(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.opts.State.Preferences(id.Username))
+	prefs := s.opts.State.Preferences(id.Username)
+	if prefs.Thumbnails == nil {
+		defaults := s.opts.ThumbnailDefaults
+		prefs.Thumbnails = &defaults
+	}
+	writeJSON(w, http.StatusOK, prefs)
 }
 
 func (s *MainServer) putPreferences(w http.ResponseWriter, r *http.Request) {
@@ -444,6 +462,12 @@ func (s *MainServer) putPreferences(w http.ResponseWriter, r *http.Request) {
 	if prefs.ExtractExistingFiles != "" && prefs.ExtractExistingFiles != "skip" && prefs.ExtractExistingFiles != "overwrite" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "extract_existing_files must be skip or overwrite"})
 		return
+	}
+	if prefs.Thumbnails != nil {
+		if err := prefs.Thumbnails.Validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 	if err := s.opts.State.SetPreferences(id.Username, prefs); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save preferences"})

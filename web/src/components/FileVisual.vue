@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
+import { defaultThumbnailSettings, thumbnailSettingsKey } from '@/preferences'
 import { api } from '@/api/client'
 import type { FileEntry } from '@/types/files'
 import { fileVisualForContentType, fileVisualForPath } from '@/utils/fileVisual'
@@ -12,6 +13,7 @@ const props = defineProps<{
 }>()
 
 const detectedContentType = ref('')
+const thumbnailSettings = inject(thumbnailSettingsKey, computed(() => defaultThumbnailSettings))
 const thumbnailFailed = ref(false)
 const videoSprite = ref<HTMLElement | null>(null)
 const videoFrame = ref(0)
@@ -27,9 +29,9 @@ const visual = computed(() => detectedContentType.value
   : pathVisual.value)
 const lockedDirectory = computed(() => props.entry.is_dir && props.entry.can_navigate === false)
 const lockedFile = computed(() => !props.entry.is_dir && props.entry.can_read === false)
-const showImageThumbnail = computed(() => props.tile && !props.entry.is_dir && !lockedFile.value && visual.value.kind === 'image' && !thumbnailFailed.value)
+const showImageThumbnail = computed(() => thumbnailSettings.value.images_enabled && props.tile && !props.entry.is_dir && !lockedFile.value && visual.value.kind === 'image' && !thumbnailFailed.value)
 const imageThumbnailUrl = computed(() => api.thumbnailUrl(props.entry.path, 320, 320, `${props.entry.size}:${props.entry.modified}`))
-const showVideoThumbnail = computed(() => props.thumbnailEnabled !== false && props.tile && !props.entry.is_dir && !lockedFile.value && visual.value.kind === 'video' && !thumbnailFailed.value)
+const showVideoThumbnail = computed(() => thumbnailSettings.value.videos_enabled && props.thumbnailEnabled !== false && props.tile && !props.entry.is_dir && !lockedFile.value && visual.value.kind === 'video' && !thumbnailFailed.value)
 const tileHeight = computed(() => ({ small: '4rem', medium: '7rem', large: '10rem' })[props.tileSize ?? 'medium'])
 const tileIconSize = computed(() => ({ small: '2.5rem', medium: '4rem', large: '5.5rem' })[props.tileSize ?? 'medium'])
 const videoSpriteStyle = computed(() => ({
@@ -170,9 +172,11 @@ function stopVideoAnimation() {
         :data-video-frame="videoFrame"
       />
     </template>
-    <i v-else :class="[visual.icon, lockedFile ? 'text-zinc-500' : visual.color]" :style="{ fontSize: tile ? tileIconSize : '1.125rem' }" aria-hidden="true" data-file-icon />
-    <span v-if="lockedFile" class="webfile-accent-danger absolute -bottom-1 -right-2 grid place-items-center rounded-full border border-zinc-700 bg-zinc-950 shadow" :class="tile ? 'h-7 w-7 text-sm' : 'h-4 w-4 text-[0.6rem]'" data-file-lock aria-hidden="true">
-      <i class="pi pi-lock" />
+    <span v-else class="relative grid place-items-center">
+      <i :class="[visual.icon, lockedFile ? 'text-zinc-500' : visual.color]" :style="{ fontSize: tile ? tileIconSize : '1.125rem' }" aria-hidden="true" data-file-icon />
+      <span v-if="lockedFile" class="webfile-accent-danger absolute -bottom-1 -right-2 grid place-items-center rounded-full border border-zinc-700 bg-zinc-950 shadow" :class="tile ? 'h-7 w-7 text-sm' : 'h-4 w-4 text-[0.6rem]'" data-file-lock aria-hidden="true">
+        <i class="pi pi-lock" />
+      </span>
     </span>
   </span>
 </template>
