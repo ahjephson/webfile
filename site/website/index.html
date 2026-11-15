@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111519">
+  <meta name="description" content="Your Linux filesystem, in your browser. Browse, preview and manage files with real Linux permissions, resumable uploads and background tasks. Open source under MIT.">
+  <title>WebFile — Your Linux filesystem, in your browser</title>
+  <link rel="canonical" href="{{PUBLIC_BASE}}">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="WebFile — Your filesystem. In your browser.">
+  <meta property="og:description" content="A self-hosted Linux file manager. Real Linux permissions. Direct filesystem access. No catalogue to build.">
+  <meta property="og:url" content="{{PUBLIC_BASE}}">
+  <meta name="twitter:card" content="summary">
+  <link rel="icon" href="assets/webfile.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="./" aria-label="WebFile home"><img src="assets/webfile.svg" width="34" height="34" alt=""><span>WebFile<span class="brand-dot">.</span></span></a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="primary-nav">Menu <span aria-hidden="true">☰</span></button>
+      <nav id="primary-nav" aria-label="Primary navigation">
+        <a href="#features">Features</a><a href="#permissions">Linux permissions</a><a href="docs/">Documentation</a>
+        <a class="github-link" href="https://github.com/ahjephson/webfile">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </div>
+  </header>
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <a class="release-link" href="docs/release-notes.html"><span class="status-dot"></span> VERSION {{VERSION}} <span class="release-divider">/</span> WHAT’S NEW <span aria-hidden="true">↗</span></a>
+        <p class="eyebrow hero-eyebrow">SELF-HOSTED. LINUX FIRST.</p>
+        <h1 id="hero-title">Your filesystem.<br><span>In your browser.</span></h1>
+        <p class="intro">Open a browser. Get to your files. WebFile brings browsing, previews and file operations to your Linux server, using the permissions you already have.</p>
+        <div class="actions"><a class="button primary" href="docs/installation.html">Install WebFile <span aria-hidden="true">↗</span></a><a class="text-link" href="docs/">Read the docs <span aria-hidden="true">→</span></a></div>
+        <p class="hero-note">Open source / MIT <span>·</span> Linux AMD64 <span>·</span> Your own server</p>
+      </div>
+      <div class="workspace-figure">
+        <div class="workspace" role="img" aria-label="Illustrative WebFile workspace with fictional folders, a selected guide, a backup destination and a copy task at 68 percent">
+          <div class="window-bar"><div class="window-dots"><i></i><i></i><i></i></div><span>webfile</span><div class="window-account"><span class="status-dot"></span> demo</div></div>
+          <div class="workspace-toolbar"><span class="tool-arrow">← &nbsp; →</span><div class="breadcrumb">Home <span>/</span> Projects</div><span class="tool-icons">＋ &nbsp; ⋯</span></div>
+          <div class="workspace-body">
+            <aside class="mock-sidebar"><span class="mock-label">LOCATIONS</span><span class="location active"><span>⌂</span> Home</span><span class="location"><span>▤</span> Media</span><span class="location"><span>▣</span> Backups</span><div class="sidebar-bottom"><span class="status-dot"></span> Connected</div></aside>
+            <div class="mock-files"><div class="pane-heading">Projects <span>5 items</span></div><div class="table-heading"><span>Name ↑</span><span>Size</span></div><div class="file-row"><i class="folder"></i><span>Documents</span><small>—</small></div><div class="file-row"><i class="folder"></i><span>Field recordings</span><small>—</small></div><div class="file-row selected"><i class="document">md</i><span>webfile-guide.md</span><small>4 KB</small></div><div class="file-row"><i class="document audio">♫</i><span>morning.wav</span><small>24 MB</small></div><div class="file-row"><i class="document archive">zip</i><span>project.zip</span><small>8 MB</small></div><div class="pane-footer">1 item selected</div></div>
+            <div class="destination-pane"><div class="pane-heading">Backups <span>↗</span></div><div class="destination-path">/srv/backups</div><div class="file-row"><i class="folder"></i><span>Projects</span></div><div class="destination-note"><span>⇄</span>Two panes.<br>One workspace.</div></div>
+          </div>
+          <div class="mock-task"><div class="task-symbol">↗</div><div class="task-content"><div class="task-title"><span>Copying to Backups</span><b>68%</b></div><div class="progress"><span></span></div><div class="task-meta"><span>2 items · background task</span><span>Ⅱ &nbsp; ×</span></div></div></div>
+        </div>
+        <p class="figure-caption"><span class="caption-line"></span> ILLUSTRATIVE WORKSPACE · FICTIONAL FILES</p>
+      </div>
+    </section>
+    <div class="wrap foundations"><span><i aria-hidden="true">↳</i> Direct filesystem access</span><span><i aria-hidden="true">◎</i> Real Linux identities</span><span><i aria-hidden="true">⇄</i> Live folder updates</span><span><i aria-hidden="true">▤</i> No catalogue to build</span></div>
+    <section id="features" class="section wrap" aria-labelledby="features-title">
+      <div class="section-heading"><div><p class="eyebrow">01 / ROOM TO WORK</p><h2 id="features-title">A file manager.<br><span class="muted">For the server you already run.</span></h2></div><p>From a quick edit to a long transfer, keep the work in one browser window.</p></div>
+      <div class="feature-grid">
+        <article class="feature feature-wide"><div class="feature-top"><span class="eyebrow">BROWSE & ORGANISE</span><span class="feature-symbol" aria-hidden="true">↳</span></div><h3>Go straight to your files.</h3><p>Browse configured roots as soon as you open them. Use a list, a grid or two independent panes. Filter the current folder or search filenames beneath it.</p><div class="feature-tags"><span>Split panes</span><span>Live updates</span><span>Keyboard & touch</span></div><a class="feature-link" href="docs/files.html">Explore file management <span aria-hidden="true">↗</span></a></article>
+        <article class="feature"><div class="feature-top"><span class="eyebrow">TRANSFERS & TASKS</span><span class="feature-symbol" aria-hidden="true">⇄</span></div><h3>Keep browsing.<br>The work carries on.</h3><p>Queue resumable uploads, follow background operations and cancel work you no longer need. Undo the latest completed copy or move for up to one hour.</p><a class="feature-link" href="docs/tasks.html">Understand tasks and Undo <span aria-hidden="true">↗</span></a></article>
+        <article class="feature"><div class="feature-top"><span class="eyebrow">PREVIEW & EDIT</span><span class="feature-symbol" aria-hidden="true">{ }</span></div><h3>A closer look.<br>Without leaving the folder.</h3><p>Open images in a gallery, listen to audio, inspect archives and edit text or code with Monaco. Generate video thumbnails on the server.</p><a class="feature-link" href="docs/previews.html">See preview options <span aria-hidden="true">↗</span></a></article>
+        <article class="feature feature-wide feature-quiet"><div class="feature-top"><span class="eyebrow">YOUR FILESYSTEM STAYS AUTHORITATIVE</span><span class="feature-symbol" aria-hidden="true">▤</span></div><h3>Mount it. Browse it.</h3><p>WebFile reads the filesystem directly. Directory events tell the browser to refresh its view; they don’t maintain a second model of your files. There is no initial catalogue scan to wait for.</p><div class="filesystem-flow"><span>Linux filesystem</span><span aria-hidden="true">→</span><span>WebFile</span><span aria-hidden="true">→</span><span>Your browser</span></div><a class="feature-link" href="docs/">How WebFile fits together <span aria-hidden="true">↗</span></a></article>
+      </div>
+    </section>
+    <section id="permissions" class="permissions-band" aria-labelledby="permissions-title"><div class="wrap section">
+      <div class="section-heading"><div><p class="eyebrow">02 / LINUX SETS THE BOUNDARY</p><h2 id="permissions-title">Your account.<br><span class="amber">Your permissions.</span></h2></div><div class="section-copy"><p>Sign in through PAM or a trusted authenticating proxy. File operations run as the logged-in Linux user, with their real user ID, group ID and supplementary groups.</p><p>Configuring a root does not grant access beyond that account’s filesystem permissions.</p><a class="text-link" href="docs/authentication.html">Read the security model <span aria-hidden="true">↗</span></a></div></div>
+      <div class="identity-flow"><div><span class="flow-number">01</span><h3>Broker</h3><p>Unprivileged web service</p></div><span class="flow-arrow" aria-hidden="true">→</span><div><span class="flow-number">02</span><h3>Launcher</h3><p>Starts validated local users’ workers</p></div><span class="flow-arrow" aria-hidden="true">→</span><div><span class="flow-number">03</span><h3>Per-user worker</h3><p>File access as the Linux user</p></div></div>
+      <p class="security-note">Production requires secure cookies and PAM with TLS, or a trusted authenticating reverse proxy. <a href="docs/security.html">Read the security policy →</a></p>
+    </div></section>
+    <section id="get-started" class="section wrap get-started" aria-labelledby="start-title"><div><p class="eyebrow">03 / MAKE YOURSELF AT HOME</p><h2 id="start-title">Your next folder<br>is a browser tab away.</h2><p class="start-copy">Install the Linux AMD64 package on Debian or Ubuntu with systemd. Bring your local accounts, configure your roots and set up TLS.</p><div class="actions"><a class="button primary" href="docs/installation.html">Follow the install guide <span aria-hidden="true">↗</span></a></div><p class="small muted">7-Zip for archives · FFmpeg for video thumbnails</p></div><div class="install-panel"><div class="install-header"><span class="status-dot"></span> LINUX AMD64 <a href="docs/release-notes.html">{{VERSION}} ↗</a></div><div class="install-body"><p>Check your installed version</p><div class="command"><code id="version-command">webfile version</code><button class="copy-button" type="button" aria-label="Copy version command">Copy</button></div><p id="copy-status" class="copy-status" role="status" aria-live="polite"></p><div class="install-divider"></div><a class="download-link" href="https://github.com/ahjephson/webfile/releases/download/{{VERSION}}/webfile-{{VERSION}}-linux-amd64.tar.gz"><span>Download release archive</span><span aria-hidden="true">↓</span></a><a class="checksum-link" href="https://github.com/ahjephson/webfile/releases/download/{{VERSION}}/webfile-{{VERSION}}-linux-amd64.tar.gz.sha256">SHA-256 checksum ↗</a><p class="install-note">Verify the checksum before installing. No Node.js or Go toolchain needed on the runtime host.</p></div></div></section>
+    <section class="closing"><div class="wrap closing-inner"><div><p class="eyebrow">OPEN SOURCE / MIT LICENSE</p><h2>Make it your workspace.</h2><p>Read the code, report a bug or help shape what comes next.</p></div><a class="text-link" href="https://github.com/ahjephson/webfile">Explore WebFile on GitHub <span aria-hidden="true">↗</span></a></div></section>
+  </main>
+  <footer class="wrap footer"><div><a class="brand" href="./"><img src="assets/webfile.svg" width="28" height="28" alt=""><span>WebFile<span class="brand-dot">.</span></span></a><p>A Linux file manager for your browser.</p></div><nav aria-label="Footer navigation"><a href="docs/">Documentation</a><a href="docs/security.html">Security</a><a href="https://github.com/ahjephson/webfile/blob/main/LICENSE">MIT license</a><a href="https://github.com/ahjephson/webfile">GitHub ↗</a></nav></footer>
+</body>
+</html>
