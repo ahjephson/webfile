@@ -5,6 +5,8 @@ repo_url: https://github.com/ahjephson/webfile
 repo_name: ahjephson/webfile
 edit_uri: ''
 use_directory_urls: false
+hooks:
+  - hooks.py
 strict: true
 
 theme:

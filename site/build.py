@@ -39,6 +39,7 @@ def main() -> None:
         shutil.copytree(SOURCE / "content", content)
         shutil.copyfile(ROOT / "web" / "public" / "favicon.svg", content / "assets" / "webfile.svg")
         config = yaml.safe_load((SOURCE / "mkdocs.yml").read_text(encoding="utf-8"))
+        config["hooks"] = [str(SOURCE / hook) for hook in config.get("hooks", [])]
         config["docs_dir"] = str(content)
         config["site_dir"] = str(OUTPUT / "docs")
         config_path = staging / "mkdocs.yml"
