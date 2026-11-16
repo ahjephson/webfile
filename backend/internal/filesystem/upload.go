@@ -131,6 +131,9 @@ func (m *UploadManager) Append(ctx context.Context, id string, offset int64, src
 	if err := ctx.Err(); err != nil {
 		return UploadSession{}, false, err
 	}
+	if !filepath.IsLocal(id) {
+		return UploadSession{}, false, ErrInvalidPath
+	}
 	if length < 0 {
 		return UploadSession{}, false, errors.New("content length is required")
 	}
@@ -252,6 +255,9 @@ func (m *UploadManager) Append(ctx context.Context, id string, offset int64, src
 }
 
 func (m *UploadManager) Cancel(id string) error {
+	if !filepath.IsLocal(id) {
+		return ErrInvalidPath
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec, err := m.readRecordLocked(id)
