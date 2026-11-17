@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"webfile/internal/identity"
+	"webfile/internal/launcher"
 	"webfile/internal/persistence"
 	"webfile/internal/session"
 	"webfile/internal/thumbnailsettings"
@@ -31,6 +32,7 @@ type MainOptions struct {
 	AuthMode          string
 	Authenticate      func(context.Context, string, string) error
 	Sessions          *session.Store
+	ProxySecret       string
 	ProxyUserHeader   string
 	TrustedProxies    []netip.Prefix
 	LogoutURL         string
@@ -42,6 +44,7 @@ type MainOptions struct {
 	LoginWindow       time.Duration
 	LoginBlock        time.Duration
 	ElevationTTL      time.Duration
+	ElevationGroups   []string
 }
 
 type MainServer struct {
@@ -79,7 +82,7 @@ func NewMain(opts MainOptions) *MainServer {
 }
 
 func (s *MainServer) Handler() http.Handler {
-	return mountBasePath(s.opts.BasePath, securityHeaders(requestLog(recoverer(s.csrfGuard(s.mux)))))
+	return mountBasePath(s.opts.BasePath, securityHeaders(requestLog(recoverer(s.csrfGuard(s.mux))), s.opts.LogoutURL))
 }
 
 func (s *MainServer) routes() {
@@ -139,7 +142,7 @@ func (s *MainServer) getSession(w http.ResponseWriter, r *http.Request) {
 		response["user"] = id
 		if s.opts.AuthMode == "pam" || s.opts.AuthMode == "proxy" {
 			response["csrf_token"] = csrf
-			response["elevation_available"] = true
+			response["elevation_available"] = launcher.ElevationAllowed(id, s.opts.ElevationGroups)
 			if state, elevated := s.elevationForRequest(r); elevated {
 				response["elevated"] = true
 				response["elevation_expires_at"] = state.expiresAt
@@ -200,7 +203,7 @@ func (s *MainServer) login(w http.ResponseWriter, r *http.Request) {
 		"mode":                s.opts.AuthMode,
 		"user":                id,
 		"csrf_token":          csrf,
-		"elevation_available": true,
+		"elevation_available": launcher.ElevationAllowed(id, s.opts.ElevationGroups),
 		"elevated":            false,
 	})
 }
@@ -242,6 +245,7 @@ func (s *MainServer) proxyFilesystem(w http.ResponseWriter, r *http.Request) {
 	encoded, _ := json.Marshal(settings)
 	// Overwrite client input: only validated, persisted preferences reach workers.
 	r.Header.Set(thumbnailsettings.Header, string(encoded))
+	r.Header.Del("X-WebFile-Proxy-Token")
 	process.Proxy.ServeHTTP(w, r)
 }
 
@@ -258,6 +262,10 @@ func (s *MainServer) elevate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Password string `json:"password"`
 	}
+	if !launcher.ElevationAllowed(id, s.opts.ElevationGroups) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "filesystem elevation is not authorized"})
+		return
+	}
 	if err := decodeJSON(r, &req); err != nil || req.Password == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
@@ -273,6 +281,8 @@ func (s *MainServer) elevate(w http.ResponseWriter, r *http.Request) {
 		if err.Error() == "invalid credentials" {
 			s.limiter.Failure(r, id.Username)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		} else if err.Error() == "user is not allowed to elevate filesystem access" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "filesystem elevation is not authorized"})
 		} else {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not start elevated filesystem worker"})
 		}
@@ -366,7 +376,8 @@ func (s *MainServer) identityForRequest(r *http.Request) (identity.Identity, str
 }
 
 func (s *MainServer) proxyIdentity(r *http.Request) (identity.Identity, bool) {
-	if s.opts.AuthMode != "proxy" || !s.isTrustedProxy(r.RemoteAddr) {
+	credentials := r.Header.Values("X-WebFile-Proxy-Token")
+	if s.opts.AuthMode != "proxy" || !s.isTrustedProxy(r.RemoteAddr) || len(s.opts.ProxySecret) != 64 || len(credentials) != 1 || subtle.ConstantTimeCompare([]byte(credentials[0]), []byte(s.opts.ProxySecret)) != 1 {
 		return identity.Identity{}, false
 	}
 	values := r.Header.Values(s.opts.ProxyUserHeader)
@@ -522,8 +533,14 @@ func sameOriginRequest(r *http.Request, allowedOrigins []string) bool {
 	return subtle.ConstantTimeCompare([]byte(strings.ToLower(u.Host)), []byte(strings.ToLower(r.Host))) == 1
 }
 
-func securityHeaders(next http.Handler) http.Handler {
+func securityHeaders(next http.Handler, logoutURL string) http.Handler {
+	formSources := "'self'"
+	if target, err := url.Parse(logoutURL); err == nil && target.Scheme == "https" && target.Host != "" {
+		formSources += " https://" + target.Host
+	}
+	policy := "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action " + formSources + "; frame-ancestors 'none'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", policy)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")

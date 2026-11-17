@@ -22,7 +22,7 @@ func TestExtractPublishesFromDestinationLocalStaging(t *testing.T) {
 set -eu
 out=""
 for arg in "$@"; do case "$arg" in -o*) out="${arg#-o}";; esac; done
-case "$out" in "`+destinationRoot+`"/.webfile-extract-*) ;; *) exit 8;; esac
+case "$(readlink "$out")" in "`+destinationRoot+`"/.webfile-extract-*) ;; *) exit 8;; esac
 mkdir -p "$out/folder"
 printf ok > "$out/folder/file.txt"
 `)
@@ -72,7 +72,7 @@ func TestValidateStageRepairsOnlyOwnerAccess(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stage := t.TempDir()
-			defer removeStage(stage)
+			defer removeStage(testRootedIO(t), stage)
 			path := filepath.Join(stage, "entry")
 			if tc.dir {
 				if err := os.Mkdir(path, 0o700); err != nil {
@@ -85,7 +85,7 @@ func TestValidateStageRepairsOnlyOwnerAccess(t *testing.T) {
 			if err := os.Chmod(path, tc.mode); err != nil {
 				t.Fatal(err)
 			}
-			count, err := validateStage(stage)
+			count, err := validateStage(testRootedIO(t), stage)
 			if err != nil || count != 1 {
 				t.Fatalf("validation: count=%d error=%v", count, err)
 			}
@@ -122,7 +122,7 @@ func TestPublishRepairsUnsearchableNestedDirectoriesAndPreservesDestinationModes
 			if err := os.Chmod(filepath.Join(stage, "nested"), 0); err != nil {
 				t.Fatal(err)
 			}
-			result, err := publishStage(context.Background(), stage, destination, true, policy, nil)
+			result, err := publishStage(testRootedIO(t), context.Background(), stage, destination, true, policy, nil)
 			if err != nil || result.Extracted+result.Skipped != 2 {
 				t.Fatalf("publish: %#v, %v", result, err)
 			}
@@ -159,7 +159,7 @@ func TestPublishStageSkipsExistingRegularFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := publishStage(context.Background(), stage, destination, true, ExistingFilesSkip, nil)
+	result, err := publishStage(testRootedIO(t), context.Background(), stage, destination, true, ExistingFilesSkip, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestPublishStageOverwritesExistingRegularFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := publishStage(context.Background(), stage, destination, true, ExistingFilesOverwrite, nil)
+	result, err := publishStage(testRootedIO(t), context.Background(), stage, destination, true, ExistingFilesOverwrite, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestPublishStageRejectsTypeConflictsBeforePublishing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := publishStage(context.Background(), stage, destination, true, ExistingFilesOverwrite, nil); err == nil {
+	if _, err := publishStage(testRootedIO(t), context.Background(), stage, destination, true, ExistingFilesOverwrite, nil); err == nil {
 		t.Fatal("type conflict was accepted")
 	}
 	if _, err := os.Stat(filepath.Join(destination, "new.txt")); !errors.Is(err, fs.ErrNotExist) {
@@ -370,6 +370,7 @@ exit 3
 func TestRunToolDrainsPasswordErrorWithSlowProgressConsumer(t *testing.T) {
 	root := t.TempDir()
 	finished := filepath.Join(root, "finished")
+	writeTestFile(t, filepath.Join(root, "input.zip"), "archive")
 	tool := writeTool(t, `#!/bin/sh
 set -eu
 printf ' 64%%\n' >&2
@@ -381,7 +382,7 @@ exit 2
 	target := New(Config{Executable: tool}, testResolver(t, filesystem.Root{Name: "Files", Path: root}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := target.runTool(ctx, "", root, "", func(progress Progress) {
+	err := target.runTool(ctx, filepath.Join(root, "input.zip"), root, "", func(progress Progress) {
 		if !progress.PercentKnown || progress.Percent != 64 {
 			return
 		}
@@ -418,7 +419,7 @@ func TestPublishDirectoryFallbackPublishesRecursively(t *testing.T) {
 	}
 	published := make([]publishedMove, 0)
 	done := int64(0)
-	if err := publishDirectoryAbsent(context.Background(), source, destination, info, &published, &done, 1, nil); err != nil {
+	if err := publishDirectoryAbsent(testRootedIO(t), context.Background(), source, destination, info, &published, &done, 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	if done != 1 {

@@ -134,7 +134,7 @@ func (s *Service) List(ctx context.Context, virtualPath string) ([]Entry, error)
 		roots := s.resolver.Roots()
 		entries := make([]Entry, 0, len(roots))
 		for _, root := range roots {
-			st, err := os.Stat(root.Path)
+			st, err := s.resolver.disk.Stat(root.Path)
 			if err != nil {
 				continue
 			}
@@ -151,7 +151,7 @@ func (s *Service) List(ctx context.Context, virtualPath string) ([]Entry, error)
 	if err != nil {
 		return nil, err
 	}
-	st, err := os.Stat(abs)
+	st, err := s.resolver.disk.Stat(abs)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func (s *Service) List(ctx context.Context, virtualPath string) ([]Entry, error)
 		return nil, ErrNotDirectory
 	}
 
-	dirEntries, err := os.ReadDir(abs)
+	dirEntries, err := s.resolver.disk.ReadDir(abs)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +310,7 @@ func (s *Service) WriteText(ctx context.Context, virtualPath string, content []b
 	if err != nil {
 		return FileContent{}, err
 	}
-	release, err := lockEditorDirectory(ctx, abs)
+	release, err := lockEditorDirectory(ctx, s.resolver.disk, abs)
 	if err != nil {
 		return FileContent{}, err
 	}
@@ -318,7 +318,7 @@ func (s *Service) WriteText(ctx context.Context, virtualPath string, content []b
 	var savedInfo os.FileInfo
 
 	if createOnly {
-		f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		f, err := s.resolver.disk.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
 			if errors.Is(err, fs.ErrExist) {
 				return FileContent{}, ErrConflict
@@ -327,14 +327,14 @@ func (s *Service) WriteText(ctx context.Context, virtualPath string, content []b
 		}
 		if _, err := f.Write(content); err != nil {
 			_ = f.Close()
-			_ = os.Remove(abs)
+			_ = s.resolver.disk.Remove(abs)
 			return FileContent{}, err
 		}
 		if err := f.Close(); err != nil {
 			return FileContent{}, err
 		}
 	} else {
-		st, err := os.Stat(abs)
+		st, err := s.resolver.disk.Stat(abs)
 		if err != nil {
 			return FileContent{}, err
 		}
@@ -342,7 +342,7 @@ func (s *Service) WriteText(ctx context.Context, virtualPath string, content []b
 			return FileContent{}, ErrConflict
 		}
 		if hasMultipleLinks(st) {
-			file, err := os.OpenFile(abs, os.O_WRONLY, 0)
+			file, err := s.resolver.disk.OpenFile(abs, os.O_WRONLY, 0)
 			if err != nil {
 				return FileContent{}, err
 			}
@@ -368,13 +368,13 @@ func (s *Service) WriteText(ctx context.Context, virtualPath string, content []b
 			}
 			goto saved
 		}
-		tmp, err := os.CreateTemp(filepath.Dir(abs), ".webfile-save-*")
+		tmp, err := s.resolver.disk.CreateTemp(filepath.Dir(abs), ".webfile-save-*")
 		if err != nil {
 			return FileContent{}, err
 		}
 		tmpName := tmp.Name()
-		defer os.Remove(tmpName)
-		if err := copyReplacementMetadata(abs, tmp, st); err != nil {
+		defer s.resolver.disk.Remove(tmpName)
+		if err := copyReplacementMetadata(s.resolver.disk, abs, tmp, st); err != nil {
 			_ = tmp.Close()
 			return FileContent{}, err
 		}
@@ -389,14 +389,14 @@ func (s *Service) WriteText(ctx context.Context, virtualPath string, content []b
 		if err := tmp.Close(); err != nil {
 			return FileContent{}, err
 		}
-		if err := os.Rename(tmpName, abs); err != nil {
+		if err := s.resolver.disk.Rename(tmpName, abs); err != nil {
 			return FileContent{}, err
 		}
 	}
 
 saved:
 	if savedInfo == nil {
-		savedInfo, err = os.Stat(abs)
+		savedInfo, err = s.resolver.disk.Stat(abs)
 		if err != nil {
 			return FileContent{}, err
 		}
@@ -418,7 +418,7 @@ func (s *Service) Mkdir(ctx context.Context, virtualPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Mkdir(abs, 0o755); err != nil {
+	if err := s.resolver.disk.Mkdir(abs, 0o755); err != nil {
 		return err
 	}
 	s.InvalidateFolderSizes(virtualPath)
@@ -455,11 +455,11 @@ func (s *Service) Rename(ctx context.Context, from, to string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	info, err := os.Lstat(fromAbs)
+	info, err := s.resolver.disk.Lstat(fromAbs)
 	if err != nil {
 		return err
 	}
-	if err := renameNoReplace(fromAbs, toAbs); err != nil {
+	if err := renameNoReplace(s.resolver.disk, fromAbs, toAbs); err != nil {
 		return err
 	}
 	s.InvalidateFolderSizes(from, to)
@@ -508,18 +508,18 @@ func (s *Service) Upload(ctx context.Context, virtualDir, filename string, src i
 	if err != nil {
 		return Entry{}, err
 	}
-	if _, err := os.Lstat(abs); err == nil {
+	if _, err := s.resolver.disk.Lstat(abs); err == nil {
 		return Entry{}, ErrConflict
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return Entry{}, err
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(abs), ".webfile-upload-*")
+	tmp, err := s.resolver.disk.CreateTemp(filepath.Dir(abs), ".webfile-upload-*")
 	if err != nil {
 		return Entry{}, err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer s.resolver.disk.Remove(tmpName)
 	if _, err := io.Copy(tmp, src); err != nil {
 		_ = tmp.Close()
 		return Entry{}, err
@@ -531,14 +531,14 @@ func (s *Service) Upload(ctx context.Context, virtualDir, filename string, src i
 	if err := tmp.Close(); err != nil {
 		return Entry{}, err
 	}
-	if err := os.Link(tmpName, abs); err != nil {
+	if err := s.resolver.disk.Link(tmpName, abs); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return Entry{}, ErrConflict
 		}
 		return Entry{}, err
 	}
 	s.InvalidateFolderSizes(virtualPath)
-	st, err := os.Stat(abs)
+	st, err := s.resolver.disk.Stat(abs)
 	if err != nil {
 		return Entry{}, err
 	}

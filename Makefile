@@ -22,7 +22,7 @@ audit-backend:
 	cd backend && $(GOVULNCHECK) ./...
 
 audit-frontend:
-	cd web && $(NPM) audit --omit=dev --audit-level=high
+	cd web && $(NPM) audit --audit-level=high
 
 backend:
 	mkdir -p dist

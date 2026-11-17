@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,6 +93,7 @@ func proxyAuthTestServer(t *testing.T) (*MainServer, identity.Identity) {
 		AuthMode:        "proxy",
 		Sessions:        session.New(time.Hour, false, state),
 		ProxyUserHeader: "X-Authenticated-User",
+		ProxySecret:     strings.Repeat("a", 64),
 		TrustedProxies:  []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
 		LogoutURL:       "/_auth/logout",
 		State:           state,
@@ -172,6 +174,7 @@ func TestProxyAuthenticationCreatesLocalSessionForTrustedIdentity(t *testing.T) 
 	request := httptest.NewRequest(http.MethodGet, "/api/session", nil)
 	request.RemoteAddr = "127.0.0.1:12345"
 	request.Header.Set("X-Authenticated-User", current.Username)
+	request.Header.Set("X-WebFile-Proxy-Token", strings.Repeat("a", 64))
 	response := httptest.NewRecorder()
 
 	target.Handler().ServeHTTP(response, request)
@@ -205,6 +208,7 @@ func TestProxyAuthenticationRejectsUntrustedHeader(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/session", nil)
 	request.RemoteAddr = "192.0.2.10:12345"
 	request.Header.Set("X-Authenticated-User", current.Username)
+	request.Header.Set("X-WebFile-Proxy-Token", strings.Repeat("a", 64))
 	response := httptest.NewRecorder()
 
 	target.Handler().ServeHTTP(response, request)
@@ -225,6 +229,7 @@ func TestProxyAuthenticationRequiresHeaderAfterSessionCreation(t *testing.T) {
 	bootstrap := httptest.NewRequest(http.MethodGet, "/api/session", nil)
 	bootstrap.RemoteAddr = "127.0.0.1:12345"
 	bootstrap.Header.Set("X-Authenticated-User", current.Username)
+	bootstrap.Header.Set("X-WebFile-Proxy-Token", strings.Repeat("a", 64))
 	bootstrapResponse := httptest.NewRecorder()
 	target.Handler().ServeHTTP(bootstrapResponse, bootstrap)
 	cookies := bootstrapResponse.Result().Cookies()
@@ -253,6 +258,7 @@ func TestProxyAuthenticationRejectsDuplicateIdentityHeaders(t *testing.T) {
 	target, current := proxyAuthTestServer(t)
 	request := httptest.NewRequest(http.MethodGet, "/api/session", nil)
 	request.RemoteAddr = "127.0.0.1:12345"
+	request.Header.Set("X-WebFile-Proxy-Token", strings.Repeat("a", 64))
 	request.Header.Add("X-Authenticated-User", current.Username)
 	request.Header.Add("X-Authenticated-User", current.Username)
 	response := httptest.NewRecorder()

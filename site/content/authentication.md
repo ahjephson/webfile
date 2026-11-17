@@ -13,6 +13,7 @@ Use `auth.mode: "pam"`, `auth.cookie_secure: true`, and a TLS certificate/privat
   "cookie_secure": true,
   "session_ttl": "12h",
   "elevation_ttl": "5m",
+  "elevation_groups": [],
   "login_max_attempts": 5,
   "login_window": "1m",
   "login_block": "5m"
@@ -27,7 +28,7 @@ These fields are a section of the full configuration, not a complete file. The c
 
 ## Trusted proxy authentication
 
-Use `auth.mode: "proxy"` when a trusted reverse proxy authenticates every request and supplies a local username. Declare trusted direct-peer CIDRs and prevent direct access to the backend. Without direct TLS, the WebFile listener must bind to a loopback IP address.
+Use `auth.mode: "proxy"` when a trusted reverse proxy authenticates every request and supplies a local username. Declare trusted direct-peer CIDRs, configure a private `auth.proxy_secret_file`, and prevent direct access to the backend. The proxy must overwrite both the identity and credential headers on every request; loopback addresses alone do not identify the proxy. Without direct TLS, the WebFile listener must bind to a loopback IP address.
 
 Follow the [reverse proxy guide](reverse-proxy.md) for the identity header, mounted paths, WebSockets and logout configuration.
 
@@ -35,7 +36,9 @@ Follow the [reverse proxy guide](reverse-proxy.md) for the identity header, moun
 
 WebFile stores a SHA-256 hash of each browser session token. Persistent sessions survive broker restarts. Cookies are HttpOnly and SameSite=Strict; production requires the Secure flag. Mutation requests use a per-session CSRF token and same-origin checks.
 
-Temporary elevation is explicit and time-limited. In proxy mode, the proxy identity must still accompany requests; PAM remains available for the elevation prompt. An elevated worker does not make the ordinary broker privileged.
+Elevation grants root filesystem authority within the configured roots. It is disabled by default: `auth.elevation_groups` is empty. To enable it, an administrator must list a dedicated group, such as `["webfile-admins"]`, in the root-owned configuration and add only accounts trusted with root access to that group. The launcher checks current group membership and the user’s PAM password before starting a root worker. Unknown groups and failed lookups deny elevation. Keep the configuration and its parent directory unwritable by ordinary users.
+
+Elevation expires after `auth.elevation_ttl`. Removing a user from the group prevents new grants; terminate existing elevation by restarting the launcher if immediate revocation is required. In proxy mode, every request must also carry the proxy identity and credential. The broker remains unprivileged.
 
 ## Use a server release for deployment
 

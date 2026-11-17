@@ -32,7 +32,7 @@ func TestCopyNoReplaceFallbackCancellationPreservesSourceAndRemovesPartial(t *te
 		t.Fatal(err)
 	}
 	ctx := &cancelDuringFallback{Context: context.Background()}
-	if err := copyNoReplaceContext(ctx, source, destination, info); !errors.Is(err, context.Canceled) {
+	if err := copyNoReplaceContext(testRootedIO(t), ctx, source, destination, info); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancellation: %v", err)
 	}
 	if _, err := os.Stat(source); err != nil {
@@ -54,7 +54,7 @@ func TestRenameNoReplacePreservesBothFilesOnConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := renameNoReplace(source, destination)
+	err := renameNoReplace(testRootedIO(t), source, destination)
 
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("got %v, want ErrConflict", err)
@@ -78,7 +78,7 @@ func TestRenameNoReplaceMovesDirectoryWhenDestinationDoesNotExist(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	if err := renameNoReplace(source, destination); err != nil {
+	if err := renameNoReplace(testRootedIO(t), source, destination); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(destination); err != nil {

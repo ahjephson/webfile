@@ -6,19 +6,20 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"webfile/internal/rootedio"
 
 	"golang.org/x/sys/unix"
 )
 
-func renameNoReplace(source, destination string) error {
-	return renameNoReplaceContext(context.Background(), source, destination)
+func renameNoReplace(disk *rootedio.FS, source, destination string) error {
+	return renameNoReplaceContext(disk, context.Background(), source, destination)
 }
 
-func renameNoReplaceContext(ctx context.Context, source, destination string) error {
+func renameNoReplaceContext(disk *rootedio.FS, ctx context.Context, source, destination string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	err := unix.Renameat2(unix.AT_FDCWD, source, unix.AT_FDCWD, destination, unix.RENAME_NOREPLACE)
+	err := disk.RenameFlags(source, destination, unix.RENAME_NOREPLACE)
 	if err == nil {
 		return nil
 	}
@@ -26,7 +27,7 @@ func renameNoReplaceContext(ctx context.Context, source, destination string) err
 		return ErrConflict
 	}
 	if errors.Is(err, unix.ENOSYS) || errors.Is(err, unix.EINVAL) || errors.Is(err, unix.EOPNOTSUPP) {
-		return renameNoReplaceFallbackContext(ctx, source, destination)
+		return renameNoReplaceFallbackContext(disk, ctx, source, destination)
 	}
 	return err
 }

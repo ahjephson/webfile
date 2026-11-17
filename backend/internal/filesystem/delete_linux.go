@@ -28,11 +28,6 @@ func (s *Service) CountDeleteEntries(ctx context.Context, virtualPath string) (i
 	if err != nil {
 		return 0, err
 	}
-	root, err := os.OpenRoot(configured.Path)
-	if err != nil {
-		return 0, err
-	}
-	defer root.Close()
 	relative, err := filepath.Rel(configured.Path, absolute)
 	if err != nil {
 		return 0, err
@@ -40,7 +35,7 @@ func (s *Service) CountDeleteEntries(ctx context.Context, virtualPath string) (i
 	if relative == "." {
 		return 0, ErrInvalidPath
 	}
-	parent, err := root.OpenFile(filepath.Dir(relative), os.O_RDONLY|unix.O_DIRECTORY, 0)
+	parent, err := s.resolver.disk.OpenFile(filepath.Dir(absolute), os.O_RDONLY|unix.O_DIRECTORY, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -108,11 +103,6 @@ func (s *Service) DeleteWithProgress(ctx context.Context, virtualPath string, re
 	if err != nil {
 		return err
 	}
-	root, err := os.OpenRoot(configured.Path)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
 	relative, err := filepath.Rel(configured.Path, absolute)
 	if err != nil {
 		return err
@@ -129,7 +119,7 @@ func (s *Service) DeleteWithProgress(ctx context.Context, virtualPath string, re
 	}
 	// Resolve the parent beneath the open root after cancellation/progress work,
 	// then keep every descendant operation relative to an open directory fd.
-	parent, err := root.OpenFile(filepath.Dir(relative), os.O_RDONLY|unix.O_DIRECTORY, 0)
+	parent, err := s.resolver.disk.OpenFile(filepath.Dir(absolute), os.O_RDONLY|unix.O_DIRECTORY, 0)
 	if err != nil {
 		return err
 	}

@@ -13,7 +13,7 @@ mkdir -p "$STAGE/deploy"
 
 cd "$ROOT/web"
 npm ci --no-audit --no-fund
-npm audit --omit=dev --audit-level=high
+npm audit --audit-level=high
 python3 "$ROOT/scripts/generate-notices.py" --check
 npm run build
 

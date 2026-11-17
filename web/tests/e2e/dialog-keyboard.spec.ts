@@ -1,6 +1,41 @@
 import { expect, test } from '@playwright/test'
 import { featureFixture } from './feature-fixture'
 
+test('closing a dialog restores its opener after focus is redirected during the leave transition', async ({ page }) => {
+  await page.goto('/')
+  const opener = page.getByRole('button', { name: 'New folder', exact: true })
+  await opener.click()
+  const dialog = page.getByRole('dialog', { name: 'New folder', exact: true })
+  await expect(dialog.locator('input')).toBeFocused()
+  await dialog.evaluate(root => {
+    const redirect = (event: FocusEvent) => {
+      if (root.contains(event.target as Node)) return
+      document.removeEventListener('focusin', redirect)
+      root.querySelector<HTMLInputElement>('input')?.focus()
+    }
+    document.addEventListener('focusin', redirect)
+  })
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(opener).toBeFocused()
+})
+
+test('closing a dialog preserves focus deliberately moved to another control', async ({ page }) => {
+  await page.goto('/')
+  const opener = page.getByRole('button', { name: 'New folder', exact: true })
+  await opener.click()
+  const dialog = page.getByRole('dialog', { name: 'New folder', exact: true })
+  await expect(dialog.locator('input')).toBeFocused()
+  await opener.evaluate(button => {
+    button.addEventListener('focus', () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Settings"]')?.focus()
+    }, { once: true })
+  })
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeFocused()
+})
+
 test('opening a form prioritises editable invalid fields', async ({ page }) => {
   await page.goto('/')
   await expect(page).toHaveURL(/#path=/)

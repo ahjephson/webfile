@@ -19,6 +19,7 @@ import (
 
 	"webfile/internal/clienterror"
 	"webfile/internal/filesystem"
+	"webfile/internal/rootedio"
 
 	"golang.org/x/sys/unix"
 )
@@ -110,6 +111,7 @@ func (e *Extractor) ExtractInteractive(ctx context.Context, archivePath, destina
 }
 
 func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePath, destinationPath string, password PasswordProvider, report ProgressReporter, options ExtractOptions) (ExtractResult, error) {
+	disk := e.resolver.IO()
 	if !e.Enabled() {
 		return ExtractResult{}, errors.New("archive extraction is not configured")
 	}
@@ -125,7 +127,7 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 		if resolveErr != nil {
 			return ExtractResult{}, resolveErr
 		}
-		sourceFS, err = os.OpenRoot(archiveRoot.Path)
+		sourceFS, err = disk.OpenRoot(archiveRoot.Path)
 		if err != nil {
 			return ExtractResult{}, err
 		}
@@ -148,7 +150,7 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 		return ExtractResult{}, err
 	}
 	if destinationExists {
-		info, statErr := os.Stat(destinationAbs)
+		info, statErr := disk.Stat(destinationAbs)
 		if statErr != nil {
 			return ExtractResult{}, statErr
 		}
@@ -180,13 +182,13 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 		if destinationExists {
 			stageParent = destinationAbs
 		}
-		stage, err := os.MkdirTemp(stageParent, ".webfile-extract-")
+		stage, err := disk.MkdirTemp(stageParent, ".webfile-extract-")
 		if err != nil {
 			return ExtractResult{}, err
 		}
 		runErr := e.runTool(ctx, archiveAbs, stage, passwordValue, report)
 		if errors.Is(runErr, ErrPasswordRequired) {
-			if cleanupErr := removeStage(stage); cleanupErr != nil {
+			if cleanupErr := removeStage(disk, stage); cleanupErr != nil {
 				return ExtractResult{}, errors.Join(runErr, fmt.Errorf("clean password attempt: %w", cleanupErr))
 			}
 			if password == nil {
@@ -199,7 +201,7 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 			continue
 		}
 		if errors.Is(runErr, ErrIncorrectPassword) {
-			if cleanupErr := removeStage(stage); cleanupErr != nil {
+			if cleanupErr := removeStage(disk, stage); cleanupErr != nil {
 				return ExtractResult{}, errors.Join(runErr, fmt.Errorf("clean password attempt: %w", cleanupErr))
 			}
 			incorrect = true
@@ -213,11 +215,11 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 			continue
 		}
 		if runErr != nil {
-			_ = removeStage(stage)
+			_ = removeStage(disk, stage)
 			return ExtractResult{}, runErr
 		}
-		result, err := publishStage(ctx, stage, destinationAbs, destinationExists, options.ExistingFiles, report, func() error {
-			return validateExtractionPathsContext(ctx, stage, destinationRoot, destinationAbs)
+		result, err := publishStage(disk, ctx, stage, destinationAbs, destinationExists, options.ExistingFiles, report, func() error {
+			return validateExtractionPathsContext(disk, ctx, stage, destinationRoot, destinationAbs)
 		})
 		if err != nil || !options.DeleteArchive {
 			return result, err
@@ -246,12 +248,12 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 	}
 }
 
-func validateExtractionPaths(stage string, root filesystem.Root, destination string) error {
-	return validateExtractionPathsContext(context.Background(), stage, root, destination)
+func validateExtractionPaths(disk *rootedio.FS, stage string, root filesystem.Root, destination string) error {
+	return validateExtractionPathsContext(disk, context.Background(), stage, root, destination)
 }
 
-func validateExtractionPathsContext(ctx context.Context, stage string, root filesystem.Root, destination string) error {
-	return filepath.WalkDir(stage, func(current string, entry fs.DirEntry, walkErr error) error {
+func validateExtractionPathsContext(disk *rootedio.FS, ctx context.Context, stage string, root filesystem.Root, destination string) error {
+	return disk.WalkDir(stage, func(current string, entry fs.DirEntry, walkErr error) error {
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
@@ -273,18 +275,31 @@ func (e *Extractor) PasswordRequired(ctx context.Context, archivePath string) (b
 	if len(e.cfg.InspectArgs) == 0 {
 		return false, nil
 	}
+	file, err := e.resolver.IO().Open(archivePath)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, errors.New("archive is not a regular file")
+	}
 	args := make([]string, 0, len(e.cfg.InspectArgs)+1)
 	for _, configured := range e.cfg.InspectArgs {
-		args = append(args, strings.ReplaceAll(configured, "{archive}", archivePath))
+		args = append(args, strings.ReplaceAll(configured, "{archive}", "/proc/self/fd/3"))
 	}
 	if e.cfg.InspectPasswordArg != "" {
 		args = append(args, e.cfg.InspectPasswordArg+"__webfile_detection__")
 	}
 	cmd := exec.CommandContext(ctx, e.cfg.Executable, args...)
+	cmd.ExtraFiles = []*os.File{file}
 	cmd.Stdin = strings.NewReader("")
 	output := &inspectionOutput{}
 	cmd.Stdout, cmd.Stderr = output, output
-	err := taskcontrol.Run(ctx, cmd)
+	err = taskcontrol.Run(ctx, cmd)
 	output.flush()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return false, ctxErr
@@ -302,10 +317,27 @@ func (e *Extractor) PasswordRequired(ctx context.Context, archivePath string) (b
 }
 
 func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password string, report ProgressReporter) error {
+	file, err := e.resolver.IO().Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("archive is not a regular file")
+	}
+	directory, err := e.resolver.IO().Open(stage)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
 	args := make([]string, 0, len(e.cfg.ExtractArgs)+1)
 	for _, configured := range e.cfg.ExtractArgs {
-		arg := strings.ReplaceAll(configured, "{archive}", archivePath)
-		arg = strings.ReplaceAll(arg, "{destination}", stage)
+		arg := strings.ReplaceAll(configured, "{archive}", "/proc/self/fd/3")
+		arg = strings.ReplaceAll(arg, "{destination}", "/proc/self/fd/4")
 		if strings.Contains(arg, "{password}") {
 			return errors.New("archive password placeholders are not supported; configure a prompt-only password switch")
 		}
@@ -314,6 +346,7 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(runContext, e.cfg.Executable, args...)
+	cmd.ExtraFiles = []*os.File{file, directory}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -533,11 +566,11 @@ func (e *PublicationRecoveryError) Unwrap() error { return e.Err }
 
 func (e *PublicationRecoveryError) ClientMessage() clienterror.Message { return clienterror.Recovery }
 
-func publishStage(ctx context.Context, stage, destination string, destinationExists bool, policy ExistingFilePolicy, report ProgressReporter, checks ...func() error) (result ExtractResult, err error) {
+func publishStage(disk *rootedio.FS, ctx context.Context, stage, destination string, destinationExists bool, policy ExistingFilePolicy, report ProgressReporter, checks ...func() error) (result ExtractResult, err error) {
 	retainStage := false
 	defer func() {
 		if stage != "" && !retainStage {
-			_ = removeStage(stage)
+			_ = removeStage(disk, stage)
 		}
 	}()
 	if err := taskcontrol.Wait(ctx); err != nil {
@@ -546,7 +579,7 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 	if report != nil {
 		report(Progress{Phase: "validating", Message: "Validating extracted files"})
 	}
-	count, err := validateStageContext(ctx, stage)
+	count, err := validateStageContext(disk, ctx, stage)
 	if err != nil {
 		return ExtractResult{}, err
 	}
@@ -558,7 +591,7 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 			return ExtractResult{}, err
 		}
 	}
-	conflicts, err := preflightContext(ctx, stage, destination, policy)
+	conflicts, err := preflightContext(disk, ctx, stage, destination, policy)
 	if err != nil {
 		return ExtractResult{}, err
 	}
@@ -572,15 +605,15 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 	done := int64(0)
 	skipped := 0
 	if destinationExists {
-		err = publishNode(ctx, stage, destination, policy, &skipped, &published, &done, int64(count), report)
+		err = publishNode(disk, ctx, stage, destination, policy, &skipped, &published, &done, int64(count), report)
 	} else {
-		err = publishAbsent(ctx, stage, destination, count, &published, &done, int64(count), report)
+		err = publishAbsent(disk, ctx, stage, destination, count, &published, &done, int64(count), report)
 	}
 	if err == nil {
 		err = ctx.Err()
 	}
 	if err != nil {
-		if rollbackErr := rollbackPublished(published); rollbackErr != nil {
+		if rollbackErr := rollbackPublished(disk, published); rollbackErr != nil {
 			retainStage = true
 			return ExtractResult{}, &PublicationRecoveryError{Directory: stage, Err: errors.Join(err, rollbackErr)}
 		}
@@ -592,13 +625,13 @@ func publishStage(ctx context.Context, stage, destination string, destinationExi
 	return ExtractResult{Extracted: count - skipped, Skipped: skipped}, nil
 }
 
-func validateStage(stage string) (int, error) {
-	return validateStageContext(context.Background(), stage)
+func validateStage(disk *rootedio.FS, stage string) (int, error) {
+	return validateStageContext(disk, context.Background(), stage)
 }
 
-func validateStageContext(ctx context.Context, stage string) (int, error) {
+func validateStageContext(disk *rootedio.FS, ctx context.Context, stage string) (int, error) {
 	files := 0
-	err := filepath.WalkDir(stage, func(path string, entry fs.DirEntry, walkErr error) error {
+	err := disk.WalkDir(stage, func(path string, entry fs.DirEntry, walkErr error) error {
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
@@ -634,7 +667,7 @@ func validateStageContext(ctx context.Context, stage string) (int, error) {
 			mode |= 0o100
 		}
 		if mode != info.Mode() {
-			if err := os.Chmod(path, mode); err != nil {
+			if err := disk.Chmod(path, mode); err != nil {
 				return fmt.Errorf("repair extracted permissions: %w", err)
 			}
 		}
@@ -646,8 +679,8 @@ func validateStageContext(ctx context.Context, stage string) (int, error) {
 // Private staging directories may be read-only or unsearchable, including
 // after a failed tool invocation. Make only those directories removable;
 // never follow links or touch the destination tree.
-func removeStage(stage string) error {
-	err := filepath.WalkDir(stage, func(path string, entry fs.DirEntry, walkErr error) error {
+func removeStage(disk *rootedio.FS, stage string) error {
+	err := disk.WalkDir(stage, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -658,39 +691,39 @@ func removeStage(stage string) error {
 		if err != nil {
 			return err
 		}
-		return os.Chmod(path, info.Mode()|0o700)
+		return disk.Chmod(path, info.Mode()|0o700)
 	})
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return os.RemoveAll(stage)
+	return disk.RemoveAll(stage)
 }
 
-func preflight(source, destination string, policy ExistingFilePolicy) ([]string, error) {
-	return preflightContext(context.Background(), source, destination, policy)
+func preflight(disk *rootedio.FS, source, destination string, policy ExistingFilePolicy) ([]string, error) {
+	return preflightContext(disk, context.Background(), source, destination, policy)
 }
 
-func preflightContext(ctx context.Context, source, destination string, policy ExistingFilePolicy) ([]string, error) {
+func preflightContext(disk *rootedio.FS, ctx context.Context, source, destination string, policy ExistingFilePolicy) ([]string, error) {
 	conflicts := make([]string, 0)
-	if err := preflightNode(ctx, source, destination, destination, policy, &conflicts); err != nil {
+	if err := preflightNode(disk, ctx, source, destination, destination, policy, &conflicts); err != nil {
 		return nil, err
 	}
 	sort.Strings(conflicts)
 	return conflicts, nil
 }
 
-func preflightNode(ctx context.Context, source, destination, root string, policy ExistingFilePolicy, conflicts *[]string) error {
+func preflightNode(disk *rootedio.FS, ctx context.Context, source, destination, root string, policy ExistingFilePolicy, conflicts *[]string) error {
 	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
-	destinationInfo, err := os.Lstat(destination)
+	destinationInfo, err := disk.Lstat(destination)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	sourceInfo, err := os.Lstat(source)
+	sourceInfo, err := disk.Lstat(source)
 	if err != nil {
 		return err
 	}
@@ -706,12 +739,12 @@ func preflightNode(ctx context.Context, source, destination, root string, policy
 		*conflicts = append(*conflicts, relative)
 		return nil
 	}
-	entries, err := os.ReadDir(source)
+	entries, err := disk.ReadDir(source)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if err := preflightNode(ctx, filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name()), root, policy, conflicts); err != nil {
+		if err := preflightNode(disk, ctx, filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name()), root, policy, conflicts); err != nil {
 			return err
 		}
 	}
@@ -726,22 +759,22 @@ type publishedMove struct {
 	originalInfo  fs.FileInfo
 }
 
-func publishNode(ctx context.Context, source, destination string, policy ExistingFilePolicy, skipped *int, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
+func publishNode(disk *rootedio.FS, ctx context.Context, source, destination string, policy ExistingFilePolicy, skipped *int, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
 	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
-	destinationInfo, err := os.Lstat(destination)
+	destinationInfo, err := disk.Lstat(destination)
 	if errors.Is(err, fs.ErrNotExist) {
-		files, countErr := countRegularFilesContext(ctx, source)
+		files, countErr := countRegularFilesContext(disk, ctx, source)
 		if countErr != nil {
 			return countErr
 		}
-		return publishAbsent(ctx, source, destination, files, published, done, total, report)
+		return publishAbsent(disk, ctx, source, destination, files, published, done, total, report)
 	}
 	if err != nil {
 		return err
 	}
-	sourceInfo, err := os.Lstat(source)
+	sourceInfo, err := disk.Lstat(source)
 	if err != nil {
 		return err
 	}
@@ -756,20 +789,20 @@ func publishNode(ctx context.Context, source, destination string, policy Existin
 		}
 		if policy == ExistingFilesOverwrite {
 			// Replacing contents must not change existing destination permissions.
-			if err := os.Chmod(source, destinationInfo.Mode()); err != nil {
+			if err := disk.Chmod(source, destinationInfo.Mode()); err != nil {
 				return err
 			}
-			sourceInfo, err = os.Lstat(source)
+			sourceInfo, err = disk.Lstat(source)
 			if err != nil {
 				return err
 			}
 			// Keep the displaced original in the private stage until the entire
 			// publication succeeds. Never fall back to a destructive rename.
-			if err := exchangeFiles(source, destination); err != nil {
+			if err := exchangeFiles(disk, source, destination); err != nil {
 				return err
 			}
 			move := publishedMove{source: source, destination: destination, publishedInfo: sourceInfo, originalInfo: destinationInfo}
-			originalInfo, statErr := os.Lstat(source)
+			originalInfo, statErr := disk.Lstat(source)
 			if statErr == nil {
 				move.originalInfo = originalInfo
 			}
@@ -792,35 +825,35 @@ func publishNode(ctx context.Context, source, destination string, policy Existin
 	}
 	// This staging directory is being merged into an existing directory, so
 	// its mode will not be published. Renaming its children requires owner write.
-	if err := os.Chmod(source, sourceInfo.Mode()|0o700); err != nil {
+	if err := disk.Chmod(source, sourceInfo.Mode()|0o700); err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(source)
+	entries, err := disk.ReadDir(source)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if err := publishNode(ctx, filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name()), policy, skipped, published, done, total, report); err != nil {
+		if err := publishNode(disk, ctx, filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name()), policy, skipped, published, done, total, report); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func publishAbsent(ctx context.Context, source, destination string, files int, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
+func publishAbsent(disk *rootedio.FS, ctx context.Context, source, destination string, files int, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
 	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
-	err := filesystem.RenameNoReplace(source, destination)
+	err := filesystem.RenameNoReplace(disk, source, destination)
 	if errors.Is(err, filesystem.ErrRenameNoReplaceUnsupported) {
-		info, statErr := os.Lstat(source)
+		info, statErr := disk.Lstat(source)
 		if statErr != nil {
 			return statErr
 		}
 		if !info.IsDir() {
 			return err
 		}
-		return publishDirectoryAbsent(ctx, source, destination, info, published, done, total, report)
+		return publishDirectoryAbsent(disk, ctx, source, destination, info, published, done, total, report)
 	}
 	if err != nil {
 		return err
@@ -833,18 +866,18 @@ func publishAbsent(ctx context.Context, source, destination string, files int, p
 	return nil
 }
 
-func publishDirectoryAbsent(ctx context.Context, source, destination string, info fs.FileInfo, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
-	if err := os.Mkdir(destination, info.Mode().Perm()|0o700); err != nil {
+func publishDirectoryAbsent(disk *rootedio.FS, ctx context.Context, source, destination string, info fs.FileInfo, published *[]publishedMove, done *int64, total int64, report ProgressReporter) error {
+	if err := disk.Mkdir(destination, info.Mode().Perm()|0o700); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return filesystem.ErrConflict
 		}
 		return err
 	}
 	*published = append(*published, publishedMove{source: source, destination: destination, directoryMode: info.Mode()})
-	if err := os.Chmod(source, info.Mode()|0o700); err != nil {
+	if err := disk.Chmod(source, info.Mode()|0o700); err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(source)
+	entries, err := disk.ReadDir(source)
 	if err != nil {
 		return err
 	}
@@ -854,32 +887,32 @@ func publishDirectoryAbsent(ctx context.Context, source, destination string, inf
 		}
 		childSource := filepath.Join(source, entry.Name())
 		childDestination := filepath.Join(destination, entry.Name())
-		files, err := countRegularFilesContext(ctx, childSource)
+		files, err := countRegularFilesContext(disk, ctx, childSource)
 		if err != nil {
 			return err
 		}
-		if err := publishAbsent(ctx, childSource, childDestination, files, published, done, total, report); err != nil {
+		if err := publishAbsent(disk, ctx, childSource, childDestination, files, published, done, total, report); err != nil {
 			return err
 		}
 	}
-	if err := os.Chmod(destination, info.Mode()); err != nil {
+	if err := disk.Chmod(destination, info.Mode()); err != nil {
 		return err
 	}
-	if err := os.Chtimes(destination, info.ModTime(), info.ModTime()); err != nil {
+	if err := disk.Chtimes(destination, info.ModTime(), info.ModTime()); err != nil {
 		return err
 	}
-	return os.Remove(source)
+	return disk.Remove(source)
 }
 
-func countRegularFiles(root string) (int, error) {
-	return countRegularFilesContext(context.Background(), root)
+func countRegularFiles(disk *rootedio.FS, root string) (int, error) {
+	return countRegularFilesContext(disk, context.Background(), root)
 }
 
-func countRegularFilesContext(ctx context.Context, root string) (int, error) {
+func countRegularFilesContext(disk *rootedio.FS, ctx context.Context, root string) (int, error) {
 	if err := taskcontrol.Wait(ctx); err != nil {
 		return 0, err
 	}
-	info, err := os.Lstat(root)
+	info, err := disk.Lstat(root)
 	if err != nil {
 		return 0, err
 	}
@@ -890,7 +923,7 @@ func countRegularFilesContext(ctx context.Context, root string) (int, error) {
 		return 0, nil
 	}
 	count := 0
-	err = filepath.WalkDir(root, func(_ string, entry fs.DirEntry, walkErr error) error {
+	err = disk.WalkDir(root, func(_ string, entry fs.DirEntry, walkErr error) error {
 		if err := taskcontrol.Wait(ctx); err != nil {
 			return err
 		}
@@ -905,53 +938,53 @@ func countRegularFilesContext(ctx context.Context, root string) (int, error) {
 	return count, err
 }
 
-func rollbackPublished(published []publishedMove) error {
+func rollbackPublished(disk *rootedio.FS, published []publishedMove) error {
 	var result error
 	for index := len(published) - 1; index >= 0; index-- {
 		move := published[index]
 		if move.originalInfo != nil {
-			result = errors.Join(result, restoreReplacement(move))
+			result = errors.Join(result, restoreReplacement(disk, move))
 			continue
 		}
 		if move.directoryMode != 0 {
-			if err := os.MkdirAll(move.source, move.directoryMode.Perm()); err != nil {
+			if err := disk.MkdirAll(move.source, move.directoryMode.Perm()); err != nil {
 				result = errors.Join(result, err)
 			}
-			if err := os.Remove(move.destination); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err := disk.Remove(move.destination); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				result = errors.Join(result, err)
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(move.source), 0o700); err != nil {
+		if err := disk.MkdirAll(filepath.Dir(move.source), 0o700); err != nil {
 			result = errors.Join(result, err)
 			continue
 		}
-		if err := filesystem.RenameNoReplace(move.destination, move.source); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := filesystem.RenameNoReplace(disk, move.destination, move.source); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			result = errors.Join(result, err)
 		}
 	}
 	return result
 }
 
-func exchangeFiles(source, destination string) error {
-	return unix.Renameat2(unix.AT_FDCWD, source, unix.AT_FDCWD, destination, unix.RENAME_EXCHANGE)
+func exchangeFiles(disk *rootedio.FS, source, destination string) error {
+	return disk.RenameFlags(source, destination, unix.RENAME_EXCHANGE)
 }
 
 func sameFileState(a, b fs.FileInfo) bool {
 	return os.SameFile(a, b) && a.Mode() == b.Mode() && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
 
-func restoreReplacement(move publishedMove) error {
-	original, err := os.Lstat(move.source)
+func restoreReplacement(disk *rootedio.FS, move publishedMove) error {
+	original, err := disk.Lstat(move.source)
 	if err != nil {
 		return err
 	}
 	if !sameFileState(original, move.originalInfo) {
 		return fmt.Errorf("backup changed: %s", move.source)
 	}
-	current, err := os.Lstat(move.destination)
+	current, err := disk.Lstat(move.destination)
 	if errors.Is(err, fs.ErrNotExist) {
-		return filesystem.RenameNoReplace(move.source, move.destination)
+		return filesystem.RenameNoReplace(disk, move.source, move.destination)
 	}
 	if err != nil {
 		return err
@@ -959,12 +992,12 @@ func restoreReplacement(move publishedMove) error {
 	if !sameFileState(current, move.publishedInfo) {
 		return fmt.Errorf("destination changed during extraction: %s", move.destination)
 	}
-	if err := exchangeFiles(move.source, move.destination); err != nil {
+	if err := exchangeFiles(disk, move.source, move.destination); err != nil {
 		return err
 	}
 	// A concurrent replacement between the check and exchange must survive in
 	// staging, even though the original has now been restored successfully.
-	displaced, err := os.Lstat(move.source)
+	displaced, err := disk.Lstat(move.source)
 	if err != nil {
 		return err
 	}

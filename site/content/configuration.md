@@ -15,6 +15,8 @@ Roots are entry points into the filesystem. `{home}` expands to the logged-in us
 
 `excluded_names` matches exact, case-sensitive entry names anywhere below that root. `excluded_paths` matches exact, case-sensitive paths relative to the root and rejects direct access to those paths and their descendants. Neither option supports glob patterns. Linux permissions remain the access boundary.
 
+Symlinks can be followed only when their resolved target stays within the root being accessed. A link from `/srv/media` to `/mnt/archive` cannot be opened through the Media root, even if the Linux account can access `/mnt/archive`. Add `/mnt/archive` as a separate root and access it through that entry instead. This also applies to Monaco editor reads and saves. Renaming, moving or deleting the symlink itself does not follow its target.
+
 ## Server settings
 
 | Setting | Purpose |
@@ -22,6 +24,8 @@ Roots are entry points into the filesystem. `{home}` expands to the logged-in us
 | `listen` | Broker address and port. The production example listens on `0.0.0.0:8080`. |
 | `editor_max_bytes` | Maximum size accepted by the text editor; the example uses 5 MiB. |
 | `auth` | Authentication mode, cookie policy, session lifetime and login limits. See [authentication](authentication.md). |
+| `auth.elevation_groups` | Groups permitted to request root workers after PAM reauthentication; empty disables elevation. |
+| `auth.proxy_secret_file` | Private file containing the authenticating proxy’s 64-character hexadecimal credential; required in proxy mode. |
 | `tls` | Certificate and private-key paths for direct HTTPS. |
 | `runtime.worker_dir` | Per-user worker sockets and runtime state. |
 | `runtime.data_dir` | Persistent application state; the package uses `/var/lib/webfile`. |

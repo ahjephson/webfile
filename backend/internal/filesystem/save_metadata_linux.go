@@ -5,6 +5,7 @@ package filesystem
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+	"webfile/internal/rootedio"
 )
 
 func hasMultipleLinks(info fs.FileInfo) bool {
@@ -20,8 +22,8 @@ func hasMultipleLinks(info fs.FileInfo) bool {
 	return ok && stat.Nlink > 1
 }
 
-func lockEditorDirectory(ctx context.Context, path string) (func(), error) {
-	directory, err := os.Open(filepath.Dir(path))
+func lockEditorDirectory(ctx context.Context, disk *rootedio.FS, path string) (func(), error) {
+	directory, err := disk.Open(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +68,7 @@ func writeLinkedFile(file *os.File, content []byte) error {
 	return file.Sync()
 }
 
-func copyReplacementMetadata(source string, target *os.File, info fs.FileInfo) error {
+func copyReplacementMetadata(disk *rootedio.FS, source string, target *os.File, info fs.FileInfo) error {
 	if err := target.Chmod(info.Mode().Perm()); err != nil {
 		return err
 	}
@@ -76,7 +78,13 @@ func copyReplacementMetadata(source string, target *os.File, info fs.FileInfo) e
 		}
 	}
 
-	size, err := unix.Listxattr(source, nil)
+	original, err := disk.OpenFile(source, unix.O_PATH, 0)
+	if err != nil {
+		return err
+	}
+	defer original.Close()
+	originalPath := fmt.Sprintf("/proc/self/fd/%d", original.Fd())
+	size, err := unix.Listxattr(originalPath, nil)
 	if errors.Is(err, unix.ENOTSUP) {
 		return nil
 	}
@@ -84,7 +92,7 @@ func copyReplacementMetadata(source string, target *os.File, info fs.FileInfo) e
 		return err
 	}
 	names := make([]byte, size)
-	size, err = unix.Listxattr(source, names)
+	size, err = unix.Listxattr(originalPath, names)
 	if err != nil {
 		return err
 	}
@@ -92,12 +100,12 @@ func copyReplacementMetadata(source string, target *os.File, info fs.FileInfo) e
 		if !strings.HasPrefix(name, "user.") && name != "system.posix_acl_access" {
 			continue
 		}
-		valueSize, err := unix.Getxattr(source, name, nil)
+		valueSize, err := unix.Getxattr(originalPath, name, nil)
 		if err != nil {
 			return err
 		}
 		value := make([]byte, valueSize)
-		valueSize, err = unix.Getxattr(source, name, value)
+		valueSize, err = unix.Getxattr(originalPath, name, value)
 		if err != nil {
 			return err
 		}

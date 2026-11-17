@@ -14,9 +14,10 @@ Use the latest published release. Fixes are developed on `main` and included in 
 
 ## Deployment boundary
 
-- Production requires PAM with direct TLS, or a trusted authenticating reverse proxy with secure cookies. Keep trusted proxy CIDRs explicit and prevent clients from reaching a proxy-authenticated listener directly.
+- Production requires PAM with direct TLS, or a trusted authenticating reverse proxy with secure cookies. Keep trusted proxy CIDRs explicit and prevent clients from reaching a proxy-authenticated listener directly. Proxy mode also requires a private shared credential on every request; a loopback source address is insufficient.
 - The broker is unprivileged. The root launcher may only start validated local users' workers; it is not a general command runner or filesystem proxy.
-- Workers use the logged-in user's UID, GID and supplementary groups. A configured root does not grant access beyond that user's Linux permissions.
+- Ordinary workers use the logged-in user’s UID, GID and supplementary groups. A configured root does not grant access beyond that user’s Linux permissions. Root workers require explicit membership in `auth.elevation_groups` and PAM reauthentication; the empty default disables elevation. Treat membership as a grant of root authority.
+- Filesystem mutations retain descriptor-based confinement. Canonical paths are traversed without following symlinks substituted after resolution, including during publication, metadata changes and cleanup.
 - The HTTP, authentication-free development build is for a trusted local machine. Do not expose it publicly or reuse that configuration for production.
 - Keep TLS keys and local configuration outside version control. Back up data independently: delete and overwrite operations can permanently change files.
 

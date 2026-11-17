@@ -82,7 +82,7 @@ func (s *Service) Details(ctx context.Context, virtualPath string) (Details, err
 	if err != nil {
 		return Details{}, err
 	}
-	st, err := os.Lstat(abs)
+	st, err := s.resolver.disk.Lstat(abs)
 	if err != nil {
 		return Details{}, err
 	}
@@ -102,7 +102,7 @@ func (s *Service) Details(ctx context.Context, virtualPath string) (Details, err
 		d.Group = groupnameForID(stat.Gid)
 	}
 	if d.IsSymlink {
-		d.LinkTarget, _ = os.Readlink(abs)
+		d.LinkTarget, _ = s.resolver.disk.Readlink(abs)
 	}
 	return d, nil
 }
@@ -193,7 +193,7 @@ func (s *Service) calculateAndCacheFolderSize(abs string, job *folderSizeJob) {
 	defer job.cancel()
 	var size int64
 	var err error
-	info, _ := os.Stat(abs)
+	info, _ := s.resolver.disk.Stat(abs)
 	select {
 	case s.folderSizeSlots <- struct{}{}:
 		size, err = calculateFolderSizeContext(job.ctx, abs)
@@ -337,7 +337,7 @@ func (s *Service) Chmod(ctx context.Context, virtualPath, modeText string) error
 	if err != nil {
 		return err
 	}
-	st, err := os.Lstat(abs)
+	st, err := s.resolver.disk.Lstat(abs)
 	if err != nil {
 		return err
 	}
@@ -363,7 +363,7 @@ func (s *Service) Chmod(ctx context.Context, virtualPath, modeText string) error
 	if value&0o1000 != 0 {
 		mode |= fs.ModeSticky
 	}
-	return os.Chmod(abs, mode)
+	return s.resolver.disk.Chmod(abs, mode)
 }
 
 func unixPermissionBits(mode fs.FileMode) uint32 {
@@ -414,7 +414,7 @@ func (s *Service) Chown(ctx context.Context, virtualPath, username, groupname st
 		}
 		gid = parsed
 	}
-	return os.Lchown(abs, uid, gid)
+	return s.resolver.disk.Lchown(abs, uid, gid)
 }
 
 func usernameForID(uid uint32) string {

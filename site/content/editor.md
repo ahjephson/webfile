@@ -54,6 +54,8 @@ If the file has changed on the server since you opened it, or a new file now exi
 
 Review the conflict before choosing Overwrite. Saving uses your Linux account's permissions; being able to open a file does not necessarily mean you can change it.
 
+Opening and saving also enforce the configured root. A symlink can be followed only when its target stays within the root being accessed. Ask an administrator to expose an outside target as a separate root if you need to edit it. See [configuration](configuration.md).
+
 ## Set your defaults
 
 In **Settings → Editor**, choose defaults for word wrap, font size, line numbers, whitespace, minimap, toolbar layout and Markdown preview, then select **Save settings**. These defaults apply when you open an editor. Toolbar changes affect the current editor without saving new defaults.

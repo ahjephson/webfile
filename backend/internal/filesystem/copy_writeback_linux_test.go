@@ -188,7 +188,7 @@ func TestMusicSizedAtomicCopyAndCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			var copied int64
-			err = copyFileAtomic(ctx, source, destination, 0600, info.ModTime(), func(_ string, delta int64) {
+			err = copyFileAtomic(testRootedIO(t), ctx, source, destination, 0600, info.ModTime(), func(_ string, delta int64) {
 				copied += delta
 				if cancelDuringCopy && copied >= 2*copyWritebackWindow {
 					cancel()

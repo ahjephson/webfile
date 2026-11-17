@@ -97,18 +97,7 @@ func (t *Transfer) recordUndoMove(item transferItem, configured Root, absolute s
 	if t.undoJournal == nil || !item.top {
 		return
 	}
-	root, err := os.OpenRoot(configured.Path)
-	if err != nil {
-		t.recordUndoPublication(item, nil, err)
-		return
-	}
-	defer root.Close()
-	relative, err := filepath.Rel(configured.Path, absolute)
-	if err != nil {
-		t.recordUndoPublication(item, nil, err)
-		return
-	}
-	info, err := root.Lstat(relative)
+	info, err := t.service.resolver.disk.Lstat(absolute)
 	if err == nil && (!os.SameFile(info, expected) || info.Size() != expected.Size() || !info.ModTime().Equal(expected.ModTime())) {
 		err = ErrUndoChanged
 	}
@@ -156,20 +145,11 @@ func (s *Service) checkUndoNode(node undoNode, identityOnly bool) error {
 	if IsConfiguredRootPath(node.Path) {
 		return ErrInvalidPath
 	}
-	configured, absolute, err := s.resolver.ResolveEntry(node.Path)
+	_, absolute, err := s.resolver.ResolveEntry(node.Path)
 	if err != nil {
 		return errors.Join(ErrUndoChanged, err)
 	}
-	root, err := os.OpenRoot(configured.Path)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	relative, err := filepath.Rel(configured.Path, absolute)
-	if err != nil {
-		return err
-	}
-	info, err := root.Lstat(relative)
+	info, err := s.resolver.disk.Lstat(absolute)
 	if err != nil {
 		return errors.Join(ErrUndoChanged, err)
 	}
@@ -343,25 +323,15 @@ func (s *Service) UndoTransferJournal(ctx context.Context, plan UndoPlan, reader
 				return err
 			}
 		} else {
-			configured, absolute, err := s.resolver.ResolveEntry(node.Path)
+			_, absolute, err := s.resolver.ResolveEntry(node.Path)
 			if err != nil {
 				return err
 			}
-			root, err := os.OpenRoot(configured.Path)
+			parent, err := s.resolver.disk.OpenRoot(filepath.Dir(absolute))
 			if err != nil {
 				return err
 			}
-			relative, err := filepath.Rel(configured.Path, absolute)
-			if err != nil {
-				root.Close()
-				return err
-			}
-			parent, err := root.OpenRoot(filepath.Dir(relative))
-			root.Close()
-			if err != nil {
-				return err
-			}
-			err = removeUndoEntry(parent, filepath.Base(relative), node.Stamp)
+			err = removeUndoEntry(parent, filepath.Base(absolute), node.Stamp)
 			parent.Close()
 			if err != nil {
 				return errors.Join(err, ErrUndoChanged)

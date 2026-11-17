@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"webfile/internal/clienterror"
+	"webfile/internal/rootedio"
 	"webfile/internal/thumbnailcache"
 )
 
@@ -28,6 +29,7 @@ type Root struct {
 }
 
 type Resolver struct {
+	disk      *rootedio.FS
 	roots     map[string]Root
 	rootOrder []Root
 }
@@ -46,8 +48,15 @@ func NewResolver(roots []Root) (*Resolver, error) {
 		r.roots[root.Name] = root
 		r.rootOrder = append(r.rootOrder, root)
 	}
+	paths := make([]string, 0, len(r.rootOrder))
+	for _, root := range r.rootOrder {
+		paths = append(paths, root.Path)
+	}
+	r.disk = rootedio.New(paths...)
 	return r, nil
 }
+
+func (r *Resolver) IO() *rootedio.FS { return r.disk }
 
 func (r *Resolver) Roots() []Root {
 	out := make([]Root, len(r.rootOrder))
@@ -111,20 +120,11 @@ func (r *Resolver) ResolveExisting(v string) (Root, string, error) {
 // OpenExisting keeps path traversal anchored to the configured root even if a
 // directory is replaced by a symlink after ResolveExisting returns.
 func (r *Resolver) OpenExisting(v string) (*os.File, error) {
-	root, absolute, err := r.ResolveExisting(v)
+	_, absolute, err := r.ResolveExisting(v)
 	if err != nil {
 		return nil, err
 	}
-	fs, err := os.OpenRoot(root.Path)
-	if err != nil {
-		return nil, err
-	}
-	defer fs.Close()
-	relative, err := filepath.Rel(root.Path, absolute)
-	if err != nil {
-		return nil, err
-	}
-	return fs.Open(relative)
+	return r.disk.Open(absolute)
 }
 
 // ValidatePath checks an absolute destination against the root and its excluded
@@ -255,16 +255,7 @@ func (r *Resolver) ResolveForCreateWithParents(v string) (Root, string, error) {
 		}
 		ancestor = filepath.Dir(ancestor)
 	}
-	anchored, err := os.OpenRoot(root.Path)
-	if err != nil {
-		return Root{}, "", err
-	}
-	defer anchored.Close()
-	parent, err := filepath.Rel(root.Path, filepath.Dir(candidate))
-	if err != nil {
-		return Root{}, "", err
-	}
-	if err := anchored.MkdirAll(parent, 0o755); err != nil {
+	if err := r.disk.MkdirAll(filepath.Dir(candidate), 0755); err != nil {
 		return Root{}, "", err
 	}
 	return r.ResolveForCreate(v)

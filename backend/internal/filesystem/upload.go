@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"webfile/internal/rootedio"
 )
 
 type UploadSession struct {
@@ -35,6 +36,7 @@ type uploadRecord struct {
 }
 
 type UploadManager struct {
+	disk      *rootedio.FS
 	mu        sync.Mutex
 	active    map[string]context.CancelFunc
 	resolver  *Resolver
@@ -43,7 +45,13 @@ type UploadManager struct {
 }
 
 func NewUploadManager(resolver *Resolver, baseDir string) *UploadManager {
-	return &UploadManager{resolver: resolver, baseDir: baseDir, active: make(map[string]context.CancelFunc)}
+	paths := []string{baseDir}
+	if resolver != nil {
+		for _, root := range resolver.Roots() {
+			paths = append(paths, root.Path)
+		}
+	}
+	return &UploadManager{disk: rootedio.New(paths...), resolver: resolver, baseDir: baseDir, active: make(map[string]context.CancelFunc)}
 }
 
 func (m *UploadManager) Init(ctx context.Context, virtualDir, filename string, size, sourceModified int64) (UploadSession, error) {
@@ -220,11 +228,11 @@ func (m *UploadManager) Append(ctx context.Context, id string, offset int64, src
 		if err != nil {
 			return UploadSession{}, false, err
 		}
-		if err := os.Chmod(tempPath, 0o644); err != nil {
+		if err := m.disk.Chmod(tempPath, 0o644); err != nil {
 			return UploadSession{}, false, err
 		}
 		m.mu.Unlock()
-		publishErr := renameNoReplaceContext(ctx, tempPath, destination)
+		publishErr := renameNoReplaceContext(m.disk, ctx, tempPath, destination)
 		m.mu.Lock()
 		if err := publishErr; err != nil {
 			if errors.Is(err, ErrConflict) {
@@ -237,7 +245,7 @@ func (m *UploadManager) Append(ctx context.Context, id string, offset int64, src
 			// Publication can take minutes across disks; cancellation and other
 			// uploads must be able to acquire the manager lock during that IO.
 			m.mu.Unlock()
-			copyErr := copyFileAtomic(ctx, tempPath, destination, 0o644, time.Now(), nil)
+			copyErr := copyFileAtomic(m.disk, ctx, tempPath, destination, 0o644, time.Now(), nil)
 			m.mu.Lock()
 			if err := ctx.Err(); err != nil {
 				return UploadSession{}, false, err

@@ -47,7 +47,7 @@ Local production validation includes development tests/vet, production/PAM tests
 - Install Go and frontend dependencies from the committed module and lock files.
 - Run all Go tests and vet checks with the production and PAM build tags.
 - Run `govulncheck` against the Go source and dependency graph.
-- Audit production frontend dependencies; high and critical findings block the release. Review development-only findings separately because they are not shipped in the browser bundle.
+- Audit all frontend dependencies, including the build toolchain; high and critical findings block the release. Classify each advisory by its affected code path and exposure during development, CI or browser execution. Any exception needs a documented, scoped justification; development-only classification alone is not an exemption.
 - Build the frontend and exact production binary intended for release.
 - Scan the compiled production binary with `govulncheck -mode=binary`.
 - Run real 7-Zip integration coverage, including encrypted extraction, an incorrect-password retry, progress, extracted content and archive creation.

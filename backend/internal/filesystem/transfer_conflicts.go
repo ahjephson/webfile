@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"webfile/internal/rootedio"
 	"webfile/internal/taskcontrol"
 
 	"golang.org/x/sys/unix"
@@ -99,7 +100,7 @@ func (t *Transfer) initialize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	destinationInfo, err := os.Stat(destination)
+	destinationInfo, err := t.service.resolver.disk.Stat(destination)
 	if err != nil {
 		return err
 	}
@@ -127,7 +128,7 @@ func (t *Transfer) initialize(ctx context.Context) error {
 			return fmt.Errorf("duplicate source item")
 		}
 		seen[absolute] = true
-		parentInfo, err := os.Stat(filepath.Dir(absolute))
+		parentInfo, err := t.service.resolver.disk.Stat(filepath.Dir(absolute))
 		if err != nil {
 			return err
 		}
@@ -136,11 +137,11 @@ func (t *Transfer) initialize(ctx context.Context) error {
 		if isSameOrDescendant(absolute, target) {
 			return fmt.Errorf("destination cannot be the source or beneath it")
 		}
-		sourceInfo, err := os.Lstat(absolute)
+		sourceInfo, err := t.service.resolver.disk.Lstat(absolute)
 		if err != nil {
 			return err
 		}
-		if targetInfo, e := os.Lstat(target); e == nil && os.SameFile(sourceInfo, targetInfo) {
+		if targetInfo, e := t.service.resolver.disk.Lstat(target); e == nil && os.SameFile(sourceInfo, targetInfo) {
 			return fmt.Errorf("source and destination are the same item")
 		}
 		bytes, items, err := measureTree(ctx, absolute)
@@ -187,14 +188,14 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 				if e != nil {
 					return e
 				}
-				_ = os.Chmod(target, item.info.Mode().Perm())
-				_ = os.Chtimes(target, item.info.ModTime(), item.info.ModTime())
+				_ = t.service.resolver.disk.Chmod(target, item.info.Mode().Perm())
+				_ = t.service.resolver.disk.Chtimes(target, item.info.ModTime(), item.info.ModTime())
 				t.finishUndoDirectory(item)
 			}
 			if t.kind == "move" {
 				_, source, e := t.service.resolver.ResolveEntry(item.source)
 				if e == nil {
-					if e = os.Remove(source); e != nil && !errors.Is(e, unix.ENOTEMPTY) && !errors.Is(e, fs.ErrNotExist) {
+					if e = t.service.resolver.disk.Remove(source); e != nil && !errors.Is(e, unix.ENOTEMPTY) && !errors.Is(e, fs.ErrNotExist) {
 						return e
 					}
 				} else if !errors.Is(e, fs.ErrNotExist) {
@@ -212,7 +213,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 		if err != nil {
 			return err
 		}
-		sourceInfo, err := os.Lstat(source)
+		sourceInfo, err := t.service.resolver.disk.Lstat(source)
 		if err != nil {
 			return err
 		}
@@ -221,7 +222,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 				return ErrUndoChanged
 			}
 		}
-		targetInfo, targetErr := os.Lstat(target)
+		targetInfo, targetErr := t.service.resolver.disk.Lstat(target)
 		if targetErr != nil && !errors.Is(targetErr, fs.ErrNotExist) {
 			return targetErr
 		}
@@ -301,7 +302,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 					if err != nil {
 						return err
 					}
-					if _, e := os.Lstat(target); errors.Is(e, fs.ErrNotExist) {
+					if _, e := t.service.resolver.disk.Lstat(target); errors.Is(e, fs.ErrNotExist) {
 						break
 					} else if e != nil {
 						return e
@@ -341,7 +342,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 				if err := taskcontrol.Wait(ctx); err != nil {
 					return err
 				}
-				err = moveReviewedItem(sourceRoot, targetRoot, source, target, sourceInfo)
+				err = moveReviewedItem(t.service.resolver.disk, sourceRoot, targetRoot, source, target, sourceInfo)
 				if err == nil {
 					t.recordUndoMove(item, targetRoot, target, sourceInfo)
 					t.bytes += bytes
@@ -359,22 +360,12 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 				}
 			}
 			if choice != "merge" {
-				root, e := os.OpenRoot(targetRoot.Path)
-				if e != nil {
-					return e
-				}
-				relative, e := filepath.Rel(targetRoot.Path, target)
-				if e != nil {
-					root.Close()
-					return e
-				}
-				err := root.Mkdir(relative, sourceInfo.Mode().Perm()|0700)
+				err := t.service.resolver.disk.Mkdir(target, sourceInfo.Mode().Perm()|0700)
 				if err == nil {
-					info, statErr := root.Lstat(relative)
+					info, statErr := t.service.resolver.disk.Lstat(target)
 					item.createdInfo = info
 					t.recordUndoPublication(item, info, statErr)
 				}
-				root.Close()
 				if err != nil {
 					if errors.Is(err, fs.ErrExist) {
 						continue
@@ -405,7 +396,7 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 			return err
 		}
 		if t.kind == "move" && choice != "replace" {
-			if err := moveReviewedItem(sourceRoot, targetRoot, source, target, sourceInfo); err == nil {
+			if err := moveReviewedItem(t.service.resolver.disk, sourceRoot, targetRoot, source, target, sourceInfo); err == nil {
 				t.recordUndoMove(item, targetRoot, target, sourceInfo)
 				t.bytes += sourceInfo.Size()
 				t.items++
@@ -433,50 +424,27 @@ func (t *Transfer) Run(ctx context.Context, report func(TransferProgress)) error
 }
 
 func (t *Transfer) copyItem(ctx context.Context, sourceRoot, targetRoot Root, source, target string, sourceInfo, expected os.FileInfo, replace bool, emit func(string, string)) error {
-	sourceFS, err := os.OpenRoot(sourceRoot.Path)
-	if err != nil {
-		return err
-	}
-	defer sourceFS.Close()
-	sourceRelative, err := filepath.Rel(sourceRoot.Path, source)
-	if err != nil {
-		return err
-	}
-	root, err := os.OpenRoot(targetRoot.Path)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	relative, err := filepath.Rel(targetRoot.Path, filepath.Dir(target))
-	if err != nil {
-		return err
-	}
-	parent, err := root.Open(relative)
-	if err != nil {
-		return err
-	}
-	defer parent.Close()
-	anchored := fmt.Sprintf("/proc/self/fd/%d", parent.Fd())
-	stage, err := os.CreateTemp(anchored, ".webfile-extract-transfer-")
+	disk := t.service.resolver.disk
+	stage, err := disk.CreateTemp(filepath.Dir(target), ".webfile-extract-transfer-")
 	if err != nil {
 		return err
 	}
 	staged := stage.Name()
 	if err := stage.Close(); err != nil {
-		os.Remove(staged)
+		disk.Remove(staged)
 		return err
 	}
-	if err := os.Remove(staged); err != nil {
+	if err := disk.Remove(staged); err != nil {
 		return err
 	}
 	defer func() {
 		if staged != "" {
-			os.Remove(staged)
+			disk.Remove(staged)
 		}
 	}()
 	startBytes := t.bytes
 	if sourceInfo.Mode().IsRegular() {
-		file, e := sourceFS.OpenFile(sourceRelative, os.O_RDONLY|unix.O_NOFOLLOW, 0)
+		file, e := disk.OpenFile(source, os.O_RDONLY|unix.O_NOFOLLOW, 0)
 		if e != nil {
 			return e
 		}
@@ -488,19 +456,19 @@ func (t *Transfer) copyItem(ctx context.Context, sourceRoot, targetRoot Root, so
 		if fingerprint(opened) != fingerprint(sourceInfo) {
 			return fmt.Errorf("source changed; review it again")
 		}
-		err = copyFileAtomic(ctx, fmt.Sprintf("/proc/self/fd/%d", file.Fd()), staged, sourceInfo.Mode().Perm(), sourceInfo.ModTime(), func(phase string, bytes int64) { t.bytes += bytes; emit(phase, "Copying "+filepath.Base(source)) })
+		err = copyOpenFileAtomic(disk, ctx, file, staged, sourceInfo.Mode().Perm(), sourceInfo.ModTime(), func(phase string, bytes int64) { t.bytes += bytes; emit(phase, "Copying "+filepath.Base(source)) })
 	} else {
-		link, e := sourceFS.Readlink(sourceRelative)
+		link, e := disk.Readlink(source)
 		if e != nil {
 			return e
 		}
-		err = os.Symlink(link, staged)
+		err = disk.Symlink(link, staged)
 	}
 	if err != nil {
 		t.bytes = startBytes
 		return err
 	}
-	current, err := sourceFS.Lstat(sourceRelative)
+	current, err := disk.Lstat(source)
 	if err != nil {
 		return err
 	}
@@ -510,13 +478,12 @@ func (t *Transfer) copyItem(ctx context.Context, sourceRoot, targetRoot Root, so
 	if err := taskcontrol.Wait(ctx); err != nil {
 		return err
 	}
-	stagedInfo, err := os.Lstat(staged)
+	stagedInfo, err := disk.Lstat(staged)
 	if err != nil {
 		return err
 	}
-	target = filepath.Join(anchored, filepath.Base(target))
 	if replace {
-		current, err = os.Lstat(target)
+		current, err = disk.Lstat(target)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				t.bytes = startBytes
@@ -528,29 +495,29 @@ func (t *Transfer) copyItem(ctx context.Context, sourceRoot, targetRoot Root, so
 			t.bytes = startBytes
 			return ErrConflict
 		}
-		if err := os.Chmod(staged, expected.Mode().Perm()); err != nil {
+		if err := disk.Chmod(staged, expected.Mode().Perm()); err != nil {
 			return err
 		}
-		published, e := os.Lstat(staged)
+		published, e := disk.Lstat(staged)
 		if e != nil {
 			return e
 		}
-		if err = unix.Renameat2(int(parent.Fd()), filepath.Base(staged), int(parent.Fd()), filepath.Base(target), unix.RENAME_EXCHANGE); err != nil {
+		if err = disk.RenameFlags(staged, target, unix.RENAME_EXCHANGE); err != nil {
 			return fmt.Errorf("filesystem cannot safely replace this item: %w", err)
 		}
-		displaced, e := os.Lstat(staged)
+		displaced, e := disk.Lstat(staged)
 		if e != nil || !os.SameFile(displaced, expected) || displaced.Size() != expected.Size() || !displaced.ModTime().Equal(expected.ModTime()) {
-			live, e := os.Lstat(target)
+			live, e := disk.Lstat(target)
 			if e != nil || !os.SameFile(live, published) || live.Size() != published.Size() || !live.ModTime().Equal(published.ModTime()) {
 				recovery := filepath.Base(staged)
 				staged = ""
 				return fmt.Errorf("destination changed concurrently; displaced data retained in destination as %s", recovery)
 			}
-			if rollback := unix.Renameat2(int(parent.Fd()), filepath.Base(staged), int(parent.Fd()), filepath.Base(target), unix.RENAME_EXCHANGE); rollback != nil {
+			if rollback := disk.RenameFlags(staged, target, unix.RENAME_EXCHANGE); rollback != nil {
 				staged = ""
 				return fmt.Errorf("destination changed; retained displaced data for recovery: %w", rollback)
 			}
-			restored, e := os.Lstat(staged)
+			restored, e := disk.Lstat(staged)
 			if e != nil || !os.SameFile(restored, published) || restored.Size() != published.Size() || !restored.ModTime().Equal(published.ModTime()) {
 				recovery := filepath.Base(staged)
 				staged = ""
@@ -559,11 +526,11 @@ func (t *Transfer) copyItem(ctx context.Context, sourceRoot, targetRoot Root, so
 			t.bytes = startBytes
 			return ErrConflict
 		}
-	} else if err = renameNoReplace(staged, target); err != nil {
+	} else if err = renameNoReplace(disk, staged, target); err != nil {
 		t.bytes = startBytes
 		return err
 	}
-	t.published, err = os.Lstat(target)
+	t.published, err = disk.Lstat(target)
 	if err != nil {
 		return err
 	}
@@ -571,57 +538,29 @@ func (t *Transfer) copyItem(ctx context.Context, sourceRoot, targetRoot Root, so
 		t.published = nil
 	}
 	if t.kind == "move" {
-		current, err = sourceFS.Lstat(sourceRelative)
+		current, err = disk.Lstat(source)
 		if err != nil {
 			return err
 		}
 		if fingerprint(current) != fingerprint(sourceInfo) {
 			return fmt.Errorf("copy completed but source changed; source was retained")
 		}
-		if err = sourceFS.Remove(sourceRelative); err != nil {
+		if err = disk.Remove(source); err != nil {
 			return fmt.Errorf("copy completed but source could not be removed: %w", err)
 		}
 	}
 	return nil
 }
 
-func moveReviewedItem(sourceRoot, targetRoot Root, source, target string, expected os.FileInfo) error {
-	from, err := os.OpenRoot(sourceRoot.Path)
-	if err != nil {
-		return err
-	}
-	defer from.Close()
-	to, err := os.OpenRoot(targetRoot.Path)
-	if err != nil {
-		return err
-	}
-	defer to.Close()
-	sourceRel, err := filepath.Rel(sourceRoot.Path, source)
-	if err != nil {
-		return err
-	}
-	targetRel, err := filepath.Rel(targetRoot.Path, target)
-	if err != nil {
-		return err
-	}
-	parent, err := from.Open(filepath.Dir(sourceRel))
-	if err != nil {
-		return err
-	}
-	defer parent.Close()
-	destination, err := to.Open(filepath.Dir(targetRel))
-	if err != nil {
-		return err
-	}
-	defer destination.Close()
-	current, err := from.Lstat(sourceRel)
+func moveReviewedItem(disk *rootedio.FS, sourceRoot, targetRoot Root, source, target string, expected os.FileInfo) error {
+	current, err := disk.Lstat(source)
 	if err != nil {
 		return err
 	}
 	if fingerprint(current) != fingerprint(expected) {
 		return fmt.Errorf("source changed; review it again")
 	}
-	err = unix.Renameat2(int(parent.Fd()), filepath.Base(sourceRel), int(destination.Fd()), filepath.Base(targetRel), unix.RENAME_NOREPLACE)
+	err = disk.RenameFlags(source, target, unix.RENAME_NOREPLACE)
 	if errors.Is(err, fs.ErrExist) || errors.Is(err, unix.ENOTEMPTY) {
 		return ErrConflict
 	}

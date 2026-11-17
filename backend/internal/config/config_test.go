@@ -86,6 +86,7 @@ func TestValidateProxyAuthentication(t *testing.T) {
 	target := Default()
 	target.Roots = []Root{{Name: "Root", Path: "/"}}
 	target.Auth.Mode = "proxy"
+	target.Auth.ProxySecretFile = "/etc/webfile/proxy-token"
 	target.Auth.TrustedProxies = []string{"127.0.0.1/32", "2001:db8::1/64"}
 	target.Auth.LogoutURL = "/_auth/logout?return=/"
 	if err := target.Validate(); err != nil {
@@ -103,6 +104,7 @@ func TestValidateProxyAuthenticationRequiresTrustedProxy(t *testing.T) {
 	target := Default()
 	target.Roots = []Root{{Name: "Root", Path: "/"}}
 	target.Auth.Mode = "proxy"
+	target.Auth.ProxySecretFile = "/etc/webfile/proxy-token"
 	if err := target.Validate(); err == nil {
 		t.Fatal("proxy authentication without a trusted proxy was accepted")
 	}
@@ -119,6 +121,7 @@ func TestValidateRejectsUnsafeProxyAuthenticationValues(t *testing.T) {
 			target := Default()
 			target.Roots = []Root{{Name: "Root", Path: "/"}}
 			target.Auth.Mode = "proxy"
+			target.Auth.ProxySecretFile = "/etc/webfile/proxy-token"
 			target.Auth.TrustedProxies = []string{"127.0.0.1/32"}
 			configure(&target)
 			if err := target.Validate(); err == nil {

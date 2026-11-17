@@ -7,15 +7,19 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"webfile/internal/filesystem"
 )
 
 func TestPasswordInspectionMemoryDoesNotGrowWithListing(t *testing.T) {
 	tool := writeTool(t, "#!/bin/sh\nawk 'BEGIN { for (i=0;i<200000;i++) printf \"Path = a-file-name-%08d\\nEncrypted = -\\n\", i }'\n")
-	extractor := New(Config{Executable: tool, InspectArgs: []string{"l", "{archive}"}}, nil)
+	root := t.TempDir()
+	archive := filepath.Join(root, "input.zip")
+	writeTestFile(t, archive, "archive")
+	extractor := New(Config{Executable: tool, InspectArgs: []string{"l", "{archive}"}}, testResolver(t, filesystem.Root{Name: "Files", Path: root}))
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	required, err := extractor.PasswordRequired(context.Background(), "/unused.zip")
+	required, err := extractor.PasswordRequired(context.Background(), archive)
 	runtime.ReadMemStats(&after)
 	t.Logf("inspection allocated %.2f MiB", float64(after.TotalAlloc-before.TotalAlloc)/(1<<20))
 	if err != nil || required {
@@ -38,7 +42,7 @@ func TestCancelledPublicationSkipsValidationAndChecksButCleansStaging(t *testing
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	checked := false
-	_, err := publishStage(ctx, stage, filepath.Join(parent, "destination"), false, ExistingFilesSkip, nil, func() error { checked = true; return nil })
+	_, err := publishStage(testRootedIO(t), ctx, stage, filepath.Join(parent, "destination"), false, ExistingFilesSkip, nil, func() error { checked = true; return nil })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancellation, got %v", err)
 	}

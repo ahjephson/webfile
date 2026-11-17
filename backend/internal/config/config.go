@@ -38,9 +38,11 @@ type Auth struct {
 	PAMService       string   `json:"pam_service"`
 	UserHeader       string   `json:"user_header"`
 	TrustedProxies   []string `json:"trusted_proxies"`
+	ProxySecretFile  string   `json:"proxy_secret_file"`
 	LogoutURL        string   `json:"logout_url"`
 	SessionTTL       string   `json:"session_ttl"`
 	ElevationTTL     string   `json:"elevation_ttl"`
+	ElevationGroups  []string `json:"elevation_groups"`
 	CookieSecure     bool     `json:"cookie_secure"`
 	LoginMaxAttempts int      `json:"login_max_attempts"`
 	LoginWindow      string   `json:"login_window"`
@@ -246,6 +248,17 @@ func (c *Config) Validate() error {
 	}
 	if c.Auth.Mode == "proxy" && len(c.Auth.TrustedProxies) == 0 {
 		return errors.New("auth.trusted_proxies is required when auth.mode is proxy")
+	}
+	if c.Auth.Mode == "proxy" && strings.TrimSpace(c.Auth.ProxySecretFile) == "" {
+		return errors.New("auth.proxy_secret_file is required when auth.mode is proxy")
+	}
+	if strings.EqualFold(c.Auth.UserHeader, "X-WebFile-Proxy-Token") {
+		return errors.New("auth.user_header must differ from the proxy credential header")
+	}
+	for _, group := range c.Auth.ElevationGroups {
+		if group == "" || strings.TrimSpace(group) != group || strings.ContainsAny(group, "/\\\x00\r\n:") {
+			return errors.New("auth.elevation_groups contains an invalid group name")
+		}
 	}
 	c.Auth.LogoutURL = strings.TrimSpace(c.Auth.LogoutURL)
 	if c.Auth.LogoutURL != "" {

@@ -39,7 +39,7 @@ func TestOverwritePublicationRollsBackEarlierReplacements(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			_, err = publishStage(ctx, stage, destination, true, ExistingFilesOverwrite, func(progress Progress) {
+			_, err = publishStage(testRootedIO(t), ctx, stage, destination, true, ExistingFilesOverwrite, func(progress Progress) {
 				if progress.Phase == "publishing" {
 					if cancelAt != 0 && progress.ItemsDone == cancelAt {
 						cancel()
@@ -97,7 +97,7 @@ func testFailedOverwriteRollback(t *testing.T, cancelRun bool) {
 	writeTestFile(t, filepath.Join(destination, "a.txt"), "original a")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, err := publishStage(ctx, stage, destination, true, ExistingFilesOverwrite, func(progress Progress) {
+	_, err := publishStage(testRootedIO(t), ctx, stage, destination, true, ExistingFilesOverwrite, func(progress Progress) {
 		if progress.Phase == "publishing" && progress.ItemsDone == 1 {
 			writeTestFile(t, filepath.Join(destination, "a.txt"), "concurrent edit")
 			if cancelRun {

@@ -56,3 +56,25 @@ func TestWriteTextPreservesUserExtendedAttributes(t *testing.T) {
 		t.Fatalf("attribute=%q", value[:size])
 	}
 }
+
+func TestGIVEN_WriteOnlyFile_WHEN_SavingText_THEN_PreservesWriteAccessWithoutRequiringRead(t *testing.T) {
+	target, root := testService(t)
+	path := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(path, []byte("before"), 0200); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.WriteText(context.Background(), "/Files/notes.txt", []byte("after"), "", false); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0200 {
+		t.Fatalf("permissions changed: %v %v", info, err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "after" {
+		t.Fatalf("save failed: %q %v", data, err)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"webfile/internal/rootedio"
 	"webfile/internal/taskcontrol"
 )
 
@@ -63,7 +64,7 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 	if err != nil {
 		return err
 	}
-	destInfo, err := os.Stat(destAbs)
+	destInfo, err := s.resolver.disk.Stat(destAbs)
 	if err != nil {
 		return err
 	}
@@ -96,7 +97,7 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 			return ErrConflict
 		}
 		seenDestinations[target] = struct{}{}
-		if _, err := os.Lstat(target); err == nil {
+		if _, err := s.resolver.disk.Lstat(target); err == nil {
 			return ErrConflict
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return err
@@ -144,11 +145,11 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 			}
 		}
 		if kind == "move" && canRenameTransferTree(source.Root, destRoot) {
-			info, err := os.Lstat(source.Absolute)
+			info, err := s.resolver.disk.Lstat(source.Absolute)
 			if err != nil {
 				return err
 			}
-			if err := moveReviewedItem(source.Root, destRoot, source.Absolute, target, info); err == nil {
+			if err := moveReviewedItem(s.resolver.disk, source.Root, destRoot, source.Absolute, target, info); err == nil {
 				bytesDone += source.Bytes
 				itemsDone += source.Items
 				emit(transferPhaseCompleted, message)
@@ -161,7 +162,7 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 		}
 
 		startBytes, startItems := bytesDone, itemsDone
-		err := copyTree(ctx, source.Absolute, target, func(phase string, deltaBytes, deltaItems int64) {
+		err := copyTree(s.resolver.disk, ctx, source.Absolute, target, func(phase string, deltaBytes, deltaItems int64) {
 			bytesDone += deltaBytes
 			itemsDone += deltaItems
 			emit(phase, message)
@@ -172,7 +173,7 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 		}
 		if kind == "move" {
 			emit(transferPhaseRemovingSource, message)
-			if err := os.RemoveAll(source.Absolute); err != nil {
+			if err := s.resolver.disk.RemoveAll(source.Absolute); err != nil {
 				return fmt.Errorf("copied but could not remove source %s: %w", source.VirtualPath, err)
 			}
 		}
@@ -183,8 +184,10 @@ func (s *Service) CopyMove(ctx context.Context, kind string, sources []string, d
 }
 
 func measureTree(ctx context.Context, source string) (int64, int64, error) {
+	disk := rootedio.New(filepath.Dir(source))
+	defer disk.Close()
 	var bytes, items int64
-	err := filepath.WalkDir(source, func(current string, entry fs.DirEntry, walkErr error) error {
+	err := disk.WalkDir(source, func(current string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -208,8 +211,8 @@ func measureTree(ctx context.Context, source string) (int64, int64, error) {
 	return bytes, items, err
 }
 
-func copyTree(ctx context.Context, source, destination string, progress func(phase string, deltaBytes, deltaItems int64)) (err error) {
-	if _, statErr := os.Lstat(destination); statErr == nil {
+func copyTree(disk *rootedio.FS, ctx context.Context, source, destination string, progress func(phase string, deltaBytes, deltaItems int64)) (err error) {
+	if _, statErr := disk.Lstat(destination); statErr == nil {
 		return ErrConflict
 	} else if !errors.Is(statErr, fs.ErrNotExist) {
 		return statErr
@@ -218,7 +221,7 @@ func copyTree(ctx context.Context, source, destination string, progress func(pha
 	created := false
 	defer func() {
 		if err != nil && created {
-			_ = os.RemoveAll(destination)
+			_ = disk.RemoveAll(destination)
 		}
 	}()
 
@@ -230,7 +233,7 @@ func copyTree(ctx context.Context, source, destination string, progress func(pha
 	}
 	var dirs []dirTime
 
-	err = filepath.WalkDir(source, func(current string, entry fs.DirEntry, walkErr error) error {
+	err = disk.WalkDir(source, func(current string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -245,14 +248,14 @@ func copyTree(ctx context.Context, source, destination string, progress func(pha
 		if rel != "." {
 			target = filepath.Join(destination, rel)
 		}
-		info, infoErr := os.Lstat(current)
+		info, infoErr := disk.Lstat(current)
 		if infoErr != nil {
 			return infoErr
 		}
 
 		switch {
 		case info.IsDir():
-			if makeErr := os.Mkdir(target, info.Mode().Perm()); makeErr != nil {
+			if makeErr := disk.Mkdir(target, info.Mode().Perm()); makeErr != nil {
 				if errors.Is(makeErr, fs.ErrExist) {
 					return ErrConflict
 				}
@@ -266,11 +269,11 @@ func copyTree(ctx context.Context, source, destination string, progress func(pha
 			return nil
 
 		case info.Mode()&os.ModeSymlink != 0:
-			link, readErr := os.Readlink(current)
+			link, readErr := disk.Readlink(current)
 			if readErr != nil {
 				return readErr
 			}
-			if makeErr := os.Symlink(link, target); makeErr != nil {
+			if makeErr := disk.Symlink(link, target); makeErr != nil {
 				if errors.Is(makeErr, fs.ErrExist) {
 					return ErrConflict
 				}
@@ -283,7 +286,7 @@ func copyTree(ctx context.Context, source, destination string, progress func(pha
 			return nil
 
 		case info.Mode().IsRegular():
-			if copyErr := copyFileAtomic(ctx, current, target, info.Mode().Perm(), info.ModTime(), func(phase string, deltaBytes int64) {
+			if copyErr := copyFileAtomic(disk, ctx, current, target, info.Mode().Perm(), info.ModTime(), func(phase string, deltaBytes int64) {
 				progress(phase, deltaBytes, 0)
 			}); copyErr != nil {
 				return copyErr
@@ -306,28 +309,31 @@ func copyTree(ctx context.Context, source, destination string, progress func(pha
 	// from the bottom up after the tree is complete.
 	progress(transferPhasePublishing, 0, 0)
 	for i := len(dirs) - 1; i >= 0; i-- {
-		_ = os.Chmod(dirs[i].path, dirs[i].mode)
-		_ = os.Chtimes(dirs[i].path, dirs[i].at, dirs[i].mt)
+		_ = disk.Chmod(dirs[i].path, dirs[i].mode)
+		_ = disk.Chtimes(dirs[i].path, dirs[i].at, dirs[i].mt)
 	}
 	return nil
 }
 
-func copyFileAtomic(ctx context.Context, source, destination string, mode fs.FileMode, modified time.Time, progress func(phase string, deltaBytes int64)) error {
-	in, err := os.Open(source)
+func copyFileAtomic(disk *rootedio.FS, ctx context.Context, source, destination string, mode fs.FileMode, modified time.Time, progress func(phase string, deltaBytes int64)) error {
+	in, err := disk.Open(source)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
+	return copyOpenFileAtomic(disk, ctx, in, destination, mode, modified, progress)
+}
 
-	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+func copyOpenFileAtomic(disk *rootedio.FS, ctx context.Context, in *os.File, destination string, mode fs.FileMode, modified time.Time, progress func(string, int64)) error {
+	if err := disk.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(destination), ".webfile-copy-*")
+	tmp, err := disk.CreateTemp(filepath.Dir(destination), ".webfile-copy-*")
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer disk.Remove(tmpName)
 	if err := tmp.Chmod(mode); err != nil {
 		_ = tmp.Close()
 		return err
@@ -362,10 +368,10 @@ func copyFileAtomic(ctx context.Context, source, destination string, mode fs.Fil
 	// no-replace rename publishes it without exposing partial output and works
 	// on filesystems that support renameat2 even when hard links are unavailable.
 	// The platform fallback retains exclusive-create semantics where necessary.
-	if err := renameNoReplaceContext(ctx, tmpName, destination); err != nil {
+	if err := renameNoReplaceContext(disk, ctx, tmpName, destination); err != nil {
 		return err
 	}
-	_ = os.Chtimes(destination, modified, modified)
+	_ = disk.Chtimes(destination, modified, modified)
 	return nil
 }
 

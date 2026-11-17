@@ -110,6 +110,11 @@ func serve(args []string) {
 		fatalIf(errors.New("auth.mode is pam but PAM support is not compiled in; rebuild with CGO_ENABLED=1 and -tags pam"), "authentication unavailable")
 	}
 
+	proxySecret := ""
+	if cfg.Auth.Mode == "proxy" {
+		proxySecret, err = auth.LoadProxySecret(cfg.Auth.ProxySecretFile)
+		fatalIf(err, "invalid proxy credential configuration")
+	}
 	state, err := persistence.Open(filepath.Join(cfg.Runtime.DataDir, "state.json"))
 	fatalIf(err, "open persistent state")
 	sessions := session.New(ttl, cfg.Auth.CookieSecure, state)
@@ -152,6 +157,7 @@ func serve(args []string) {
 		},
 		Sessions:         sessions,
 		ProxyUserHeader:  cfg.Auth.UserHeader,
+		ProxySecret:      proxySecret,
 		TrustedProxies:   trustedProxies,
 		LogoutURL:        cfg.Auth.LogoutURL,
 		State:            state,
@@ -162,6 +168,7 @@ func serve(args []string) {
 		LoginWindow:      loginWindow,
 		LoginBlock:       loginBlock,
 		ElevationTTL:     elevationTTL,
+		ElevationGroups:  cfg.Auth.ElevationGroups,
 	})
 
 	httpServer := &http.Server{
@@ -352,15 +359,16 @@ func launcherMain(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	srv := launcher.Server{
-		Executable:   executable,
-		ConfigPath:   absConfig,
-		SocketPath:   cfg.Runtime.LauncherSocket,
-		WorkerDir:    cfg.Runtime.WorkerDir,
-		BrokerGroup:  cfg.Runtime.LauncherGroup,
-		MinUserUID:   cfg.Runtime.MinUserUID,
-		PAMService:   cfg.Auth.PAMService,
-		CacheSocket:  cfg.Thumbnails.CacheSocket,
-		ElevationTTL: elevationTTL,
+		Executable:      executable,
+		ConfigPath:      absConfig,
+		SocketPath:      cfg.Runtime.LauncherSocket,
+		WorkerDir:       cfg.Runtime.WorkerDir,
+		BrokerGroup:     cfg.Runtime.LauncherGroup,
+		MinUserUID:      cfg.Runtime.MinUserUID,
+		PAMService:      cfg.Auth.PAMService,
+		CacheSocket:     cfg.Thumbnails.CacheSocket,
+		ElevationTTL:    elevationTTL,
+		ElevationGroups: cfg.Auth.ElevationGroups,
 	}
 	slog.Info("worker launcher ready", slog.String("socket", cfg.Runtime.LauncherSocket))
 	fatalIf(srv.Serve(ctx), "launcher stopped")

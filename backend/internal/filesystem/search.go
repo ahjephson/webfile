@@ -57,12 +57,12 @@ func (s *Service) Search(ctx context.Context, request SearchRequest, emit func(S
 	if err != nil {
 		return err
 	}
-	if info, err := os.Lstat(abs); err != nil {
+	if info, err := s.resolver.disk.Lstat(abs); err != nil {
 		return err
 	} else if !info.IsDir() {
 		return ErrNotDirectory
 	}
-	fs, err := os.OpenRoot(abs)
+	fs, err := s.resolver.disk.OpenRoot(abs)
 	if err != nil {
 		return err
 	}

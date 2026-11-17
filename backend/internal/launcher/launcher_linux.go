@@ -40,15 +40,16 @@ type Response struct {
 }
 
 type Server struct {
-	Executable   string
-	ConfigPath   string
-	SocketPath   string
-	WorkerDir    string
-	BrokerGroup  string
-	MinUserUID   uint32
-	PAMService   string
-	CacheSocket  string
-	ElevationTTL time.Duration
+	Executable      string
+	ConfigPath      string
+	SocketPath      string
+	WorkerDir       string
+	BrokerGroup     string
+	MinUserUID      uint32
+	PAMService      string
+	CacheSocket     string
+	ElevationTTL    time.Duration
+	ElevationGroups []string
 
 	mu       sync.Mutex
 	workers  map[uint32]workerProcess
@@ -159,13 +160,13 @@ func (s *Server) handle(conn net.Conn, brokerGID int) {
 			_ = json.NewEncoder(conn).Encode(Response{Error: "invalid elevation request"})
 			return
 		}
-		if err := auth.AuthenticatePAM(context.Background(), s.PAMService, req.Username, req.Password); err != nil {
-			_ = json.NewEncoder(conn).Encode(Response{Error: "invalid credentials"})
+		id, err := identity.Lookup(req.Username)
+		if err != nil || id.UID < s.MinUserUID || id.UID == 0 || !ElevationAllowed(id, s.ElevationGroups) {
+			_ = json.NewEncoder(conn).Encode(Response{Error: "user is not allowed to elevate filesystem access"})
 			return
 		}
-		id, err := identity.Lookup(req.Username)
-		if err != nil || id.UID < s.MinUserUID || id.UID == 0 {
-			_ = json.NewEncoder(conn).Encode(Response{Error: "user is not allowed to elevate filesystem access"})
+		if err := auth.AuthenticatePAM(context.Background(), s.PAMService, req.Username, req.Password); err != nil {
+			_ = json.NewEncoder(conn).Encode(Response{Error: "invalid credentials"})
 			return
 		}
 		socket, err := s.startElevatedWorker(id, brokerGID, req.ElevationToken, req.CacheToken)

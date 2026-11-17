@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, useAttrs } from 'vue'
+import { nextTick, ref, useAttrs } from 'vue'
 import PrimeDialog from 'primevue/dialog'
 import type { DialogProps } from 'primevue/dialog'
 
@@ -8,6 +8,24 @@ const props = defineProps<Pick<DialogProps, 'visible' | 'header' | 'modal'> & { 
 const emit = defineEmits<{ 'update:visible': [value: boolean] }>()
 const attrs = useAttrs()
 const dialog = ref<{ container?: HTMLElement }>()
+let opener: HTMLElement | null = null
+
+function rememberOpener() {
+  const active = document.activeElement
+  opener = active instanceof HTMLElement && active !== document.body ? active : null
+}
+
+async function restoreFocus() {
+  const target = opener
+  await nextTick()
+  if (props.visible || target !== opener) return
+  opener = null
+  if (!target?.isConnected || target.matches(':disabled, [aria-disabled="true"]')) return
+  const active = document.activeElement
+  if (!active || active === document.body || active === document.documentElement || !active.isConnected) {
+    target.focus({ preventScroll: true })
+  }
+}
 
 function focusContent() {
   const root = dialog.value?.container
@@ -66,6 +84,7 @@ function keydown(event: KeyboardEvent) {
   <PrimeDialog ref="dialog" v-bind="attrs" :visible="visible" :header="header" :modal="modal"
     :closable="!busy" :close-on-escape="false" :dismissable-mask="false" block-scroll
     :pt="{ transition: { onAfterEnter: focusContent }, root: { onKeydownCapture: escape, onKeydown: keydown, 'aria-busy': !!busy } }"
+    @show="rememberOpener" @after-hide="restoreFocus"
     @update:visible="!busy && emit('update:visible', $event)">
     <template v-for="(_, name) in $slots" #[name]="slotProps"><slot :name="name" v-bind="slotProps ?? {}" /></template>
   </PrimeDialog>

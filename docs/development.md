@@ -20,7 +20,7 @@ Important locations:
 
 ## Architecture and security invariants
 
-- Preserve the broker/launcher/worker privilege split. In production the broker is unprivileged, the narrowly scoped launcher runs as root, and filesystem IO occurs in a persistent process using the logged-in user's real UID, GID, and supplementary groups.
+- Preserve the broker/launcher/worker privilege split. In production the broker is unprivileged, the narrowly scoped launcher runs as root, and ordinary filesystem IO occurs in a persistent process using the logged-in user’s real UID, GID, and supplementary groups. Explicit root elevation requires launcher-enforced membership in `auth.elevation_groups` and PAM reauthentication; its empty default denies elevation.
 - Treat Linux filesystem permissions as the authorization boundary. Do not make the broker a privileged filesystem proxy.
 - Keep the launcher request surface limited to validated local users; it must not become a general command runner.
 - The filesystem remains authoritative. inotify/WebSocket events invalidate a view and cause a reread; they do not maintain a parallel filesystem model.
