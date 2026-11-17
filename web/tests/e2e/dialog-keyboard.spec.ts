@@ -124,6 +124,26 @@ test('forms focus fields, validate Enter, ignore repeats/composition, and recove
   await expect(opener).toBeFocused()
 })
 
+test('an error notification does not take focus from a failed form', async ({ page }) => {
+  const fixture = await featureFixture(page, 'notification-focus')
+  await page.goto(`/#path=${encodeURIComponent(fixture.path)}`)
+  await page.route('**/api/fs/mkdir', route => route.fulfill({ status: 500, json: { error: 'Try again' } }))
+  await page.getByRole('button', { name: 'New folder', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'New folder', exact: true })
+  const input = dialog.locator('input')
+  await expect(input).toBeFocused()
+  await input.fill('retry-folder')
+  await input.press('Enter')
+  const notification = page.getByRole('alert').filter({ hasText: 'Try again' })
+  await expect(notification).toBeVisible()
+  await expect(input).toBeEnabled()
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  await expect(notification.getByRole('button', { name: 'Close', exact: true })).not.toBeFocused()
+  await input.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('button', { name: 'New folder', exact: true })).toBeFocused()
+})
+
 test('dropdowns consume the first Escape and preserve Enter; closing restores focus', async ({ page }) => {
   await page.goto('/')
   const opener = page.getByRole('button', { name: 'Settings', exact: true })

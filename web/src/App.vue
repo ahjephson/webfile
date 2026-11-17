@@ -132,7 +132,7 @@ function requestElevation() {
 
 <template>
   <main class="h-full bg-zinc-950 text-zinc-100">
-    <Toast position="bottom-right" />
+    <Toast position="bottom-right" :close-button-props="{ autofocus: false }" />
     <ConfirmDialog />
 
     <div v-if="checking" class="grid h-full place-items-center">
