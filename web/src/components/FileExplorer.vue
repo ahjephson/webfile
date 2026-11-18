@@ -1182,8 +1182,8 @@ function toggleDetails(entry: FileEntry | null = selectedOne.value) {
   detailsVisible.value = true
 }
 
-function applyCachedFolderSize(value: { path: string; size: number; calculatedAt?: string }) {
-  entries.value = entries.value.map(entry => entry.path === value.path ? { ...entry, size: value.size, size_status: 'ready', size_calculated_at: value.calculatedAt } : entry)
+function applyCachedFolderSize(value: { path: string; size: number; calculatedAt?: string; incomplete?: boolean }) {
+  entries.value = entries.value.map(entry => entry.path === value.path ? { ...entry, size: value.size, size_status: 'ready', size_calculated_at: value.calculatedAt, size_incomplete: value.incomplete } : entry)
 }
 
 function openNewFolder(event: MouseEvent) {

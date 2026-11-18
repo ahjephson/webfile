@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { FileEntry } from '@/types/files'
 import FileVisual from '@/components/FileVisual.vue'
+import FolderSize from '@/components/FolderSize.vue'
 import LevelUpIcon from '@/components/LevelUpIcon.vue'
 import type { SortField, SortDirection } from '@/utils/sorting'
 import { acceptsFileDrop } from '@/composables/useExplorerWorkspace'
@@ -261,7 +262,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, captureScrollPosition, restore
           <span class="truncate" :title="row.entry.name">{{ row.entry.name }}</span>
         </div>
         <span v-if="showLocation" class="truncate pr-3 text-xs text-zinc-500" :title="containingFolder(row.entry)" data-result-location>{{ containingFolder(row.entry) }}</span>
-        <span class="text-zinc-400">{{ row.entry.is_dir && row.entry.size_status !== 'ready' ? '—' : formatBytes(row.entry.size) }}</span>
+        <FolderSize class="text-zinc-400" :text="row.entry.is_dir && row.entry.size_status !== 'ready' ? '—' : formatBytes(row.entry.size)" :incomplete="row.entry.size_status === 'ready' && row.entry.size_incomplete" />
         <span v-if="!compact" class="text-zinc-400">{{ formatDate(row.entry.modified) }}</span>
         <span v-if="!compact" class="font-mono text-xs text-zinc-500">{{ row.entry.mode }}</span>
       </div>

@@ -35,6 +35,7 @@ type Entry struct {
 	IsDir            bool       `json:"is_dir"`
 	Size             int64      `json:"size"`
 	SizeStatus       string     `json:"size_status,omitempty"`
+	SizeIncomplete   bool       `json:"size_incomplete,omitempty"`
 	SizeRefreshing   bool       `json:"size_refreshing,omitempty"`
 	SizeCalculatedAt *time.Time `json:"size_calculated_at,omitempty"`
 	Modified         time.Time  `json:"modified"`

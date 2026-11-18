@@ -2,12 +2,61 @@ package filesystem
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestFolderSizeContinuesPastInaccessibleChildren(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("requires an unprivileged user to enforce directory permissions")
+	}
+	s, root := testService(t)
+	folder := filepath.Join(root, "folder")
+	blocked := filepath.Join(folder, "b-blocked")
+	if err := os.MkdirAll(blocked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{"a-before": "abc", "b-blocked/hidden": "excluded", "z-after": "defgh"} {
+		if err := os.WriteFile(filepath.Join(folder, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(blocked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0700) })
+	size, err := calculateFolderSize(folder)
+	if size != 8 || !errors.Is(err, errFolderSizeIncomplete) {
+		t.Fatalf("size = %d, error = %v; want 8 and incomplete", size, err)
+	}
+	details := waitForFolderSize(t, s, "/Files/folder", 8)
+	if !details.SizeIncomplete || details.SizeError != "" || details.SizeCalculatedAt == nil {
+		t.Fatalf("partial size not marked correctly: %+v", details)
+	}
+	entries, err := s.List(context.Background(), "/Files")
+	if err != nil || len(entries) != 1 || !entries[0].SizeIncomplete || entries[0].Size != 8 || entries[0].SizeStatus != "ready" {
+		t.Fatalf("cached listing = %+v, error = %v", entries, err)
+	}
+	if _, err := calculateFolderSize(blocked); err == nil || errors.Is(err, errFolderSizeIncomplete) {
+		t.Fatalf("unreadable scan root should fail: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := calculateFolderSizeContext(ctx, folder); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled scan should fail: %v", err)
+	}
+	if err := os.Chmod(blocked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	s.InvalidateFolderSizes("/Files/folder")
+	if details := waitForFolderSize(t, s, "/Files/folder", 16); details.SizeIncomplete {
+		t.Fatalf("recovered scan still marked incomplete: %+v", details)
+	}
+}
 
 func TestCancelledFolderSizeRequestsLeaveNoQueuedScans(t *testing.T) {
 	service, root := testService(t)

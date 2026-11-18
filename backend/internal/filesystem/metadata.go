@@ -30,6 +30,7 @@ type Details struct {
 	LinkTarget       string     `json:"link_target,omitempty"`
 	SizeStatus       string     `json:"size_status,omitempty"`
 	SizeError        string     `json:"size_error,omitempty"`
+	SizeIncomplete   bool       `json:"size_incomplete,omitempty"`
 	SizeRefreshing   bool       `json:"size_refreshing,omitempty"`
 	SizeCalculatedAt *time.Time `json:"size_calculated_at,omitempty"`
 }
@@ -37,6 +38,8 @@ type Details struct {
 const folderSizeCacheTTL = 5 * time.Minute
 const folderSizeLeaseTTL = 3 * time.Second
 const maxFolderSizeJobs = 32
+
+var errFolderSizeIncomplete = errors.New("some items could not be accessed and were excluded from the total")
 
 type folderSizeJob struct {
 	ctx    context.Context
@@ -50,6 +53,7 @@ type folderSizeCacheEntry struct {
 	calculatedAt      time.Time
 	directoryModified time.Time
 	err               string
+	incomplete        bool
 	dirty             bool
 }
 
@@ -64,6 +68,7 @@ func (s *Service) applyCachedFolderSize(entry *Entry, abs string) {
 	s.folderSizeMu.Lock()
 	if cached, exists := s.folderSizeCache[abs]; exists {
 		entry.SizeCalculatedAt = &cached.calculatedAt
+		entry.SizeIncomplete = cached.incomplete
 	}
 	s.folderSizeMu.Unlock()
 }
@@ -131,6 +136,7 @@ func (s *Service) DetailsWithFolderSizeLease(ctx context.Context, virtualPath st
 	s.folderSizeMu.Lock()
 	if entry, ok := s.folderSizeCache[abs]; ok && status == "ready" {
 		details.SizeCalculatedAt = &entry.calculatedAt
+		details.SizeIncomplete = entry.incomplete
 	}
 	s.folderSizeMu.Unlock()
 	return details, nil
@@ -205,7 +211,9 @@ func (s *Service) calculateAndCacheFolderSize(abs string, job *folderSizeJob) {
 	if info != nil {
 		entry.directoryModified = info.ModTime()
 	}
-	if err != nil {
+	if errors.Is(err, errFolderSizeIncomplete) {
+		entry.incomplete = true
+	} else if err != nil {
 		entry.err = err.Error()
 	}
 	s.folderSizeMu.Lock()
@@ -234,23 +242,35 @@ func calculateFolderSize(abs string) (int64, error) {
 
 func calculateFolderSizeContext(ctx context.Context, abs string) (int64, error) {
 	var size int64
+	incomplete := false
 	err := filepath.WalkDir(abs, func(path string, entry fs.DirEntry, err error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if err != nil {
-			return err
+			if path == abs {
+				return err
+			}
+			incomplete = true
+			return nil
 		}
 		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
 		info, err := entry.Info()
 		if err != nil {
-			return err
+			incomplete = true
+			return nil
 		}
 		size += info.Size()
 		return nil
 	})
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil && incomplete {
+		err = errFolderSizeIncomplete
+	}
 	return size, err
 }
 

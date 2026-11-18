@@ -136,6 +136,29 @@ test('folder size refreshes stale results without displaying scan metadata', asy
   await expect.poll(() => cancelled).toBe(1)
 })
 
+test('partial folder sizes show a warning in details and the cached listing', async ({ page }) => {
+  await setup(page, [{ ...entry('folder'), is_dir: true }])
+  await page.route('**/api/fs/details**', route => route.request().method() === 'DELETE'
+    ? route.fulfill({ status: 204 })
+    : route.fulfill({ json: { ...entry('folder'), is_dir: true, is_symlink: false, size: 10905190,
+      size_status: 'ready', size_incomplete: true, size_calculated_at: new Date().toISOString(),
+      mode_octal: '0755', uid: 1, gid: 1, owner: 'test', group: 'test' } }))
+  await page.goto('/#path=%2FFiles')
+  await page.locator('[data-file-entry]').first().click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Details', exact: true }).click()
+  const panel = page.locator('aside').filter({ has: page.getByRole('heading', { name: 'Details', exact: true }) })
+  const warning = 'Some items could not be accessed and were excluded from the total.'
+  const size = panel.locator('[tabindex="0"][title]').filter({ hasText: '10.4 MiB' })
+  await expect(size).toHaveClass(/text-yellow-500/)
+  await expect(size.locator('.pi-exclamation-triangle')).toBeVisible()
+  await size.hover()
+  await expect(page.getByRole('tooltip')).toHaveText(warning)
+  await expect(size).toHaveAttribute('aria-label', `10.4 MiB. ${warning}`)
+  await expect(page.locator('[data-file-entry]').first().locator('.pi-exclamation-triangle')).toBeVisible()
+  await panel.getByRole('button', { name: 'Close details', exact: true }).click()
+  await expect(page.locator('[data-file-entry]').first()).toContainText('10.4 MiB')
+})
+
 test('listing renews previously scanned sizes and polls only while recalculation is pending', async ({ page }) => {
   const scanned = '2026-10-16T12:00:00Z'
   await page.clock.install({ time: new Date(scanned) })

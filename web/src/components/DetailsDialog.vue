@@ -4,12 +4,13 @@ import Button from 'primevue/button'
 import ProgressSpinner from 'primevue/progressspinner'
 import { api } from '@/api/client'
 import type { FileDetails } from '@/types/files'
+import FolderSize from './FolderSize.vue'
 
 const props = defineProps<{ visible: boolean; path: string }>()
 const emit = defineEmits<{
   'update:visible': [value: boolean]
   error: [message: string]
-  'size-ready': [value: { path: string; size: number; calculatedAt?: string }]
+  'size-ready': [value: { path: string; size: number; calculatedAt?: string; incomplete?: boolean }]
 }>()
 
 const details = ref<FileDetails | null>(null)
@@ -52,7 +53,7 @@ async function load(refresh: boolean) {
     const result = await api.details(path, refresh, detailsController?.signal, scan)
     if (!current()) return
     details.value = result
-    if (result.is_dir && result.size_status === 'ready') emit('size-ready', { path: result.path, size: result.size, calculatedAt: result.size_calculated_at })
+    if (result.is_dir && result.size_status === 'ready') emit('size-ready', { path: result.path, size: result.size, calculatedAt: result.size_calculated_at, incomplete: result.size_incomplete })
     if (result.is_dir && (result.size_status === 'calculating' || result.size_refreshing)) {
       sizePoll = window.setTimeout(() => void load(false), 500)
     } else if (result.is_dir && result.size_status === 'ready') {
@@ -105,7 +106,7 @@ function formatBytes(value: number) {
         <span class="text-zinc-500">Size</span>
         <span v-if="details.size_status === 'calculating'" class="inline-flex items-center gap-2 text-zinc-400"><i class="pi pi-spinner pi-spin" /> Calculating</span>
         <span v-else-if="details.size_status === 'error'" class="webfile-text-error" :title="details.size_error">Unavailable</span>
-        <span v-else>{{ formatBytes(details.size) }}</span>
+        <FolderSize v-else :text="formatBytes(details.size)" :incomplete="details.size_incomplete" />
         <span class="text-zinc-500">Modified</span><span>{{ new Date(details.modified).toLocaleString() }}</span>
         <span v-if="details.link_target" class="text-zinc-500">Target</span><span v-if="details.link_target" class="break-all font-mono text-xs">{{ details.link_target }}</span>
       </div>
