@@ -29,7 +29,7 @@ func TestFolderSizeContinuesPastInaccessibleChildren(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(blocked, 0700) })
-	size, err := calculateFolderSize(folder)
+	size, err := s.calculateFolderSizeContext(context.Background(), folder)
 	if size != 8 || !errors.Is(err, errFolderSizeIncomplete) {
 		t.Fatalf("size = %d, error = %v; want 8 and incomplete", size, err)
 	}
@@ -41,12 +41,12 @@ func TestFolderSizeContinuesPastInaccessibleChildren(t *testing.T) {
 	if err != nil || len(entries) != 1 || !entries[0].SizeIncomplete || entries[0].Size != 8 || entries[0].SizeStatus != "ready" {
 		t.Fatalf("cached listing = %+v, error = %v", entries, err)
 	}
-	if _, err := calculateFolderSize(blocked); err == nil || errors.Is(err, errFolderSizeIncomplete) {
+	if _, err := s.calculateFolderSizeContext(context.Background(), blocked); err == nil || errors.Is(err, errFolderSizeIncomplete) {
 		t.Fatalf("unreadable scan root should fail: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := calculateFolderSizeContext(ctx, folder); !errors.Is(err, context.Canceled) {
+	if _, err := s.calculateFolderSizeContext(ctx, folder); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled scan should fail: %v", err)
 	}
 	if err := os.Chmod(blocked, 0700); err != nil {
@@ -55,6 +55,30 @@ func TestFolderSizeContinuesPastInaccessibleChildren(t *testing.T) {
 	s.InvalidateFolderSizes("/Files/folder")
 	if details := waitForFolderSize(t, s, "/Files/folder", 16); details.SizeIncomplete {
 		t.Fatalf("recovered scan still marked incomplete: %+v", details)
+	}
+}
+
+func TestFolderSizeRejectsSubstitutedParentSymlink(t *testing.T) {
+	s, root := testService(t)
+	parent := filepath.Join(root, "parent")
+	folder := filepath.Join(parent, "folder")
+	outside := t.TempDir()
+	for _, path := range []string{folder, filepath.Join(outside, "folder")} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "file"), []byte("secret"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Rename(parent, parent+"-original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, parent); err != nil {
+		t.Fatal(err)
+	}
+	if size, err := s.calculateFolderSizeContext(context.Background(), folder); size != 0 || err == nil || errors.Is(err, errFolderSizeIncomplete) {
+		t.Fatalf("substituted parent scan = %d, %v; want unavailable without outside sizes", size, err)
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"os/user"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -202,7 +201,7 @@ func (s *Service) calculateAndCacheFolderSize(abs string, job *folderSizeJob) {
 	info, _ := s.resolver.disk.Stat(abs)
 	select {
 	case s.folderSizeSlots <- struct{}{}:
-		size, err = calculateFolderSizeContext(job.ctx, abs)
+		size, err = s.calculateFolderSizeContext(job.ctx, abs)
 		<-s.folderSizeSlots
 	case <-job.ctx.Done():
 		err = job.ctx.Err()
@@ -236,14 +235,10 @@ func (s *Service) calculateAndCacheFolderSize(abs string, job *folderSizeJob) {
 	s.folderSizeMu.Unlock()
 }
 
-func calculateFolderSize(abs string) (int64, error) {
-	return calculateFolderSizeContext(context.Background(), abs)
-}
-
-func calculateFolderSizeContext(ctx context.Context, abs string) (int64, error) {
+func (s *Service) calculateFolderSizeContext(ctx context.Context, abs string) (int64, error) {
 	var size int64
 	incomplete := false
-	err := filepath.WalkDir(abs, func(path string, entry fs.DirEntry, err error) error {
+	err := s.resolver.disk.WalkDir(abs, func(path string, entry fs.DirEntry, err error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
