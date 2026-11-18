@@ -22,3 +22,13 @@ Use the latest published release. Fixes are developed on `main` and included in 
 - Keep TLS keys and local configuration outside version control. Back up data independently: delete and overwrite operations can permanently change files.
 
 The automated checks cover known protections and regressions. They are not an independent security certification or a substitute for reviewing a deployment's permissions, proxy configuration and network exposure.
+
+## Temporary dependency exception
+
+On 18 November 2026, the maintainer approved a scoped exception for [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf), a regular-expression denial of service in picomatch through 4.0.7. The latest published version is 4.0.7 and the advisory lists no patched release. The exception expires on 18 December 2026 UTC, or must be removed earlier when a patched dependency becomes available.
+
+The affected operation compiles attacker-supplied glob patterns. In this checkout, picomatch is reached through Vite's build filters and import globs, tinyglobby/fdir's build-time file discovery, and vue-tsc/@vue/language-core's project matching. These patterns come from the repository's source, configuration and build tooling. Building an untrusted checkout already executes that checkout's build configuration; CI must continue to use isolated workers without production secrets. Do not accept external glob patterns in these build steps or expose the development server publicly.
+
+The installed dependency tree places picomatch entirely in development dependencies; it is absent from `npm ls --omit=dev picomatch`. Production uses the Go server and the compiled Vue assets, not Vite or vue-tsc. Files and search patterns submitted to the running file manager do not enter the Node build process. This exposure assessment, rather than development-only classification by itself, is the reason for the exception.
+
+The audit wrapper in `scripts/audit-frontend.py` permits only this advisory and its transitive reports for the exact development-only package versions currently locked: picomatch 4.0.7, @vue/language-core 3.3.14, vue-tsc 3.3.14, fdir 6.5.0, tinyglobby 0.2.17 and Vite 6.4.6. It continues to reject other high/critical advisories, a critical reclassification, dependency-version or production-scope changes, incomplete reports, audit errors and expiration. The exception remains visible in local and CI output. Review it when dependency updates arrive, remove it with the upstream fix, and reassess before changing how build patterns are supplied.
