@@ -4,6 +4,7 @@ export interface FileEntry {
   is_dir: boolean
   size: number
   size_status?: 'ready' | 'calculating' | 'error'
+  size_incomplete?: boolean
   size_refreshing?: boolean
   size_calculated_at?: string
   modified: string
@@ -59,6 +60,7 @@ export interface FileDetails {
   group: string
   link_target?: string
   size_status?: 'calculating' | 'ready' | 'error'
+  size_incomplete?: boolean
   size_calculated_at?: string
   size_error?: string
   size_refreshing?: boolean

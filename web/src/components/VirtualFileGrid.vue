@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { FileEntry } from '@/types/files'
 import FileVisual from '@/components/FileVisual.vue'
+import FolderSize from '@/components/FolderSize.vue'
 import LevelUpIcon from '@/components/LevelUpIcon.vue'
 import { acceptsFileDrop } from '@/composables/useExplorerWorkspace'
 import { captureListingScroll, restoreListingScroll, type ListingScrollPosition } from '@/utils/listingScroll'
@@ -270,7 +271,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, captureScrollPosition, restore
           <span class="w-full truncate text-sm" :title="cell.entry.name">{{ cell.entry.name }}</span>
           <span v-if="showLocation" class="line-clamp-2 w-full break-all text-xs text-zinc-500" :title="containingFolder(cell.entry)" data-result-location>{{ containingFolder(cell.entry) }}</span>
           <span class="h-[17px] w-full text-xs text-zinc-500">
-            {{ !cell.entry.is_dir || cell.entry.size_status === 'ready' ? formatBytes(cell.entry.size) : '' }}
+            <FolderSize :text="!cell.entry.is_dir || cell.entry.size_status === 'ready' ? formatBytes(cell.entry.size) : ''" :incomplete="cell.entry.size_status === 'ready' && cell.entry.size_incomplete" />
           </span>
         </div>
       </div>

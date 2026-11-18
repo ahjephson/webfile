@@ -30,7 +30,7 @@ export function fileVisualForPath(path: string): FileVisual {
   if (kind === 'image') return { icon: 'pi pi-image', color: 'webfile-accent-info', kind, known: true }
   if (kind === 'video') return { icon: 'pi pi-video', color: 'webfile-accent-violet', kind, known: true }
   if (kind === 'audio') return { icon: 'pi pi-volume-up', color: 'webfile-accent-fuchsia', kind, known: true }
-  if (archives.has(ext)) return { icon: 'pi pi-box', color: 'webfile-accent-warning', kind, known: true }
+  if (kind === 'archive' || archives.has(ext)) return { icon: 'pi pi-box', color: 'webfile-accent-warning', kind, known: true }
   if (pdfs.has(ext)) return { icon: 'pi pi-file-pdf', color: 'webfile-accent-danger', kind: 'unsupported', known: true }
   if (documents.has(ext)) return { icon: 'pi pi-file-word', color: 'webfile-accent-blue', kind: 'unsupported', known: true }
   if (spreadsheets.has(ext)) return { icon: 'pi pi-file-excel', color: 'webfile-accent-success', kind: 'text', known: true }

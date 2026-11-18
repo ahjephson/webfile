@@ -54,12 +54,21 @@ func (e *Extractor) Preview(ctx context.Context, virtualPath, password string) (
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("archive is not a regular file")
 	}
+	volumes, err := e.prepareMultipart(ctx, root, absolute)
+	if err != nil {
+		return nil, err
+	}
+	defer volumes.close()
+	toolPath := "/proc/self/fd/3"
+	if volumes != nil {
+		toolPath = volumes.name
+	}
 	args := make([]string, 0, len(e.cfg.InspectArgs)+2)
 	for _, arg := range e.cfg.InspectArgs {
 		if strings.Contains(arg, "{password}") {
 			return nil, errors.New("archive password placeholders are not supported")
 		}
-		args = append(args, strings.ReplaceAll(arg, "{archive}", "/proc/self/fd/3"))
+		args = append(args, strings.ReplaceAll(arg, "{archive}", toolPath))
 	}
 	if len(args) == 0 {
 		return nil, errors.New("archive inspection is not configured")
@@ -72,6 +81,9 @@ func (e *Extractor) Preview(ctx context.Context, virtualPath, password string) (
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.WaitDelay = 2 * time.Second
 	cmd.ExtraFiles = []*os.File{file}
+	if volumes != nil {
+		cmd.ExtraFiles = volumes.extraFiles(nil)
+	}
 	cmd.Stdin = strings.NewReader(password + "\n")
 	output, detail := &previewOutput{}, &previewOutput{}
 	cmd.Stdout, cmd.Stderr = output, detail

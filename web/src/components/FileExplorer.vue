@@ -17,7 +17,7 @@ import { defaultPreferences, normalizePreferences, type UserPreferences } from '
 import { isEntryVisible } from '@/utils/entryVisibility'
 import { fileVisualForPath } from '@/utils/fileVisual'
 import { sortEntries, type SortField, type SortDirection } from '@/utils/sorting'
-import { archiveExtensions } from '@/utils/archives'
+import { isArchiveName, firstArchiveVolume } from '@/utils/archives'
 import type { ListingScrollPosition } from '@/utils/listingScroll'
 import SettingsDialog from '@/components/SettingsDialog.vue'
 import SearchDialog from '@/components/SearchDialog.vue'
@@ -486,9 +486,10 @@ const contextItems = computed(() => {
   }
 
   if (items.every(isArchive)) {
+    const archiveCount = uniqueArchives(items).length
     const unreadable = items.some(item => item.can_read === false)
-    result.push({ label: items.length > 1 ? `Extract ${items.length} archives…` : 'Extract…', icon: 'pi pi-box', disabled: unreadable, command: () => openExtract(items) })
-    result.push({ label: items.length > 1 ? `Extract ${items.length} archives here` : 'Extract here', icon: 'pi pi-folder-open', disabled: unreadable, command: () => extractHere(items) })
+    result.push({ label: archiveCount > 1 ? `Extract ${archiveCount} archives…` : 'Extract…', icon: 'pi pi-box', disabled: unreadable, command: () => openExtract(items) })
+    result.push({ label: archiveCount > 1 ? `Extract ${archiveCount} archives here` : 'Extract here', icon: 'pi pi-folder-open', disabled: unreadable, command: () => extractHere(items) })
   }
 
   if (!containsConfiguredRoot) {
@@ -1182,8 +1183,8 @@ function toggleDetails(entry: FileEntry | null = selectedOne.value) {
   detailsVisible.value = true
 }
 
-function applyCachedFolderSize(value: { path: string; size: number; calculatedAt?: string }) {
-  entries.value = entries.value.map(entry => entry.path === value.path ? { ...entry, size: value.size, size_status: 'ready', size_calculated_at: value.calculatedAt } : entry)
+function applyCachedFolderSize(value: { path: string; size: number; calculatedAt?: string; incomplete?: boolean }) {
+  entries.value = entries.value.map(entry => entry.path === value.path ? { ...entry, size: value.size, size_status: 'ready', size_calculated_at: value.calculatedAt, size_incomplete: value.incomplete } : entry)
 }
 
 function openNewFolder(event: MouseEvent) {
@@ -1565,20 +1566,30 @@ async function cancelPasswordPrompt() {
 }
 
 function openExtract(entries: FileEntry[]) {
-  extractTargets.value = entries
+  extractTargets.value = uniqueArchives(entries)
   extractDestination.value = currentPath.value
   extractVisible.value = true
 }
 
 async function extractHere(entries: FileEntry[]) {
   try {
-    const started = await startExtractions(entries.map(entry => entry.path), currentPath.value, 'here', userPreferences.value.extract_existing_files, userPreferences.value.extract_delete_archive)
+    const started = await startExtractions(uniqueArchives(entries).map(entry => entry.path), currentPath.value, 'here', userPreferences.value.extract_existing_files, userPreferences.value.extract_delete_archive)
     for (const operation of started) handleOperationUpdate(operation)
     signalTaskAdded()
     clearSelection()
   } catch (err) {
     showError(err, 'Could not start extraction')
   }
+}
+
+function uniqueArchives(entries: FileEntry[]): FileEntry[] {
+  const seen = new Set<string>()
+  return entries.flatMap(entry => {
+    const path = firstArchiveVolume(entry.path)
+    if (seen.has(path)) return []
+    seen.add(path)
+    return [{ ...entry, path, name: path.split('/').pop() ?? entry.name }]
+  })
 }
 
 function reorderOperation(id: string, direction: 'up' | 'down') {
@@ -1914,8 +1925,7 @@ function scrollIndexToTopUnlessAlreadyAtTop(index: number) {
 
 function isArchive(entry: FileEntry) {
   if (entry.is_dir) return false
-  const name = entry.name.toLowerCase()
-  return archiveExtensions.some(ext => name.endsWith(ext))
+  return isArchiveName(entry.name)
 }
 
 function joinPath(base: string, name: string): string {

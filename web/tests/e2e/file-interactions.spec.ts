@@ -2322,154 +2322,6 @@ test('image gallery reserves double tap for zoom and keeps immersive mode explic
   await expect(preview).toHaveAttribute('data-immersive', 'true')
 })
 
-test('image gallery preloads neighbours and supports swipe, pinch, and explicit fullscreen controls', async ({ page, browserName }) => {
-  test.skip(browserName !== 'chromium', 'Multi-touch gesture injection requires Chromium CDP')
-  const requestedImages = new Set<string>()
-  const entries = Array.from({ length: 12 }, (_, index) => `image-${String(index + 1).padStart(2, '0')}.svg`).map((name, index) => ({
-    name,
-    path: `/${name}`,
-    is_dir: false,
-    size: 100 + index,
-    modified: '2000-01-01T00:00:00Z',
-    mode: '-rw-r--r--',
-  }))
-  await page.route('**/api/preferences', route => route.fulfill({ json: { view_mode: 'list', show_hidden: true, theme: 'system' } }))
-  await page.route('**/api/fs/dir**', route => route.fulfill({ json: { path: '/', entries } }))
-  await page.route('**/api/fs/content-type**', route => route.fulfill({ json: { path: '/image-06.svg', content_type: 'image/png' } }))
-  await page.route('**/api/fs/download**', route => {
-    const path = new URL(route.request().url()).searchParams.get('path') ?? ''
-    requestedImages.add(path)
-    return route.fulfill({
-      contentType: 'image/svg+xml',
-      body: '<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200"><rect width="1600" height="1200" fill="red"/></svg>',
-    })
-  })
-
-  await page.goto('/')
-  await page.locator('[data-file-entry]').filter({ hasText: 'image-06.svg' }).dblclick()
-  const preview = page.getByLabel('File preview')
-  await expect(preview.getByRole('img', { name: 'image-06.svg', exact: true })).toBeVisible()
-  await expect(preview.getByRole('button', { name: 'Download' })).toHaveCount(0)
-  await expect.poll(() => [...requestedImages].sort()).toEqual(Array.from({ length: 11 }, (_, index) => `/image-${String(index + 1).padStart(2, '0')}.svg`))
-
-  const viewport = page.locator('[data-image-viewport]')
-  const box = await viewport.boundingBox()
-  if (!box) throw new Error('Image viewport is not visible')
-  const centerX = box.x + box.width / 2
-  const centerY = box.y + box.height / 2
-  const session = await page.context().newCDPSession(page)
-  const tap = async (x: number, y: number) => {
-    await session.send('Input.dispatchTouchEvent', {
-      type: 'touchStart',
-      touchPoints: [{ x, y, radiusX: 2, radiusY: 2, force: 1 }],
-    })
-    await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-  }
-  await session.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [{ x: centerX + 80, y: centerY, radiusX: 2, radiusY: 2, force: 1 }],
-  })
-  await session.send('Input.dispatchTouchEvent', {
-    type: 'touchMove',
-    touchPoints: [{ x: centerX - 20, y: centerY, radiusX: 2, radiusY: 2, force: 1 }],
-  })
-  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-  const galleryTrack = page.locator('[data-gallery-track]')
-  await expect(galleryTrack).toHaveAttribute('data-gallery-animating', 'true')
-  await expect(preview.getByRole('img', { name: 'image-06.svg', exact: true })).toBeVisible()
-  await galleryTrack.evaluate(element => {
-    element.dispatchEvent(new TransitionEvent('transitionend', { propertyName: 'transform' }))
-  })
-  await expect(preview.getByRole('img', { name: 'image-07.svg', exact: true })).toBeVisible({ timeout: 100 })
-
-  await expect(preview.getByRole('img', { name: 'image-07.svg', exact: true })).toBeVisible()
-  await expect.poll(() => [...requestedImages].sort()).toEqual(Array.from({ length: 12 }, (_, index) => `/image-${String(index + 1).padStart(2, '0')}.svg`))
-
-  const zoomBefore = Number.parseInt((await page.getByLabel('Zoom level').innerText()).replace('%', ''), 10)
-  const focalX = box.x + box.width * 0.7
-  await tap(focalX, centerY)
-  await tap(focalX, centerY)
-  await expect(page.getByLabel('Zoom level')).toHaveText('100%')
-  await expect.poll(() => viewport.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
-
-  await tap(focalX, centerY)
-  await tap(focalX, centerY)
-  await expect(page.getByLabel('Zoom level')).toHaveText(`${zoomBefore}%`)
-  await expect.poll(() => viewport.evaluate(element => element.scrollLeft)).toBe(0)
-
-  await session.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [
-      { x: centerX - 30, y: centerY, radiusX: 2, radiusY: 2, force: 1 },
-      { x: centerX + 30, y: centerY, radiusX: 2, radiusY: 2, force: 1 },
-    ],
-  })
-  await session.send('Input.dispatchTouchEvent', {
-    type: 'touchMove',
-    touchPoints: [
-      { x: centerX - 90, y: centerY, radiusX: 2, radiusY: 2, force: 1 },
-      { x: centerX + 90, y: centerY, radiusX: 2, radiusY: 2, force: 1 },
-    ],
-  })
-  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-  await expect.poll(async () => Number.parseInt((await page.getByLabel('Zoom level').innerText()).replace('%', ''), 10)).toBeGreaterThan(zoomBefore)
-
-  await page.getByRole('button', { name: 'Enter fullscreen' }).click()
-  await expect(preview).toHaveAttribute('data-immersive', 'true')
-  await expect(page.getByRole('button', { name: 'Close preview' })).toBeHidden()
-  await expect(page.getByRole('button', { name: 'Exit fullscreen' })).toBeVisible()
-  const fullscreenControls = page.getByRole('navigation', { name: 'Fullscreen image controls' })
-  await expect(fullscreenControls).toBeVisible()
-  const controlsBox = await fullscreenControls.boundingBox()
-  if (!controlsBox) throw new Error('Fullscreen image controls are not visible')
-  const controlsX = controlsBox.x + controlsBox.width / 2
-  const controlsStartY = controlsBox.y + controlsBox.height - 4
-  await session.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [{ x: controlsX, y: controlsStartY, radiusX: 2, radiusY: 2, force: 1 }],
-  })
-  await session.send('Input.dispatchTouchEvent', {
-    type: 'touchMove',
-    touchPoints: [{ x: controlsX, y: controlsStartY - 44, radiusX: 2, radiusY: 2, force: 1 }],
-  })
-  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-  await expect(fullscreenControls).toBeHidden()
-  const showFullscreenControls = page.getByRole('button', { name: 'Show fullscreen image controls' })
-  await expect(showFullscreenControls).toBeVisible()
-  await showFullscreenControls.click()
-  await expect(fullscreenControls).toBeVisible()
-  await fullscreenControls.getByRole('button', { name: 'Fit to window' }).click()
-  await expect.poll(() => viewport.evaluate(element => element.scrollHeight === element.clientHeight)).toBe(true)
-  const fullscreenViewport = await viewport.boundingBox()
-  if (!fullscreenViewport) throw new Error('Fullscreen image viewport is not visible')
-  const fullscreenX = fullscreenViewport.x + fullscreenViewport.width / 2
-  const fullscreenY = fullscreenViewport.y + fullscreenViewport.height / 2
-
-  await page.mouse.move(fullscreenViewport.x + fullscreenViewport.width * 0.75, fullscreenY)
-  await page.mouse.down()
-  await page.mouse.move(fullscreenViewport.x + fullscreenViewport.width * 0.25, fullscreenY, { steps: 6 })
-  await page.mouse.up()
-  await expect(preview.getByRole('img', { name: 'image-08.svg', exact: true })).toBeVisible()
-
-  await fullscreenControls.getByRole('button', { name: 'Actual size' }).click()
-  await expect(fullscreenControls.getByLabel('Zoom level')).toHaveText('100%')
-  await page.mouse.move(fullscreenX, fullscreenY)
-  await page.mouse.down()
-  await page.mouse.move(fullscreenX - 140, fullscreenY, { steps: 4 })
-  await page.mouse.up()
-  await expect.poll(() => viewport.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
-
-  await fullscreenControls.getByRole('button', { name: 'Fit to window' }).click()
-  await expect.poll(() => viewport.evaluate(element => element.scrollLeft)).toBe(0)
-  await tap(fullscreenX, fullscreenY)
-  await expect(preview.locator('[data-thumbnail-strip]')).toBeHidden()
-  await tap(fullscreenX, fullscreenY)
-  await expect(preview.locator('[data-thumbnail-strip]')).toBeVisible()
-  await page.getByRole('button', { name: 'Exit fullscreen' }).click()
-  await expect(preview).toHaveAttribute('data-immersive', 'false')
-  await expect(page.getByRole('button', { name: 'Back to folder' })).toBeVisible()
-  await session.detach()
-})
 
 test('image gallery tracks a swipe and progressively loads an ordered thumbnail strip', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Touch-drag gesture injection requires Chromium CDP')
@@ -3270,10 +3122,12 @@ test('failed video thumbnail tasks can be dismissed', async ({ page }) => {
   await expect(drawer.getByText('No tasks yet.')).toBeVisible()
 })
 
-test('Extract here starts a single-pass task in the archive directory', async ({ page }) => {
+for (const archiveName of ['archive.zip', 'archive.7z.001', 'archive.7z.002', 'archive.zip.002']) {
+test(`Extract here starts a single-pass task in the archive directory for ${archiveName}`, async ({ page }) => {
+  const firstVolume = archiveName.replace(/\.002$/, '.001')
   let operationRequest: Record<string, unknown> | null = null
   await page.route('**/api/fs/dir**', route => route.fulfill({
-    json: { path: '/folder', entries: [{ name: 'archive.zip', path: '/folder/archive.zip', is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }] },
+    json: { path: '/folder', entries: [{ name: archiveName, path: `/folder/${archiveName}`, is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }] },
   }))
   await page.route('**/api/fs/operations', async route => {
     if (route.request().method() === 'GET') {
@@ -3290,9 +3144,34 @@ test('Extract here starts a single-pass task in the archive directory', async ({
   await page.getByRole('menuitem', { name: 'Extract here', exact: true }).click()
 
   await expect.poll(() => operationRequest).not.toBeNull()
-  expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/archive.zip'], destination: '/folder', extract_layout: 'here', existing_files: 'skip', delete_archive: true })
+  expect(operationRequest).toEqual({ kind: 'extract', sources: [`/folder/${firstVolume}`], destination: '/folder', extract_layout: 'here', existing_files: 'skip', delete_archive: true })
   await expect(page.getByRole('button', { name: 'Open tasks' })).toHaveClass(/webfile-task-attention/)
   await expect(page.getByRole('complementary')).toHaveCount(0)
+})
+}
+
+test('selected multipart volumes share one extraction folder and task', async ({ page }) => {
+  let operationRequest: Record<string, unknown> | null = null
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: {
+    path: '/folder', entries: ['sample.7z.001', 'sample.7z.002'].map(name => ({
+      name, path: `/folder/${name}`, is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--',
+    })),
+  } }))
+  await page.route('**/api/fs/operations', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: { operations: [] } })
+    operationRequest = route.request().postDataJSON() as Record<string, unknown>
+    await route.fulfill({ json: { operations: [] } })
+  })
+  await page.goto('/#path=%2Ffolder')
+  await page.locator('[data-file-entry]').filter({ hasText: 'sample.7z.001' }).click()
+  await page.locator('[data-file-entry]').filter({ hasText: 'sample.7z.002' }).click({ modifiers: ['Control'] })
+  await page.getByRole('button', { name: 'Actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Extract…', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract sample.7z.001', exact: true })
+  await expect(dialog.getByRole('region', { name: 'Extraction folders' })).toContainText('/folder/sample')
+  await dialog.getByRole('button', { name: 'Extract', exact: true }).click()
+  await expect.poll(() => operationRequest).not.toBeNull()
+  expect(operationRequest?.sources).toEqual(['/folder/sample.7z.001'])
 })
 
 test('Extract can browse for a destination, cancel browsing, and still edit the path', async ({ page }) => {

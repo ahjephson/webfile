@@ -7,7 +7,7 @@ const entry = (path: string, directory = false) => ({
   modified: '2000-01-01T00:00:00Z', mode: directory ? 'drwxr-xr-x' : '-rw-r--r--',
 })
 
-async function workspace(page: Page, startSplit = true) {
+async function workspace(page: Page, startSplit = true, beforeListing?: (path: string) => Promise<void>) {
   const started: StartedOperation[] = []
   const reads = new Map<string, number>()
   await page.addInitScript(() => {
@@ -29,9 +29,10 @@ async function workspace(page: Page, startSplit = true) {
   })
   await page.route('**/api/preferences', route => route.fulfill({ json: route.request().method() === 'PUT'
     ? route.request().postDataJSON() : { view_mode: 'list', show_hidden: false } }))
-  await page.route('**/api/fs/dir**', route => {
+  await page.route('**/api/fs/dir**', async route => {
     const path = new URL(route.request().url()).searchParams.get('path') ?? '/'
     reads.set(path, (reads.get(path) ?? 0) + 1)
+    await beforeListing?.(path)
     const entries = path === '/' ? [entry('/Files', true)]
       : path === '/Files' ? [entry('/Files/a', true), entry('/Files/b', true)]
       : [entry(`${path}/child`, true), entry(`${path}/first.txt`), entry(`${path}/second.txt`)]
@@ -54,8 +55,10 @@ async function workspace(page: Page, startSplit = true) {
   await left.getByText('a', { exact: true }).dblclick()
   await expect(left.getByRole('button', { name: 'a', exact: true })).toBeVisible()
   await right.getByText('b', { exact: true }).dblclick()
-  await expect(left.getByText('first.txt', { exact: true })).toBeVisible()
-  await expect(right.getByText('first.txt', { exact: true })).toBeVisible()
+  // Both folders contain the same filenames. Wait for the destination's rows,
+  // not a matching name left over from the listing shared when splitting.
+  await expect(left.locator('[data-drop-directory="/Files/a/child"]')).toBeVisible()
+  await expect(right.locator('[data-drop-directory="/Files/b/child"]')).toBeVisible()
   return { left, right, started, reads }
 }
 
@@ -337,14 +340,37 @@ for (const view of ['list', 'grid'] as const) {
   })
 
   test(`${view} highlights folders for external file uploads too`, async ({ page }) => {
-    const { right } = await workspace(page)
+    // Vue guards bubbled events with listener attachment timestamps. Keep the
+    // clock monotonic: a host wall-clock correction can otherwise make this
+    // synthetic event appear older than a listener attached earlier.
+    await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') })
+    let releaseListing!: () => void
+    let listingRequested!: () => void
+    const held = new Promise<void>(resolve => { releaseListing = resolve })
+    const requested = new Promise<void>(resolve => { listingRequested = resolve })
+    const ready = workspace(page, true, async path => {
+      if (path !== '/Files/b') return
+      listingRequested()
+      await held
+    })
+    // Force the navigation/loading boundary that an immediate mock response
+    // usually hides. Matching "child" alone can target the previous listing.
+    try {
+      await requested
+      const pendingRight = page.locator('[data-pane="right"]')
+      await expect(pendingRight.getByRole('button', { name: 'b', exact: true })).toBeVisible()
+      await expect(pendingRight.locator('[data-drop-directory="/Files/b/child"]')).toHaveCount(0)
+    } finally { releaseListing() }
+    const { right } = await ready
     await right.getByRole('button', { name: `${view === 'grid' ? 'Grid' : 'List'} view`, exact: true }).click()
-    const folder = right.locator('[data-file-entry]').filter({ hasText: 'child' })
+    const folder = right.locator('[data-file-entry][data-drop-directory="/Files/b/child"]')
+    await expect(folder).toBeVisible()
     const dataTransfer = await page.evaluateHandle(() => {
       const data = new DataTransfer()
       data.items.add(new File(['test'], 'upload.txt', { type: 'text/plain' }))
       return data
     })
+    expect(await dataTransfer.evaluate(data => [...data.types])).toContain('Files')
     await folder.dispatchEvent('dragover', { dataTransfer })
     await expect(folder).toHaveAttribute('data-drop-target', 'true')
     await expect(right.locator('[data-pane-drop-target]')).toHaveCount(0)

@@ -40,6 +40,10 @@ jobs:
         env:
           ENGINE: ${{ inputs.engine }}
         run: |
+          # The runner's cloud-local HTTP mirror can stall before tests start.
+          # Keep APT signature verification and use Ubuntu's primary HTTPS archive.
+          test -f /etc/apt/apt-mirrors.txt
+          printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt > /dev/null
           sudo apt-get update
           sudo apt-get install --yes 7zip ffmpeg
           npm --prefix web ci --no-audit --no-fund

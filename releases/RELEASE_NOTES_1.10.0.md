@@ -17,7 +17,7 @@ WebFile 1.10.0 adds group-based authorization for root elevation and shared cred
 ## Fixes
 
 - Load dedicated Monaco workers for JavaScript, TypeScript, JSON, CSS and HTML so language services and document formatting work without the worker startup error.
-- Restore dialog focus after the close transition finishes, preserving focus deliberately moved elsewhere. Add regression coverage for the WebKit focus race.
+- Restore dialog focus after the close transition finishes, preserving focus deliberately moved elsewhere. Keep error notifications from taking keyboard focus during retries, and add regression coverage for the WebKit focus races.
 
 ## Deployment
 
