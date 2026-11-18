@@ -13,6 +13,7 @@ WebFile 1.11.0 keeps folder-size calculations running when some children cannot 
 - Split the combined gallery gesture test into seven independent scenarios covering preloading, swiping, double tap, pinch, fullscreen controls, mouse panning and thumbnail visibility. Extend supported scenarios to WebKit.
 - Wait for gallery discovery, image layout and the destination folder listing before interacting. Control gesture timing and event timestamps without adding sleeps, browser-test retries or longer assertion timeouts.
 - Exercise external-upload highlighting with a deliberately delayed listing in both list and grid views.
+- Download CI system dependencies from Ubuntu's primary HTTPS archive to avoid stalls in the runner's cloud-local mirror. Package signature verification and test time limits remain unchanged.
 
 ## Build security
 

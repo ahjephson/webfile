@@ -34,6 +34,9 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Install production dependencies
         run: |
+          # Match browser runners and avoid the slow cloud-local HTTP mirror.
+          test -f /etc/apt/apt-mirrors.txt
+          printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt > /dev/null
           sudo apt-get update
           sudo apt-get install --yes build-essential libpam0g-dev 7zip ffmpeg
       - name: Validate and package
