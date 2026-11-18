@@ -1,4 +1,4 @@
-import { archiveExtensions } from '@/utils/archives'
+import { isArchiveName } from '@/utils/archives'
 
 export type PreviewKind = 'text' | 'image' | 'video' | 'audio' | 'archive' | 'unsupported'
 
@@ -13,7 +13,7 @@ const audioExtensions = new Set(['aac', 'flac', 'm4a', 'mp3', 'oga', 'ogg', 'opu
 
 export function previewKindForPath(path: string): PreviewKind {
   const name = path.split('/').pop()?.toLowerCase() ?? ''
-  if (archiveExtensions.some(extension => name.endsWith(extension))) return 'archive'
+  if (isArchiveName(name)) return 'archive'
   const extension = name.includes('.') ? name.split('.').pop() ?? '' : ''
   if (textExtensions.has(extension)) return 'text'
   if (imageExtensions.has(extension)) return 'image'

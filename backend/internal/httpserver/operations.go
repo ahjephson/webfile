@@ -160,6 +160,16 @@ func (s *Server) startOperation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		layout := strings.TrimSpace(req.ExtractLayout)
+		seen := make(map[string]bool)
+		sources := make([]string, 0, len(req.Sources))
+		for _, source := range req.Sources {
+			source = archive.FirstVolume(filesystem.CleanVirtual(source))
+			if !seen[source] {
+				sources = append(sources, source)
+				seen[source] = true
+			}
+		}
+		req.Sources = sources
 		if layout == "" && len(req.Sources) != 1 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "extract_layout is required for multiple archives"})
 			return
@@ -340,6 +350,9 @@ var archiveExtensions = []string{".tar.bz2", ".tar.gz", ".tar.xz", ".zip", ".7z"
 
 func supportedArchivePath(value string) bool {
 	lower := strings.ToLower(path.Base(filesystem.CleanVirtual(value)))
+	if archive.IsMultipart(lower) {
+		return true
+	}
 	for _, extension := range archiveExtensions {
 		if strings.HasSuffix(lower, extension) {
 			return true
@@ -349,6 +362,9 @@ func supportedArchivePath(value string) bool {
 }
 
 func archiveNameWithoutExtension(name string) string {
+	if archive.IsMultipart(name) {
+		name = name[:strings.LastIndex(name, ".")]
+	}
 	lower := strings.ToLower(name)
 	for _, extension := range archiveExtensions {
 		if strings.HasSuffix(lower, extension) {

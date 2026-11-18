@@ -3122,10 +3122,12 @@ test('failed video thumbnail tasks can be dismissed', async ({ page }) => {
   await expect(drawer.getByText('No tasks yet.')).toBeVisible()
 })
 
-test('Extract here starts a single-pass task in the archive directory', async ({ page }) => {
+for (const archiveName of ['archive.zip', 'archive.7z.001', 'archive.7z.002', 'archive.zip.002']) {
+test(`Extract here starts a single-pass task in the archive directory for ${archiveName}`, async ({ page }) => {
+  const firstVolume = archiveName.replace(/\.002$/, '.001')
   let operationRequest: Record<string, unknown> | null = null
   await page.route('**/api/fs/dir**', route => route.fulfill({
-    json: { path: '/folder', entries: [{ name: 'archive.zip', path: '/folder/archive.zip', is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }] },
+    json: { path: '/folder', entries: [{ name: archiveName, path: `/folder/${archiveName}`, is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--' }] },
   }))
   await page.route('**/api/fs/operations', async route => {
     if (route.request().method() === 'GET') {
@@ -3142,9 +3144,34 @@ test('Extract here starts a single-pass task in the archive directory', async ({
   await page.getByRole('menuitem', { name: 'Extract here', exact: true }).click()
 
   await expect.poll(() => operationRequest).not.toBeNull()
-  expect(operationRequest).toEqual({ kind: 'extract', sources: ['/folder/archive.zip'], destination: '/folder', extract_layout: 'here', existing_files: 'skip', delete_archive: true })
+  expect(operationRequest).toEqual({ kind: 'extract', sources: [`/folder/${firstVolume}`], destination: '/folder', extract_layout: 'here', existing_files: 'skip', delete_archive: true })
   await expect(page.getByRole('button', { name: 'Open tasks' })).toHaveClass(/webfile-task-attention/)
   await expect(page.getByRole('complementary')).toHaveCount(0)
+})
+}
+
+test('selected multipart volumes share one extraction folder and task', async ({ page }) => {
+  let operationRequest: Record<string, unknown> | null = null
+  await page.route('**/api/fs/dir**', route => route.fulfill({ json: {
+    path: '/folder', entries: ['sample.7z.001', 'sample.7z.002'].map(name => ({
+      name, path: `/folder/${name}`, is_dir: false, size: 100, modified: '2000-01-01T00:00:00Z', mode: '-rw-r--r--',
+    })),
+  } }))
+  await page.route('**/api/fs/operations', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: { operations: [] } })
+    operationRequest = route.request().postDataJSON() as Record<string, unknown>
+    await route.fulfill({ json: { operations: [] } })
+  })
+  await page.goto('/#path=%2Ffolder')
+  await page.locator('[data-file-entry]').filter({ hasText: 'sample.7z.001' }).click()
+  await page.locator('[data-file-entry]').filter({ hasText: 'sample.7z.002' }).click({ modifiers: ['Control'] })
+  await page.getByRole('button', { name: 'Actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Extract…', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract sample.7z.001', exact: true })
+  await expect(dialog.getByRole('region', { name: 'Extraction folders' })).toContainText('/folder/sample')
+  await dialog.getByRole('button', { name: 'Extract', exact: true }).click()
+  await expect.poll(() => operationRequest).not.toBeNull()
+  expect(operationRequest?.sources).toEqual(['/folder/sample.7z.001'])
 })
 
 test('Extract can browse for a destination, cancel browsing, and still edit the path', async ({ page }) => {
