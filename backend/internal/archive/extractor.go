@@ -115,10 +115,15 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 	if !e.Enabled() {
 		return ExtractResult{}, errors.New("archive extraction is not configured")
 	}
-	_, archiveAbs, err := e.resolver.ResolveExisting(archivePath)
+	archiveRoot, archiveAbs, err := e.resolver.ResolveExisting(archivePath)
 	if err != nil {
 		return ExtractResult{}, err
 	}
+	volumes, err := e.prepareMultipart(ctx, archiveRoot, archiveAbs)
+	if err != nil {
+		return ExtractResult{}, err
+	}
+	defer volumes.close()
 	var sourceFS *os.Root
 	var sourceInfo os.FileInfo
 	var sourceRelative string
@@ -160,7 +165,7 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 	}
 
 	passwordValue := ""
-	passwordRequired, err := e.PasswordRequired(ctx, archiveAbs)
+	passwordRequired, err := e.PasswordRequired(ctx, archiveAbs, volumes)
 	if err != nil {
 		return ExtractResult{}, err
 	}
@@ -186,7 +191,7 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 		if err != nil {
 			return ExtractResult{}, err
 		}
-		runErr := e.runTool(ctx, archiveAbs, stage, passwordValue, report)
+		runErr := e.runTool(ctx, archiveAbs, stage, passwordValue, report, volumes)
 		if errors.Is(runErr, ErrPasswordRequired) {
 			if cleanupErr := removeStage(disk, stage); cleanupErr != nil {
 				return ExtractResult{}, errors.Join(runErr, fmt.Errorf("clean password attempt: %w", cleanupErr))
@@ -233,6 +238,9 @@ func (e *Extractor) ExtractInteractiveWithOptions(ctx context.Context, archivePa
 		}
 		// Delete only the unchanged source, through its configured root. Never
 		// recursively remove a replacement directory or follow a replacement link.
+		if volumes != nil {
+			return e.deleteMultipart(volumes, result), nil
+		}
 		current, err := sourceFS.Lstat(sourceRelative)
 		if err != nil || !current.Mode().IsRegular() || !os.SameFile(sourceInfo, current) ||
 			current.Size() != sourceInfo.Size() || !current.ModTime().Equal(sourceInfo.ModTime()) {
@@ -271,7 +279,7 @@ func validateExtractionPathsContext(disk *rootedio.FS, ctx context.Context, stag
 	})
 }
 
-func (e *Extractor) PasswordRequired(ctx context.Context, archivePath string) (bool, error) {
+func (e *Extractor) PasswordRequired(ctx context.Context, archivePath string, multipart ...*multipartInput) (bool, error) {
 	if len(e.cfg.InspectArgs) == 0 {
 		return false, nil
 	}
@@ -288,14 +296,21 @@ func (e *Extractor) PasswordRequired(ctx context.Context, archivePath string) (b
 		return false, errors.New("archive is not a regular file")
 	}
 	args := make([]string, 0, len(e.cfg.InspectArgs)+1)
+	toolPath := "/proc/self/fd/3"
+	if len(multipart) > 0 && multipart[0] != nil {
+		toolPath = multipart[0].name
+	}
 	for _, configured := range e.cfg.InspectArgs {
-		args = append(args, strings.ReplaceAll(configured, "{archive}", "/proc/self/fd/3"))
+		args = append(args, strings.ReplaceAll(configured, "{archive}", toolPath))
 	}
 	if e.cfg.InspectPasswordArg != "" {
 		args = append(args, e.cfg.InspectPasswordArg+"__webfile_detection__")
 	}
 	cmd := exec.CommandContext(ctx, e.cfg.Executable, args...)
 	cmd.ExtraFiles = []*os.File{file}
+	if len(multipart) > 0 && multipart[0] != nil {
+		cmd.ExtraFiles = multipart[0].extraFiles(nil)
+	}
 	cmd.Stdin = strings.NewReader("")
 	output := &inspectionOutput{}
 	cmd.Stdout, cmd.Stderr = output, output
@@ -316,7 +331,7 @@ func (e *Extractor) PasswordRequired(ctx context.Context, archivePath string) (b
 	return false, nil
 }
 
-func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password string, report ProgressReporter) error {
+func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password string, report ProgressReporter, multipart ...*multipartInput) error {
 	file, err := e.resolver.IO().Open(archivePath)
 	if err != nil {
 		return err
@@ -335,8 +350,12 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 	}
 	defer directory.Close()
 	args := make([]string, 0, len(e.cfg.ExtractArgs)+1)
+	toolPath := "/proc/self/fd/3"
+	if len(multipart) > 0 && multipart[0] != nil {
+		toolPath = multipart[0].name
+	}
 	for _, configured := range e.cfg.ExtractArgs {
-		arg := strings.ReplaceAll(configured, "{archive}", "/proc/self/fd/3")
+		arg := strings.ReplaceAll(configured, "{archive}", toolPath)
 		arg = strings.ReplaceAll(arg, "{destination}", "/proc/self/fd/4")
 		if strings.Contains(arg, "{password}") {
 			return errors.New("archive password placeholders are not supported; configure a prompt-only password switch")
@@ -347,6 +366,9 @@ func (e *Extractor) runTool(ctx context.Context, archivePath, stage, password st
 	defer cancel()
 	cmd := exec.CommandContext(runContext, e.cfg.Executable, args...)
 	cmd.ExtraFiles = []*os.File{file, directory}
+	if len(multipart) > 0 && multipart[0] != nil {
+		cmd.ExtraFiles = multipart[0].extraFiles(directory)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
