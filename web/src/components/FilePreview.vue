@@ -37,7 +37,10 @@ watch(mediaError, failed => {
 
 function leaveImmersive() {
   immersive.value = false
-  if (document.fullscreenElement === previewRoot.value) void document.exitFullscreen().catch(() => undefined)
+  const root = previewRoot.value
+  if (root && document.fullscreenElement === root) {
+    void document.exitFullscreen?.().catch(() => undefined)
+  }
 }
 
 onMounted(() => {
