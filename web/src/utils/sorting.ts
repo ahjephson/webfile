@@ -3,6 +3,10 @@ import type { FileEntry } from '@/types/files'
 export type SortField = 'name' | 'modified' | 'size' | 'type'
 export type SortDirection = 'asc' | 'desc'
 
+export function fileExtension(entry: FileEntry): string {
+  return entry.name.includes('.') ? entry.name.split('.').pop()!.toLocaleLowerCase() : ''
+}
+
 export function sortEntries(entries: readonly FileEntry[], field: SortField, direction: SortDirection): FileEntry[] {
   const sign = direction === 'desc' ? -1 : 1
   // The backend supplies host-collated name order. Preserve that ordering
@@ -13,10 +17,9 @@ export function sortEntries(entries: readonly FileEntry[], field: SortField, dir
     if (direction === 'desc') { folders.reverse(); files.reverse() }
     return folders.concat(files)
   }
-  const type = (entry: FileEntry) => entry.name.includes('.') ? entry.name.split('.').pop()!.toLocaleLowerCase() : ''
   return entries.map((entry, index) => ({ entry, index,
     modified: field === 'modified' ? Date.parse(entry.modified) : 0,
-    type: field === 'type' ? type(entry) : '',
+    type: field === 'type' ? fileExtension(entry) : '',
   })).sort((a, b) => {
     if (a.entry.is_dir !== b.entry.is_dir) return a.entry.is_dir ? -1 : 1
     if (field === 'size') {

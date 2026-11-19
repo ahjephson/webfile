@@ -4,7 +4,7 @@ import type { FileEntry } from '@/types/files'
 import FileVisual from '@/components/FileVisual.vue'
 import FolderSize from '@/components/FolderSize.vue'
 import LevelUpIcon from '@/components/LevelUpIcon.vue'
-import type { SortField, SortDirection } from '@/utils/sorting'
+import { fileExtension, type SortField, type SortDirection } from '@/utils/sorting'
 import { acceptsFileDrop } from '@/composables/useExplorerWorkspace'
 import { captureListingScroll, restoreListingScroll, type ListingScrollPosition } from '@/utils/listingScroll'
 
@@ -46,9 +46,14 @@ let touchPointerUntil = 0
 
 const selected = computed(() => new Set(props.selectedPaths))
 const columnsStyle = computed(() => ({ gridTemplateColumns: props.compact
-  ? (props.showLocation ? 'minmax(10rem,1fr) minmax(8rem,1fr) 6rem' : 'minmax(10rem,1fr) 6rem')
-  : props.showLocation ? 'minmax(18rem,1fr) minmax(16rem,1fr) 8rem 13rem 8rem' : 'minmax(18rem,1fr) 8rem 13rem 8rem' }))
-const minimumWidth = computed(() => props.compact ? (props.showLocation ? '26rem' : '16rem') : props.showLocation ? '65rem' : '49rem')
+  ? (props.showLocation ? 'minmax(10rem,1fr) minmax(8rem,1fr) 8rem 6rem' : 'minmax(10rem,1fr) 8rem 6rem')
+  : props.showLocation ? 'minmax(18rem,1fr) minmax(16rem,1fr) 8rem 8rem 13rem 8rem' : 'minmax(18rem,1fr) 8rem 8rem 13rem 8rem' }))
+const minimumWidth = computed(() => props.compact ? (props.showLocation ? '34rem' : '24rem') : props.showLocation ? '73rem' : '57rem')
+function fileType(entry: FileEntry) {
+  if (entry.is_dir) return 'Folder'
+  const extension = fileExtension(entry)
+  return extension ? `${extension.toLocaleUpperCase()} file` : 'File'
+}
 function containingFolder(entry: FileEntry) { return entry.path.slice(0, entry.path.lastIndexOf('/')) || '/' }
 const cut = computed(() => new Set(props.cutPaths))
 const startIndex = computed(() => Math.max(0, Math.floor(scrollTop.value / rowHeight) - overscan))
@@ -192,7 +197,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, captureScrollPosition, restore
     <div class="grid px-3 py-2 text-xs text-zinc-500" :style="{ ...columnsStyle, minWidth: minimumWidth }">
       <button class="text-left" aria-label="Sort by Name" @click="emit('sort', 'name')">Name <i v-if="sortField === 'name'" class="pi text-[0.6rem]" :class="sortDirection === 'desc' ? 'pi-arrow-down' : 'pi-arrow-up'" /></button>
       <span v-if="showLocation">Location</span>
-      <button v-for="column in (compact ? [{ field: 'size', label: 'Size' }] : [{ field: 'size', label: 'Size' }, { field: 'modified', label: 'Modified' }])" :key="column.field" class="text-left" :aria-label="`Sort by ${column.label}`" @click="emit('sort', column.field as SortField)">
+      <button v-for="column in (compact ? [{ field: 'type', label: 'Type' }, { field: 'size', label: 'Size' }] : [{ field: 'type', label: 'Type' }, { field: 'size', label: 'Size' }, { field: 'modified', label: 'Modified' }])" :key="column.field" class="text-left" :aria-label="`Sort by ${column.label}`" @click="emit('sort', column.field as SortField)">
         {{ column.label }} <i v-if="sortField === column.field" class="pi text-[0.6rem]" :class="sortDirection === 'desc' ? 'pi-arrow-down' : 'pi-arrow-up'" />
       </button>
       <span v-if="!compact">Permissions</span>
@@ -200,7 +205,8 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, captureScrollPosition, restore
     </div>
     <button
       v-if="parentPath"
-      class="grid h-11 shrink-0 grid-cols-[minmax(18rem,1fr)_8rem_13rem_8rem] items-center border-b border-zinc-900 px-3 text-left text-sm hover:bg-zinc-900/70"
+      class="grid h-11 shrink-0 items-center border-b border-zinc-900 px-3 text-left text-sm hover:bg-zinc-900/70"
+      :style="columnsStyle"
       aria-label="Parent directory"
       @click="onParentClick($event)"
       @pointerdown="onParentPointerDown($event)"
@@ -209,7 +215,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, captureScrollPosition, restore
         <span class="h-5 w-5 shrink-0" />
         <LevelUpIcon class="h-5 w-5 text-zinc-300" />
       </span>
-      <span class="text-zinc-500">—</span><span /><span />
+      <span v-if="showLocation" /><span /><span class="text-zinc-500">—</span><span v-if="!compact" /><span v-if="!compact" />
     </button>
     <div ref="viewport" class="min-h-0 flex-1 overflow-auto overscroll-contain" data-file-viewport @scroll="onScroll">
     <div class="relative select-none" :style="{ height: `${totalHeight}px`, minWidth: minimumWidth }">
@@ -262,6 +268,7 @@ defineExpose({ scrollToIndex, scrollToIndexAtTop, captureScrollPosition, restore
           <span class="truncate" :title="row.entry.name">{{ row.entry.name }}</span>
         </div>
         <span v-if="showLocation" class="truncate pr-3 text-xs text-zinc-500" :title="containingFolder(row.entry)" data-result-location>{{ containingFolder(row.entry) }}</span>
+        <span class="truncate pr-3 text-zinc-400" :title="fileType(row.entry)" data-file-type>{{ fileType(row.entry) }}</span>
         <FolderSize class="text-zinc-400" :text="row.entry.is_dir && row.entry.size_status !== 'ready' ? '—' : formatBytes(row.entry.size)" :incomplete="row.entry.size_status === 'ready' && row.entry.size_incomplete" />
         <span v-if="!compact" class="text-zinc-400">{{ formatDate(row.entry.modified) }}</span>
         <span v-if="!compact" class="font-mono text-xs text-zinc-500">{{ row.entry.mode }}</span>

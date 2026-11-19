@@ -49,6 +49,35 @@ test('sort changes preserve focus and selection in list and grid and persist aft
   await expect(page.locator('[data-file-entry]').nth(1)).toContainText('a.txt')
 })
 
+test('Type column sorts extensions in both directions and persists after reload', async ({ page }) => {
+  const entries = [entry('folder', 0, true), entry('a.TXT', 30), entry('b.csv', 10), entry('c.txt', 20), entry('README', 5)]
+  let preferences: Record<string, unknown> = {}
+  await page.route('**/api/preferences', async route => {
+    if (route.request().method() === 'PUT') preferences = route.request().postDataJSON()
+    await route.fulfill({ json: preferences })
+  })
+  await page.route('**/api/fs/dir?*', route => route.fulfill({ json: { path: '/Files', entries, single_root_path: '/Files' } }))
+  await page.goto('/')
+  const rows = page.locator('[data-file-entry]')
+  await expect(rows.locator('[data-file-type]')).toHaveText(['Folder', 'TXT file', 'CSV file', 'TXT file', 'File'])
+  const header = page.getByRole('button', { name: 'Sort by Type', exact: true })
+  await header.click()
+  for (const [index, name] of ['folder', 'README', 'b.csv', 'a.TXT', 'c.txt'].entries()) {
+    await expect(rows.nth(index).locator('span[title]').first()).toHaveAttribute('title', name)
+  }
+  await expect(header.locator('.pi-arrow-up')).toBeVisible()
+  await header.click()
+  for (const [index, name] of ['folder', 'a.TXT', 'c.txt', 'b.csv', 'README'].entries()) {
+    await expect(rows.nth(index).locator('span[title]').first()).toHaveAttribute('title', name)
+  }
+  await expect(header.locator('.pi-arrow-down')).toBeVisible()
+  await expect.poll(() => preferences.sort_field).toBe('type')
+  await expect.poll(() => preferences.sort_direction).toBe('desc')
+  await page.reload()
+  await expect(rows.locator('[data-file-type]')).toHaveText(['Folder', 'TXT file', 'TXT file', 'CSV file', 'File'])
+  await expect(header.locator('.pi-arrow-down')).toBeVisible()
+})
+
 test('gallery navigation follows the selected sort direction', async ({ page }) => {
   const entries = ['a.svg', 'b.svg', 'c.svg'].map(name => entry(name, 100))
   await page.route('**/api/preferences', route => route.fulfill({ json: { sort_field: 'name', sort_direction: 'desc' } }))
