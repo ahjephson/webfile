@@ -258,7 +258,12 @@ const largeDirectoryRefreshInterval = 5000
 let explorerDisposed = false
 let terminalRefreshTimer: number | null = null
 const uploadBatchFolders = new Map<string, number>()
-let acceptedHashLocation: { url: string; state: { webfilePosition?: number } | null } | null = null
+let acceptedHashLocation: {
+  url: string
+  state: { webfilePosition?: number } | null
+  path: string | null
+  file: string | null
+} | null = null
 let historyRestorePending = false
 let hashFileRequest = 0
 let breadcrumbResizeObserver: ResizeObserver | null = null
@@ -682,8 +687,8 @@ function writePathHash(path: string, replace = false, file: string | null = null
   rememberHashLocation()
 }
 
-function rememberHashLocation() {
-  acceptedHashLocation = { url: window.location.href, state: window.history.state }
+function rememberHashLocation(path = readHashPath(), file = readInternalHashFile()) {
+  acceptedHashLocation = { url: window.location.href, state: window.history.state, path, file }
 }
 
 function restoreHashLocation() {
@@ -789,11 +794,17 @@ async function applyHashLocation() {
     if (window.location.href !== acceptedHashLocation?.url) return
     historyRestorePending = false
   }
-  const request = ++hashFileRequest
   const path = readHashPath()
+  const file = readInternalHashFile()
+  // Browser history events reach both panes, and a traversal can fire both
+  // popstate and hashchange. Leave the editor or preview alone if its URL is unchanged.
+  if (acceptedHashLocation?.path === path && acceptedHashLocation.file === file) {
+    rememberHashLocation(path, file)
+    return
+  }
+  const request = ++hashFileRequest
   const internalPath = path ? toInternalPath(path) : null
   const pathChanged = Boolean(internalPath && internalPath !== currentPath.value)
-  const file = readInternalHashFile()
   if (editorVisible.value && editorDialog.value && (pathChanged || file !== editorDialog.value.currentPath)) {
     if (!editorDialog.value.confirmDiscard()) {
       restoreHashLocation()
@@ -801,7 +812,7 @@ async function applyHashLocation() {
     }
     editorVisible.value = false
   }
-  rememberHashLocation()
+  rememberHashLocation(path, file)
   if (pathChanged && internalPath) {
     currentPath.value = internalPath
   }

@@ -218,6 +218,81 @@ test('panes navigate, select, filter and restore independently with one shared t
   await expect(page.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(1)
 })
 
+for (const editorSide of ['left', 'right'] as const) {
+  test(`folder history in the other pane preserves an open ${editorSide} editor`, async ({ page }) => {
+    const panes = await workspace(page)
+    const editorPane = panes[editorSide]
+    const folderPane = panes[editorSide === 'left' ? 'right' : 'left']
+    const editorFolder = editorSide === 'left' ? 'a' : 'b'
+    const folder = editorSide === 'left' ? 'b' : 'a'
+    let typeReads = 0
+    await page.route('**/api/fs/content-type**', route => {
+      typeReads++
+      return route.fulfill({ json: { content_type: 'text/plain' } })
+    })
+    await page.route('**/api/fs/file**', route => route.fulfill({ json: {
+      path: `/Files/${editorFolder}/first.txt`, content: 'Original', modified: '2000-01-01T00:00:00Z', etag: 'original',
+    } }))
+    await editorPane.getByText('first.txt', { exact: true }).dblclick()
+    const editor = editorPane.getByRole('textbox', { name: 'Editor content' })
+    await editor.focus()
+    await page.keyboard.type(' unsaved')
+    await expect(editorPane.getByText(/• unsaved/)).toBeVisible()
+    await folderPane.getByText('child', { exact: true }).dblclick()
+    await expect(folderPane.locator(`[data-drop-directory="/Files/${folder}/child/child"]`)).toBeVisible()
+    await folderPane.getByRole('button', { name: 'Parent directory' }).click()
+    await expect(folderPane.locator(`[data-drop-directory="/Files/${folder}/child"]`)).toBeVisible()
+    await page.goBack()
+    await expect(folderPane.locator(`[data-drop-directory="/Files/${folder}/child/child"]`)).toBeVisible()
+    await page.goForward()
+    await expect(folderPane.locator(`[data-drop-directory="/Files/${folder}/child"]`)).toBeVisible()
+    await expect(editor).toBeVisible()
+    await expect(editorPane.getByText(/• unsaved/)).toBeVisible()
+    expect(typeReads).toBe(1)
+  })
+}
+
+test('unrelated folder history preserves a new unsaved document without a file URL', async ({ page }) => {
+  const { left, right } = await workspace(page)
+  await left.locator('nav [aria-current="page"]').click()
+  await page.getByRole('button', { name: 'New file', exact: true }).click()
+  const newDocument = page.getByRole('dialog', { name: 'New document' })
+  await newDocument.getByRole('textbox', { name: 'Filename' }).fill('draft.txt')
+  await newDocument.getByRole('button', { name: 'Open editor' }).click()
+  const editor = left.getByRole('textbox', { name: 'Editor content' })
+  await editor.focus()
+  await page.keyboard.type('draft content')
+  await expect(left.getByText(/draft\.txt.*unsaved/)).toBeVisible()
+  await right.getByText('child', { exact: true }).dblclick()
+  await expect(right.locator('[data-drop-directory="/Files/b/child/child"]')).toBeVisible()
+  await page.goBack()
+  await expect(right.locator('[data-drop-directory="/Files/b/child"]')).toBeVisible()
+  await expect(left.getByText(/draft\.txt.*unsaved/)).toBeVisible()
+})
+
+test('unrelated folder history does not reload a preview, and its own history can close it', async ({ page }) => {
+  const { left, right } = await workspace(page)
+  let typeReads = 0
+  await page.route('**/api/fs/content-type**', route => {
+    typeReads++
+    return route.fulfill({ json: { content_type: 'application/pdf' } })
+  })
+  await right.getByText('second.txt', { exact: true }).dblclick()
+  const preview = right.getByLabel('File preview', { exact: true })
+  await expect(preview).toBeVisible()
+  await left.getByText('child', { exact: true }).dblclick()
+  await expect(left.locator('[data-drop-directory="/Files/a/child/child"]')).toBeVisible()
+  await page.goBack()
+  await expect(left.locator('[data-drop-directory="/Files/a/child"]')).toBeVisible()
+  await expect(preview).toBeVisible()
+  expect(typeReads).toBe(1)
+  await page.goBack()
+  await expect(preview).toHaveCount(0)
+  await page.goForward()
+  await expect(preview).toBeVisible()
+  expect(typeReads).toBe(2)
+})
+
 test('pane toolbars keep selection fixed at the left and browsing controls at the right at every width', async ({ page }) => {
   const { left, right } = await workspace(page)
   await left.getByText('first.txt', { exact: true }).click()
