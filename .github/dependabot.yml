@@ -18,12 +18,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
-    # Keep WebFile on the MIT-licensed PrimeVue ecosystem.
     ignore:
+      # Keep TypeScript at the project's pin until the Vue type checker is upgraded.
+      - dependency-name: typescript
+      # Keep PrimeVue on 4.3 until the task drawer supports newer versions.
       - dependency-name: primevue
-        versions: [">=5.0.0-0"]
+        versions: [">=4.4.0-0"]
       - dependency-name: "@primeuix/themes"
-        versions: [">=3.0.0-0"]
+        versions: [">=2.0.0-0"]
+      # PrimeIcons 8 moved off the MIT license.
       - dependency-name: primeicons
         versions: [">=8.0.0-0"]
     groups:
