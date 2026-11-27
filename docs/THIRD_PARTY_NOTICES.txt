@@ -2798,7 +2798,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-@primeuix/themes 1.2.3
+@primeuix/themes 1.2.5
 ========================================================================
 
 --- LICENSE ---
@@ -2854,7 +2854,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-@primevue/core 4.3.7
+@primevue/core 4.3.9
 ========================================================================
 
 --- LICENSE.md ---
@@ -2882,7 +2882,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ========================================================================
-@primevue/icons 4.3.7
+@primevue/icons 4.3.9
 ========================================================================
 
 --- LICENSE.md ---
@@ -5273,7 +5273,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-primevue 4.3.7
+primevue 4.3.9
 ========================================================================
 
 --- LICENSE.md ---
