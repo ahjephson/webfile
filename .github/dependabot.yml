@@ -18,6 +18,14 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    # Keep WebFile on the MIT-licensed PrimeVue ecosystem.
+    ignore:
+      - dependency-name: primevue
+        versions: [">=5.0.0-0"]
+      - dependency-name: "@primeuix/themes"
+        versions: [">=3.0.0-0"]
+      - dependency-name: primeicons
+        versions: [">=8.0.0-0"]
     groups:
       frontend-dependencies:
         patterns: ["*"]
