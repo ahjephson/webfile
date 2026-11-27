@@ -5,7 +5,7 @@ Use a native Linux workspace. Windows-hosted contributors must follow the checko
 ## Prerequisites
 
 - The Go toolchain declared in [backend/go.mod](../backend/go.mod).
-- Node.js 22 or later, npm and Make.
+- Node.js 22.12 or later, npm and Make.
 - A C compiler and Linux-PAM development headers for production builds.
 - 7-Zip for archive operations and integration tests.
 - FFmpeg and ffprobe for video thumbnails and their tests.

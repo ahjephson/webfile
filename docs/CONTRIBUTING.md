@@ -10,7 +10,7 @@ Read [the development guide](development.md) for architecture invariants and the
 
 ## Local setup
 
-Use the Go toolchain declared in `backend/go.mod` and Node.js 22 or later. The Linux production build also needs a C compiler and PAM development headers. Install 7-Zip for archive tests and FFmpeg for video-thumbnail tests.
+Use the Go toolchain declared in `backend/go.mod` and Node.js 22.12 or later. The Linux production build also needs a C compiler and PAM development headers. Install 7-Zip for archive tests and FFmpeg for video-thumbnail tests.
 
 The [build guide](building.md#development) starts an HTTP development build with authentication disabled on loopback. Development and production configurations are deliberately incompatible; do not weaken those checks. Never use real credentials, customer files or private configuration as fixtures.
 
